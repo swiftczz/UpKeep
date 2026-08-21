@@ -35,13 +35,25 @@ struct AppStoreUpdateProvider: Sendable {
 
       let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
       guard
-        let result = lookup.result(
+        var result = lookup.result(
           matching: application.bundleIdentifier,
           platform: platform
         )
       else {
         application.status = .unavailable("当前商店地区找不到对应的平台版本。")
         return application
+      }
+
+      // Lookup-by-bundleId can lag hours behind the live catalog that App Store
+      // itself uses. Once we have an Adam ID, query again by `id`.
+      if (application.sourceIdentifier ?? "").isEmpty, let trackID = result.trackID {
+        result =
+          try await Self.fetchLookupResult(
+            bundleIdentifier: application.bundleIdentifier,
+            storeIdentifier: String(trackID),
+            country: country,
+            platform: platform
+          ) ?? result
       }
 
       application.appStorePlatform = result.appStorePlatform ?? platform
@@ -83,13 +95,43 @@ struct AppStoreUpdateProvider: Sendable {
       ),
       URLQueryItem(name: "country", value: country.lowercased()),
     ]
-    if !platform.usesDesktopStoreLookup, let storeIdentifier, !storeIdentifier.isEmpty {
+    if let storeIdentifier, !storeIdentifier.isEmpty {
       queryItems.insert(URLQueryItem(name: "id", value: storeIdentifier), at: 0)
     } else {
       queryItems.insert(URLQueryItem(name: "bundleId", value: bundleIdentifier), at: 0)
     }
     components?.queryItems = queryItems
     return components?.url
+  }
+
+  private static func fetchLookupResult(
+    bundleIdentifier: String,
+    storeIdentifier: String,
+    country: String,
+    platform: AppStorePlatform
+  ) async throws -> AppStoreLookupResult? {
+    guard
+      let url = lookupURL(
+        bundleIdentifier: bundleIdentifier,
+        storeIdentifier: storeIdentifier,
+        country: country,
+        platform: platform
+      )
+    else {
+      return nil
+    }
+
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 15
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse,
+      (200..<300).contains(httpResponse.statusCode)
+    else {
+      return nil
+    }
+
+    let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
+    return lookup.result(matching: bundleIdentifier, platform: platform)
   }
 
   private static func parseISO8601Date(_ value: String) -> Date? {

@@ -144,7 +144,7 @@ struct ApplicationScanner: ApplicationScanning {
       sourceURL: source == .github ? githubMetadata?.sourceURL : feedURL,
       homepageURL: source == .github ? githubMetadata?.sourceURL : nil,
       sourceIdentifier: source == .appStore
-        ? iOSAppStoreMetadata?.storeIdentifier
+        ? iOSAppStoreMetadata?.storeIdentifier ?? appStoreAdamIdentifier(at: applicationURL)
         : source == .github ? githubMetadata?.repositoryIdentifier : nil
     )
   }
@@ -213,6 +213,23 @@ struct ApplicationScanner: ApplicationScanning {
       .appendingPathComponent("WrappedBundle")
       .resolvingSymlinksInPath()
     return Bundle(url: wrappedBundleURL)
+  }
+
+  private static func appStoreAdamIdentifier(at applicationURL: URL) -> String? {
+    guard let item = NSMetadataItem(url: applicationURL) else {
+      return nil
+    }
+
+    let value = item.value(forAttribute: "kMDItemAppStoreAdamID")
+    if let number = value as? NSNumber {
+      let identifier = number.uint64Value
+      return identifier == 0 ? nil : String(identifier)
+    }
+    if let identifier = value as? String {
+      let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+      return trimmed.isEmpty ? nil : trimmed
+    }
+    return nil
   }
 
   private static func iOSAppStoreMetadata(

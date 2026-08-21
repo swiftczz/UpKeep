@@ -182,6 +182,20 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.sourcePlatformSystemImage, "macwindow")
   }
 
+  func testReadsAdamIdentifierFromInstalledMacAppStoreApplication() throws {
+    let applicationURL = URL(fileURLWithPath: "/Applications/OpenCat.app")
+    guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+      throw XCTSkip("OpenCat.app is not installed")
+    }
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(application.source, .appStore)
+    XCTAssertEqual(application.appStorePlatform, .mac)
+    XCTAssertEqual(application.bundleIdentifier, "tech.baye.OpenCat")
+    XCTAssertEqual(application.sourceIdentifier, "6445999201")
+  }
+
   func testDetectsWrappedIPhoneAppStoreApplication() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory

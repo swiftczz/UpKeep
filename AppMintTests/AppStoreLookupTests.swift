@@ -28,6 +28,28 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertEqual(query["country"], "cn")
   }
 
+  func testLookupURLPrefersStoreIdentifierForMacDesktopSoftware() throws {
+    let url = try XCTUnwrap(
+      AppStoreUpdateProvider.lookupURL(
+        bundleIdentifier: "tech.baye.OpenCat",
+        storeIdentifier: "6445999201",
+        country: "CN",
+        platform: .mac
+      )
+    )
+    let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let query = Dictionary(
+      uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+        item.value.map { (item.name, $0) }
+      }
+    )
+
+    XCTAssertEqual(query["id"], "6445999201")
+    XCTAssertNil(query["bundleId"])
+    XCTAssertEqual(query["entity"], "desktopSoftware")
+    XCTAssertEqual(query["country"], "cn")
+  }
+
   func testLookupURLRequestsIPhoneSoftwareByStoreIdentifier() throws {
     let url = try XCTUnwrap(
       AppStoreUpdateProvider.lookupURL(
