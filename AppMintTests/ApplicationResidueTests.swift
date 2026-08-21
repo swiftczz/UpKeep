@@ -56,8 +56,8 @@ final class ApplicationResidueTests: XCTestCase {
     XCTAssertFalse(identity.matches(leaf: "com.billcz.other.pdfmarker.sfl3"))
   }
 
-  func testFindsLowercasedSharedFileListWhenDirectoryListingIsDenied() throws {
-    let fileManager = DirectoryListingDeniedFileManager()
+  func testDoesNotListProtectedRecentDocuments() throws {
+    let fileManager = FileManager.default
     let fixture = fileManager.temporaryDirectory
       .appendingPathComponent("AppMintResidueSFL-\(UUID().uuidString)", isDirectory: true)
     defer { try? fileManager.removeItem(at: fixture) }
@@ -94,7 +94,7 @@ final class ApplicationResidueTests: XCTestCase {
     )
 
     let names = Set(scanner.items(for: application).map(\.displayName))
-    XCTAssertTrue(names.contains("com.billcz.pdfmarker.pdfmarker.sfl3"))
+    XCTAssertFalse(names.contains("com.billcz.pdfmarker.pdfmarker.sfl3"))
   }
 
   func testBreadcrumbUsesHomeLayout() {
@@ -201,14 +201,14 @@ final class ApplicationResidueTests: XCTestCase {
     XCTAssertTrue(names.contains("Sequel Ace"))
     XCTAssertTrue(names.contains("com.sequel-ace.sequel-ace"))
     XCTAssertTrue(names.contains("NKQ4HJ66PX.sequel-ace"))
-    XCTAssertTrue(names.contains("com.sequel-ace.sequel-ace.sfl4"))
+    XCTAssertFalse(names.contains("com.sequel-ace.sequel-ace.sfl4"))
     XCTAssertTrue(names.contains("com.sequel-ace.sequel-ace.bom"))
     XCTAssertFalse(names.contains("NKQ4HJ66PX.other-app"))
     XCTAssertEqual(items.filter { $0.category == .application }.count, 1)
     XCTAssertEqual(items.filter { $0.category == .containers }.count, 2)
     XCTAssertEqual(items.filter { $0.category == .caches }.count, 2)
     XCTAssertEqual(items.filter { $0.category == .preferences }.count, 2)
-    XCTAssertEqual(items.filter { $0.category == .applicationSupport }.count, 2)
+    XCTAssertEqual(items.filter { $0.category == .applicationSupport }.count, 1)
     XCTAssertTrue(items.contains { $0.category == .caches && $0.displayName == "com.sequel-ace.sequel-ace" })
     XCTAssertTrue(items.contains { $0.category == .preferences && $0.displayName.hasSuffix(".plist") })
   }
@@ -267,22 +267,5 @@ final class ApplicationResidueTests: XCTestCase {
   private func createDirectory(_ url: URL) throws {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     try Data("x".utf8).write(to: url.appendingPathComponent(".keep"))
-  }
-}
-
-private final class DirectoryListingDeniedFileManager: FileManager, @unchecked Sendable {
-  override func contentsOfDirectory(
-    at url: URL,
-    includingPropertiesForKeys keys: [URLResourceKey]?,
-    options mask: FileManager.DirectoryEnumerationOptions = []
-  ) throws -> [URL] {
-    if url.path.contains("ApplicationRecentDocuments") {
-      throw CocoaError(.fileReadNoPermission)
-    }
-    return try super.contentsOfDirectory(
-      at: url,
-      includingPropertiesForKeys: keys,
-      options: mask
-    )
   }
 }

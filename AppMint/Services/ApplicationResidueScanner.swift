@@ -84,17 +84,6 @@ struct ApplicationResidueScanner: @unchecked Sendable {
         category: .applicationSupport,
         into: add
       )
-      addKnownSharedFileLists(in: libraryDirectory, identity: identity, into: add)
-      addMatches(
-        in: libraryDirectory.appending(
-          path:
-            "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments",
-          directoryHint: .isDirectory
-        ),
-        identity: identity,
-        category: .applicationSupport,
-        into: add
-      )
       addMatches(
         in: libraryDirectory.appendingPathComponent("Preferences", isDirectory: true),
         identity: identity,
@@ -228,23 +217,6 @@ struct ApplicationResidueScanner: @unchecked Sendable {
     }
   }
 
-  private func addKnownSharedFileLists(
-    in libraryDirectory: URL,
-    identity: ApplicationResidueIdentity,
-    into add: (URL, ApplicationResidueItem.Category) -> Void
-  ) {
-    let directory = libraryDirectory.appending(
-      path:
-        "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments",
-      directoryHint: .isDirectory
-    )
-    for identifier in identity.lookupIdentifiers {
-      for suffix in Self.sharedFileListSuffixes {
-        add(directory.appendingPathComponent(identifier + suffix), .applicationSupport)
-      }
-    }
-  }
-
   private func displayName(for url: URL) -> String {
     if url.pathExtension.lowercased() == "app" {
       return url.deletingPathExtension().lastPathComponent
@@ -323,8 +295,6 @@ struct ApplicationResidueScanner: @unchecked Sendable {
     }
     return nil
   }
-
-  private static let sharedFileListSuffixes = [".sfl3", ".sfl2", ".sfl4", ".sfl"]
 }
 
 extension ApplicationResidueItem.Category {
