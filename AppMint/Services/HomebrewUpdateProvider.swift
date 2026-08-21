@@ -34,6 +34,8 @@ struct HomebrewUpdateProvider: Sendable {
 
       return applications.map { application in
         guard application.source != .appStore,
+          application.source != .electronBuilder,
+          application.source != .tauri,
           let cask = caskByTargetPath[application.applicationURL.standardizedFileURL.path]
         else {
           return application
@@ -49,13 +51,13 @@ struct HomebrewUpdateProvider: Sendable {
         application.sourceURL = application.homepageURL
         application.latestVersion = remoteVersion == "latest" ? nil : remoteVersion
         application.releaseNotes = nil
-        application.canAutomaticallyUpdate = cask.autoUpdates != true
         application.status = Self.resolvedStatus(
           currentVersion: application.currentVersion,
           remoteVersion: remoteVersion,
           brewReportsOutdated: outdatedItem != nil,
           autoUpdates: cask.autoUpdates
         )
+        application.canAutomaticallyUpdate = application.status == .updateAvailable
 
         return application
       }
@@ -81,7 +83,8 @@ struct HomebrewUpdateProvider: Sendable {
     let parser = HomebrewOutputProgressParser()
     _ = try await ProcessRunner.run(
       executableURL: brewURL,
-      arguments: ["upgrade", "--cask", token],
+      arguments: ["upgrade", "--cask", "--greedy-auto-updates", token],
+      captureTTY: true,
       onOutput: { chunk in
         progress(parser.consuming(chunk))
       }
@@ -127,31 +130,85 @@ struct HomebrewUpdateProvider: Sendable {
 
 final class HomebrewOutputProgressParser: @unchecked Sendable {
   private let lock = NSLock()
+  private var pending = ""
   private var progress = UpdateProgress.indeterminate("正在更新…")
 
   func consuming(_ chunk: String) -> UpdateProgress {
     lock.lock()
     defer { lock.unlock() }
 
-    if let percent = Self.lastPercent(in: chunk) {
+    pending += chunk
+    if pending.count > 8_192 {
+      pending.removeFirst(pending.count - 4_096)
+    }
+
+    let text = Self.stripANSI(pending)
+    if text.localizedCaseInsensitiveContains("==> Installing")
+      || text.localizedCaseInsensitiveContains("==> Purging")
+    {
+      progress = UpdateProgress(fractionCompleted: 0.92, status: "正在安装…")
+    } else if let percent = Self.lastPercent(in: text) {
       progress = UpdateProgress(
         fractionCompleted: min(percent / 100, 0.9),
         status: "正在下载…"
       )
-    } else if chunk.localizedCaseInsensitiveContains("==> Installing")
-      || chunk.localizedCaseInsensitiveContains("==> Purging")
+    } else if let ratio = Self.lastSizeRatio(in: text) {
+      progress = UpdateProgress(
+        fractionCompleted: min(ratio, 0.9),
+        status: "正在下载…"
+      )
+    } else if text.localizedCaseInsensitiveContains("==> Downloading")
+      || text.localizedCaseInsensitiveContains("Downloading")
     {
-      progress = UpdateProgress(fractionCompleted: 0.92, status: "正在安装…")
-    } else if chunk.localizedCaseInsensitiveContains("==> Downloading") {
       progress = .indeterminate("正在下载…")
     }
     return progress
   }
 
+  private static func stripANSI(_ text: String) -> String {
+    text.replacing(#/\u{001B}\[[\d;?]*[A-Za-z]/#, with: "")
+  }
+
   private static func lastPercent(in chunk: String) -> Double? {
     let matches = chunk.matches(of: /(\d{1,3}(?:\.\d+)?)%/)
-    guard let match = matches.last else { return nil }
-    return Double(match.1)
+    guard let match = matches.last, let value = Double(match.1), value <= 100 else {
+      return nil
+    }
+    return value
+  }
+
+  private static func lastSizeRatio(in chunk: String) -> Double? {
+    let matches = chunk.matches(
+      of: /(\d+(?:\.\d+)?)\s*([KMGT]?B)\s*\/\s*(\d+(?:\.\d+)?)\s*([KMGT]?B)/
+    )
+    guard let match = matches.last,
+      let fetched = Self.byteCount(value: String(match.1), unit: String(match.2)),
+      let total = Self.byteCount(value: String(match.3), unit: String(match.4)),
+      total > 0
+    else {
+      return nil
+    }
+    return min(fetched / total, 1)
+  }
+
+  private static func byteCount(value: String, unit: String) -> Double? {
+    guard let amount = Double(value) else { return nil }
+    let multiplier: Double
+    switch unit.uppercased() {
+    case "B":
+      multiplier = 1
+    case "KB":
+      multiplier = 1_000
+    case "MB":
+      multiplier = 1_000_000
+    case "GB":
+      multiplier = 1_000_000_000
+    case "TB":
+      multiplier = 1_000_000_000_000
+    default:
+      return nil
+    }
+    return amount * multiplier
   }
 }
 

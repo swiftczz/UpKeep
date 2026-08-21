@@ -6,10 +6,7 @@ struct AppRowView: View {
   var updateProgress: UpdateProgress? = nil
 
   private var listDate: Date? {
-    if application.needsUpdate && !isUpdateIgnored {
-      return application.releaseDate
-    }
-    return application.applicationModificationDate
+    application.sidebarDate(isUpdateIgnored: isUpdateIgnored)
   }
 
   var body: some View {
@@ -103,7 +100,7 @@ struct AppRowView: View {
   }
 
   private var usesReleaseDate: Bool {
-    application.needsUpdate && !isUpdateIgnored
+    application.sidebarDateIsReleaseDate && !isUpdateIgnored
   }
 
   private func dateHelp(for date: Date) -> String {

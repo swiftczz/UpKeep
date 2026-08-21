@@ -280,7 +280,7 @@ struct AppDetailView: View {
         return "使用当前 App Store 账号下载并安装此更新"
       case .homebrew:
         return "使用 Homebrew 下载并安装此更新"
-      case .sparkle, .github, .selfManaged:
+      case .sparkle, .electronBuilder, .tauri, .selfManaged:
         return "下载并安装此更新"
       }
     }
@@ -311,8 +311,6 @@ struct AppDetailView: View {
   private var releaseNotesPlaceholder: String {
     switch application.status {
     case .unavailable(let message): message
-    case .selfManaged where application.source == .github:
-      "此应用来自 GitHub，当前没有可读取的发行说明。"
     case .selfManaged: "此应用由自身更新器管理，当前没有可读取的发行说明。"
     default: "此版本未提供发行说明。"
     }

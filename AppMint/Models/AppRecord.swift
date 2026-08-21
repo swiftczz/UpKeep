@@ -99,6 +99,17 @@ struct AppRecord: Identifiable, Hashable, Sendable {
 
     return "\(currentVersion) (\(buildVersion))"
   }
+
+  func sidebarDate(isUpdateIgnored: Bool) -> Date? {
+    if needsUpdate && !isUpdateIgnored {
+      return releaseDate ?? applicationModificationDate
+    }
+    return applicationModificationDate
+  }
+
+  var sidebarDateIsReleaseDate: Bool {
+    needsUpdate && releaseDate != nil
+  }
 }
 
 enum AppStorePlatform: String, Hashable, Sendable {
@@ -131,7 +142,8 @@ enum UpdateSource: String, Hashable, Sendable {
   case appStore
   case homebrew
   case sparkle
-  case github
+  case electronBuilder
+  case tauri
   case selfManaged
 
   var title: String {
@@ -139,7 +151,8 @@ enum UpdateSource: String, Hashable, Sendable {
     case .appStore: "App Store"
     case .homebrew: "Homebrew"
     case .sparkle: "Sparkle"
-    case .github: "GitHub"
+    case .electronBuilder: "Electron-builder"
+    case .tauri: "Tauri"
     case .selfManaged: "应用自身"
     }
   }
@@ -149,7 +162,8 @@ enum UpdateSource: String, Hashable, Sendable {
     case .appStore: "apple.logo"
     case .homebrew: "mug.fill"
     case .sparkle: "sparkles"
-    case .github: "chevron.left.forwardslash.chevron.right"
+    case .electronBuilder: "bolt.fill"
+    case .tauri: "leaf.fill"
     case .selfManaged: "app.dashed"
     }
   }
@@ -176,7 +190,7 @@ enum UpdateStatus: Hashable, Sendable {
 extension Array where Element == AppRecord {
   func availableUpdates(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
     filter { $0.needsUpdate && !ignoredIDs.contains($0.id) }
-      .sortedByDescendingDate(\.releaseDate)
+      .sortedByDescendingDate { $0.releaseDate ?? $0.applicationModificationDate }
   }
 
   func installedApplications() -> [AppRecord] {
@@ -186,12 +200,16 @@ extension Array where Element == AppRecord {
 
   func ignoredUpdates(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
     filter { $0.needsUpdate && ignoredIDs.contains($0.id) }
-      .sortedByDescendingDate(\.releaseDate)
+      .sortedByDescendingDate { $0.releaseDate ?? $0.applicationModificationDate }
   }
 
   func sortedByDescendingDate(_ keyPath: KeyPath<AppRecord, Date?>) -> [AppRecord] {
+    sortedByDescendingDate { $0[keyPath: keyPath] }
+  }
+
+  func sortedByDescendingDate(_ date: (AppRecord) -> Date?) -> [AppRecord] {
     sorted { first, second in
-      switch (first[keyPath: keyPath], second[keyPath: keyPath]) {
+      switch (date(first), date(second)) {
       case (let firstDate?, let secondDate?) where firstDate != secondDate:
         return firstDate > secondDate
       case (_?, nil):
@@ -285,13 +303,28 @@ extension AppRecord {
       status: .selfManaged
     ),
     AppRecord(
-      name: "GitHub Example",
-      bundleIdentifier: "com.example.github",
-      applicationURL: URL(fileURLWithPath: "/Applications/GitHub Example.app"),
-      currentVersion: "1.2.0",
-      source: .github,
-      status: .selfManaged,
-      sourceURL: URL(string: "https://github.com/example/example")
+      name: "ChatWise",
+      bundleIdentifier: "app.chatwise",
+      applicationURL: URL(fileURLWithPath: "/Applications/ChatWise.app"),
+      currentVersion: "26.8.0",
+      source: .electronBuilder,
+      status: .updateAvailable,
+      latestVersion: "26.8.1",
+      sourceURL: URL(string: "https://releases.chatwise.app/latest-mac.yml"),
+      canAutomaticallyUpdate: true
+    ),
+    AppRecord(
+      name: "Grok",
+      bundleIdentifier: "com.example.grok",
+      applicationURL: URL(fileURLWithPath: "/Applications/Grok.app"),
+      currentVersion: "0.2.20",
+      source: .tauri,
+      status: .updateAvailable,
+      latestVersion: "0.2.24",
+      sourceURL: URL(
+        string: "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
+      ),
+      canAutomaticallyUpdate: true
     ),
   ]
 }

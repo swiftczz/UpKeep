@@ -86,9 +86,10 @@ struct ApplicationScanner: ApplicationScanning {
       ?? (info["CFBundleVersion"] as? String)
       ?? "未知"
     let buildVersion = info["CFBundleVersion"] as? String
-    let resourceValues = try? applicationURL.resourceValues(forKeys: [
-      .contentModificationDateKey
-    ])
+    let applicationModificationDate = latestModificationDate(
+      of: applicationURL,
+      bundle: bundle
+    )
 
     let contentsURL = bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true)
     let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
@@ -102,7 +103,8 @@ struct ApplicationScanner: ApplicationScanning {
     let source: UpdateSource
     let appStorePlatform: AppStorePlatform?
     let status: UpdateStatus
-    var githubMetadata: GitHubSourceMetadata? = nil
+    var electronMetadata: ElectronBuilderMetadata? = nil
+    var tauriEndpoint: URL? = nil
 
     if hasAppStoreReceipt {
       source = .appStore
@@ -116,14 +118,16 @@ struct ApplicationScanner: ApplicationScanning {
       source = .sparkle
       appStorePlatform = nil
       status = feedURL == nil ? .selfManaged : .checking
-    } else if let detectedGitHubMetadata = GitHubSourceDetector.detect(
-      applicationURL: applicationURL,
-      bundleURL: bundle.bundleURL
-    ) {
-      source = .github
+    } else if let detectedElectron = ElectronBuilderDetector.detect(in: bundle.bundleURL) {
+      source = .electronBuilder
       appStorePlatform = nil
-      status = .selfManaged
-      githubMetadata = detectedGitHubMetadata
+      status = .checking
+      electronMetadata = detectedElectron
+    } else if let detectedTauri = TauriUpdaterDetector.detect(bundleURL: bundle.bundleURL) {
+      source = .tauri
+      appStorePlatform = nil
+      status = .checking
+      tauriEndpoint = detectedTauri
     } else {
       source = .selfManaged
       appStorePlatform = nil
@@ -136,21 +140,54 @@ struct ApplicationScanner: ApplicationScanning {
       applicationURL: applicationURL,
       currentVersion: currentVersion,
       buildVersion: buildVersion,
-      applicationModificationDate: resourceValues?.contentModificationDate,
+      applicationModificationDate: applicationModificationDate,
       source: source,
       appStorePlatform: appStorePlatform,
       appStoreCountryCode: iOSAppStoreMetadata?.countryCode,
       status: status,
-      sourceURL: source == .github ? githubMetadata?.sourceURL : feedURL,
-      homepageURL: source == .github ? githubMetadata?.sourceURL : nil,
-      sourceIdentifier: source == .appStore
-        ? iOSAppStoreMetadata?.storeIdentifier ?? appStoreAdamIdentifier(at: applicationURL)
-        : source == .github ? githubMetadata?.repositoryIdentifier : nil
+      sourceURL: {
+        switch source {
+        case .sparkle: feedURL
+        case .electronBuilder: electronMetadata?.feedURL
+        case .tauri: tauriEndpoint
+        default: nil
+        }
+      }(),
+      homepageURL: electronMetadata?.homepageURL,
+      sourceIdentifier: {
+        switch source {
+        case .appStore:
+          iOSAppStoreMetadata?.storeIdentifier ?? appStoreAdamIdentifier(at: applicationURL)
+        case .electronBuilder:
+          electronMetadata?.identifier
+        case .tauri:
+          tauriEndpoint?.absoluteString
+        default:
+          nil
+        }
+      }()
     )
   }
 
   static func sortedByModificationDate(_ applications: [AppRecord]) -> [AppRecord] {
     applications.sortedByDescendingDate(\.applicationModificationDate)
+  }
+
+  static func latestModificationDate(of applicationURL: URL, bundle: Bundle) -> Date? {
+    var urls = [
+      applicationURL,
+      bundle.bundleURL,
+      bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true),
+      bundle.bundleURL.appendingPathComponent("Contents/Info.plist"),
+    ]
+    if let executableURL = bundle.executableURL {
+      urls.append(executableURL)
+    }
+    return urls.compactMap(contentModificationDate(at:)).max()
+  }
+
+  private static func contentModificationDate(at url: URL) -> Date? {
+    (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
   }
 
   private static func resolvedName(

@@ -15,7 +15,8 @@ AppMint 是一个面向 macOS 26 及以上系统的应用更新检查工具。�
 - 应用列表中的 App Store 来源统一显示苹果 Logo；详情徽标附加 `macwindow`、`iphone`、`ipad` 小图标区分平台
 - 识别 Homebrew Cask，并使用 Homebrew 的更新判断结果
 - 识别 Sparkle Appcast，并解析版本、发布日期和发行说明
-- 对其余未知应用读取 macOS 下载来源，并识别 Electron 明确声明的 GitHub Provider；可确认时标记为 GitHub
+- 识别 Electron-builder（`app-update.yml` 的 github / generic HTTPS 源）并检查 `latest-mac.yml`
+- 识别 Tauri updater（`latest.json` / `update-proxy.json`）并检查版本、发行说明和安装包
 - 对无法安全查询的应用标记为“由应用自身管理”
 - 按“可用更新”和“已安装的应用”分组
 - 刷新时保持当前列表和选择稳定，扫描与检查结束后一次性提交最终分组，避免点击应用时列表跳动
@@ -24,7 +25,8 @@ AppMint 是一个面向 macOS 26 及以上系统的应用更新检查工具。�
 - 原生 Mac App Store 应用可复用 App Store 当前登录账号，由 AppMint 直接下载并安装更新
 - Homebrew Cask 可由 AppMint 执行更新
 - 带安全下载项的 Sparkle Appcast 可由 AppMint 调起 Sparkle 官方流程完成验证、下载和安装
-- GitHub 等其他来源交回原管理工具
+- Electron-builder 与 Tauri updater 可由 AppMint 下载 HTTPS 安装包并替换本地应用；提供 sha512 时会先校验
+- 其他来源交回原管理工具
 
 ## 环境要求
 
@@ -122,7 +124,8 @@ AppMint/
 
 - 原生 Mac App Store 应用支持直接更新；安装在 Mac 上的 iPhone/iPad 应用仍跳转至官方商店。
 - Sparkle 应用在 Appcast 含 HTTPS 安装包时支持直接更新；仅含说明、动态生成或需要鉴权的 Feed 仍打开应用处理。
-- GitHub 兜底识别只标注可确认的来源，不等同于 AppMint 已能自动下载或安装 GitHub Releases。
+- Electron-builder 仅处理 `provider: github` 与带 HTTPS 地址的 `provider: generic`；`custom`、localhost、空地址等不安全配置仍交给应用自身。
+- Tauri updater 仅处理 HTTPS 的 `latest.json` / `update-proxy.json`，并安装当前架构的 `.app` 压缩包。
 - Homebrew 通常不提供发行说明，因此详情可能只有版本与主页。
 - 动态或需要鉴权的更新源不会被强行解析。
 - 脚本可以生成 `.app` 和 DMG；公开分发前仍需配置 Developer ID 签名、公证和正式应用图标。

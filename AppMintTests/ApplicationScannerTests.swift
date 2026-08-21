@@ -137,6 +137,46 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(installed.map(\.name), ["Newer", "Older", "Unknown"])
   }
 
+  func testInstalledApplicationsOnTheSameDayAreSortedByTimeDescending() {
+    let calendar = Calendar(identifier: .gregorian)
+    let day = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21))!
+    let morning = calendar.date(bySettingHour: 9, minute: 10, second: 11, of: day)!
+    let evening = calendar.date(bySettingHour: 18, minute: 20, second: 21, of: day)!
+    let noon = calendar.date(bySettingHour: 12, minute: 0, second: 1, of: day)!
+
+    let installed = [
+      makeApplication(name: "Morning", modifiedAt: morning),
+      makeApplication(name: "Evening", modifiedAt: evening),
+      makeApplication(name: "Noon", modifiedAt: noon),
+    ].installedApplications()
+
+    XCTAssertEqual(installed.map(\.name), ["Evening", "Noon", "Morning"])
+    XCTAssertEqual(Set(installed.compactMap(\.applicationModificationDate?.slashDateText)), ["2026/08/21"])
+  }
+
+  func testAvailableUpdatesWithoutReleaseDateFallBackToModificationTime() {
+    let calendar = Calendar(identifier: .gregorian)
+    let day = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21))!
+    let earlier = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: day)!
+    let later = calendar.date(bySettingHour: 10, minute: 0, second: 30, of: day)!
+
+    let first = makeApplication(
+      name: "Alpha",
+      modifiedAt: later,
+      status: .updateAvailable
+    )
+    let second = makeApplication(
+      name: "Zed",
+      modifiedAt: earlier,
+      status: .updateAvailable
+    )
+
+    XCTAssertEqual(
+      [second, first].availableUpdates(ignoredIDs: []).map(\.name),
+      ["Alpha", "Zed"]
+    )
+  }
+
   func testIgnoredUpdatesAreSortedByReleaseDateAndExcludedFromInstalledApplications() {
     let older = makeApplication(name: "Older", modifiedAt: Date(timeIntervalSince1970: 100))
     let newerIgnored = makeApplication(
@@ -169,6 +209,32 @@ final class ApplicationScannerTests: XCTestCase {
     let date = calendar.date(from: DateComponents(year: 2021, month: 1, day: 1))
 
     XCTAssertEqual(date?.slashDateText, "2021/01/01")
+  }
+
+  func testSidebarDateFallsBackToModificationDateWhenReleaseDateIsMissing() {
+    let modifiedAt = Date(timeIntervalSince1970: 1_609_459_200)
+    let application = makeApplication(
+      name: "Claude",
+      modifiedAt: modifiedAt,
+      status: .updateAvailable
+    )
+
+    XCTAssertEqual(application.sidebarDate(isUpdateIgnored: false), modifiedAt)
+    XCTAssertFalse(application.sidebarDateIsReleaseDate)
+  }
+
+  func testSidebarDatePrefersReleaseDateForAvailableUpdates() {
+    let modifiedAt = Date(timeIntervalSince1970: 100)
+    let releasedAt = Date(timeIntervalSince1970: 200)
+    let application = makeApplication(
+      name: "Proxyman",
+      modifiedAt: modifiedAt,
+      status: .updateAvailable,
+      releaseDate: releasedAt
+    )
+
+    XCTAssertEqual(application.sidebarDate(isUpdateIgnored: false), releasedAt)
+    XCTAssertTrue(application.sidebarDateIsReleaseDate)
   }
 
   func testDetectsNativeMacAppStoreReceipt() throws {
@@ -275,7 +341,7 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.sourcePlatformSystemImage, "iphone")
   }
 
-  func testDetectsGitHubDownloadForOtherwiseUnknownApplication() throws {
+  func testDoesNotTreatGitHubDownloadMetadataAsAnUpdateSource() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
       .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
@@ -301,13 +367,11 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .github)
-    XCTAssertEqual(application.sourceIdentifier, "example/downloaded")
-    XCTAssertEqual(application.sourceURL?.absoluteString, "https://github.com/example/downloaded")
-    XCTAssertEqual(application.sourceSystemImage, "chevron.left.forwardslash.chevron.right")
+    XCTAssertEqual(application.source, .selfManaged)
+    XCTAssertNil(application.sourceURL)
   }
 
-  func testDetectsElectronGitHubProviderForOtherwiseUnknownApplication() throws {
+  func testDetectsElectronBuilderGitHubProvider() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
       .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
@@ -334,12 +398,50 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .github)
+    XCTAssertEqual(application.source, .electronBuilder)
     XCTAssertEqual(application.sourceIdentifier, "op7418/CodePilot")
-    XCTAssertEqual(application.sourceURL?.absoluteString, "https://github.com/op7418/CodePilot")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://github.com/op7418/CodePilot/releases/latest/download/latest-mac.yml"
+    )
+    XCTAssertEqual(application.homepageURL?.absoluteString, "https://github.com/op7418/CodePilot")
+    XCTAssertEqual(application.sourceTitle, "Electron-builder")
   }
 
-  func testDoesNotTreatCustomElectronProviderAsGitHub() throws {
+  func testDetectsElectronBuilderGenericProvider() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "ChatWise.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "app.chatwise"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      provider: generic
+      url: https://releases.chatwise.app
+      """.utf8
+    ).write(to: resourcesURL.appendingPathComponent("app-update.yml"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(application.source, .electronBuilder)
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://releases.chatwise.app/latest-mac.yml"
+    )
+  }
+
+  func testDoesNotTreatCustomElectronProviderAsUpdateSource() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
       .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
@@ -367,6 +469,110 @@ final class ApplicationScannerTests: XCTestCase {
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
     XCTAssertEqual(application.source, .selfManaged)
+  }
+
+  func testDoesNotTreatLocalhostElectronProviderAsUpdateSource() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Localhost.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.localhost"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      provider: generic
+      url: http://localhost:3000
+      """.utf8
+    ).write(to: resourcesURL.appendingPathComponent("app-update.yml"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .selfManaged)
+  }
+
+  func testDetectsTauriUpdaterEndpointInExecutable() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Grok.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.grok"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      junkicon.icohttps://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.jsontrailing
+      """.utf8
+    ).write(to: macOSURL.appendingPathComponent("Example"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(application.source, .tauri)
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
+    )
+    XCTAssertEqual(application.sourceTitle, "Tauri")
+  }
+
+  func testDetectsInstalledReasonixUpdaterWhenPresent() throws {
+    let applicationURL = URL(fileURLWithPath: "/Applications/Reasonix.app")
+    guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+      throw XCTSkip("Reasonix.app is not installed on this machine")
+    }
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .tauri)
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://dl.reasonix.io/latest/latest.json"
+    )
+  }
+
+  func testUsesNewestInnerFileModificationDate() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Dated.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let infoURL = contentsURL.appendingPathComponent("Info.plist")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: contentsURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.dated"),
+      to: infoURL
+    )
+
+    let older = Date(timeIntervalSince1970: 1_777_000_000)
+    let newer = Date(timeIntervalSince1970: 1_777_000_321)
+    try fileManager.setAttributes([.modificationDate: older], ofItemAtPath: applicationURL.path)
+    try fileManager.setAttributes([.modificationDate: older], ofItemAtPath: contentsURL.path)
+    try fileManager.setAttributes([.modificationDate: newer], ofItemAtPath: infoURL.path)
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    let recorded = try XCTUnwrap(application.applicationModificationDate)
+    XCTAssertEqual(recorded.timeIntervalSince1970, newer.timeIntervalSince1970, accuracy: 1)
   }
 
   private func makeApplication(

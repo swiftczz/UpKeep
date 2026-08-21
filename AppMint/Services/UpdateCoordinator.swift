@@ -32,6 +32,13 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
   private let macAppStore = MacAppStoreUpdateProvider()
   private let homebrew = HomebrewUpdateProvider()
   private let sparkle = SparkleUpdateProvider()
+  private let electronBuilder = ElectronBuilderUpdateProvider()
+  private let tauri = TauriUpdateProvider()
+  private let process: ApplicationProcessClient
+
+  init(process: ApplicationProcessClient = .live) {
+    self.process = process
+  }
 
   func check(_ applications: [AppRecord]) async -> [AppRecord] {
     let enrichedApplications = await homebrew.enrich(applications)
@@ -45,7 +52,11 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
             result = await appStore.check(application)
           case .sparkle where application.sourceURL != nil:
             result = await sparkle.check(application)
-          case .homebrew, .github, .selfManaged, .sparkle:
+          case .electronBuilder:
+            result = await electronBuilder.check(application)
+          case .tauri:
+            result = await tauri.check(application)
+          case .homebrew, .selfManaged, .sparkle:
             result = application
           }
           return (index, result)
@@ -64,18 +75,28 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
-    switch application.source {
-    case .homebrew:
-      try await homebrew.upgrade(application, progress: progress)
-    case .appStore:
-      try await macAppStore.upgrade(application, progress: progress)
-    case .sparkle:
-      try await SparkleApplicationUpdater.upgrade(application, progress: progress)
-    case .github, .selfManaged:
-      throw ProcessRunnerError.failed(
-        status: 1,
-        message: "此应用需要由 \(application.sourceTitle) 完成更新。"
-      )
+    try await UpdateRelaunch.perform(
+      application,
+      process: process,
+      progress: progress
+    ) {
+      switch application.source {
+      case .homebrew:
+        try await homebrew.upgrade(application, progress: progress)
+      case .appStore:
+        try await macAppStore.upgrade(application, progress: progress)
+      case .sparkle:
+        try await SparkleApplicationUpdater.upgrade(application, progress: progress)
+      case .electronBuilder:
+        try await electronBuilder.upgrade(application, progress: progress)
+      case .tauri:
+        try await tauri.upgrade(application, progress: progress)
+      case .selfManaged:
+        throw ProcessRunnerError.failed(
+          status: 1,
+          message: "此应用需要由 \(application.sourceTitle) 完成更新。"
+        )
+      }
     }
   }
 }
