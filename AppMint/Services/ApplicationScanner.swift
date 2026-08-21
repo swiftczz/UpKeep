@@ -85,7 +85,7 @@ struct ApplicationScanner: ApplicationScanning {
       (info["CFBundleShortVersionString"] as? String)
       ?? (info["CFBundleVersion"] as? String)
       ?? "未知"
-    let buildVersion = info["CFBundleVersion"] as? String
+    var buildVersion = info["CFBundleVersion"] as? String
     let applicationModificationDate = latestModificationDate(
       of: applicationURL,
       bundle: bundle
@@ -105,6 +105,7 @@ struct ApplicationScanner: ApplicationScanning {
     let status: UpdateStatus
     var electronMetadata: ElectronBuilderMetadata? = nil
     var tauriEndpoint: URL? = nil
+    var vscodeMetadata: VSCodeUpdaterMetadata? = nil
 
     if hasAppStoreReceipt {
       source = .appStore
@@ -123,6 +124,14 @@ struct ApplicationScanner: ApplicationScanning {
       appStorePlatform = nil
       status = .checking
       electronMetadata = detectedElectron
+    } else if let detectedVSCode = VSCodeUpdaterDetector.detect(in: bundle.bundleURL) {
+      source = .vscodeUpdater
+      appStorePlatform = nil
+      status = .checking
+      vscodeMetadata = detectedVSCode
+      if buildVersion == nil || buildVersion == currentVersion {
+        buildVersion = String(detectedVSCode.commit.prefix(7))
+      }
     } else if let detectedTauri = TauriUpdaterDetector.detect(bundleURL: bundle.bundleURL) {
       source = .tauri
       appStorePlatform = nil
@@ -150,10 +159,11 @@ struct ApplicationScanner: ApplicationScanning {
         case .sparkle: feedURL
         case .electronBuilder: electronMetadata?.feedURL
         case .tauri: tauriEndpoint
+        case .vscodeUpdater: vscodeMetadata?.updateURL
         default: nil
         }
       }(),
-      homepageURL: electronMetadata?.homepageURL,
+      homepageURL: electronMetadata?.homepageURL ?? vscodeMetadata?.homepageURL,
       sourceIdentifier: {
         switch source {
         case .appStore:
@@ -162,6 +172,10 @@ struct ApplicationScanner: ApplicationScanning {
           electronMetadata?.identifier
         case .tauri:
           tauriEndpoint?.absoluteString
+        case .vscodeUpdater:
+          vscodeMetadata.map {
+            VSCodeUpdaterDetector.sourceIdentifier(quality: $0.quality, commit: $0.commit)
+          }
         default:
           nil
         }

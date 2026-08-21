@@ -38,6 +38,20 @@ final class HomebrewUpdateProviderTests: XCTestCase {
         brewHasUpdate: false
       )
     )
+    XCTAssertFalse(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .vscodeUpdater,
+        hasCheckableFeed: true,
+        brewHasUpdate: false
+      )
+    )
+    XCTAssertTrue(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .vscodeUpdater,
+        hasCheckableFeed: true,
+        brewHasUpdate: true
+      )
+    )
   }
 
   func testClaimsTauriAndSparkleCasksWhenBrewHasUpdate() {

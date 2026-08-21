@@ -261,6 +261,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
   case sparkle
   case electronBuilder
   case tauri
+  case vscodeUpdater
   case selfManaged
 
   var title: String {
@@ -270,6 +271,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .sparkle: "Sparkle"
     case .electronBuilder: "electron-updater"
     case .tauri: "Tauri updater"
+    case .vscodeUpdater: "VS Code updater"
     case .selfManaged: "未知"
     }
   }
@@ -281,6 +283,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .sparkle: "sparkles"
     case .electronBuilder: "atom"
     case .tauri: "drop.fill"
+    case .vscodeUpdater: "chevron.left.forwardslash.chevron.right"
     case .selfManaged: "app.dashed"
     }
   }

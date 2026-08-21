@@ -532,6 +532,122 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.sourceTitle, "Tauri updater")
   }
 
+  func testDetectsVSCodeUpdaterProductJSON() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Code.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let appURL = contentsURL.appendingPathComponent("Resources/app", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: appURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.microsoft.VSCode",
+        extraValues: [
+          "CFBundleShortVersionString": "1.134.0",
+          "CFBundleVersion": "1.134.0",
+        ]
+      ),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      {
+        "quality": "stable",
+        "commit": "110a328ea54b42367b803ec53ee0bf52ef26b419",
+        "updateUrl": "https://update.code.visualstudio.com",
+        "downloadUrl": "https://code.visualstudio.com"
+      }
+      """.utf8
+    ).write(to: appURL.appendingPathComponent("product.json"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .vscodeUpdater)
+    XCTAssertEqual(application.sourceTitle, "VS Code updater")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://update.code.visualstudio.com"
+    )
+    XCTAssertEqual(
+      application.sourceIdentifier,
+      "stable/110a328ea54b42367b803ec53ee0bf52ef26b419"
+    )
+    XCTAssertEqual(application.homepageURL?.absoluteString, "https://code.visualstudio.com")
+    XCTAssertEqual(application.buildVersion, "110a328")
+  }
+
+  func testDoesNotTreatLocalhostVSCodeUpdateURLAsAnUpdateSource() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "LocalCode.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let appURL = contentsURL.appendingPathComponent("Resources/app", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: appURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.localcode"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      {
+        "commit": "abc",
+        "updateUrl": "http://localhost:4000"
+      }
+      """.utf8
+    ).write(to: appURL.appendingPathComponent("product.json"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .selfManaged)
+  }
+
+  func testPrefersElectronBuilderOverVSCodeProductJSON() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Both.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+    let appURL = resourcesURL.appendingPathComponent("app", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: appURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.both"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      provider: generic
+      url: https://releases.example.com
+      """.utf8
+    ).write(to: resourcesURL.appendingPathComponent("app-update.yml"))
+    try Data(
+      """
+      {
+        "commit": "abc",
+        "updateUrl": "https://update.example.com"
+      }
+      """.utf8
+    ).write(to: appURL.appendingPathComponent("product.json"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .electronBuilder)
+  }
+
   func testDetectsInstalledReasonixUpdaterWhenPresent() throws {
     let applicationURL = URL(fileURLWithPath: "/Applications/Reasonix.app")
     guard FileManager.default.fileExists(atPath: applicationURL.path) else {

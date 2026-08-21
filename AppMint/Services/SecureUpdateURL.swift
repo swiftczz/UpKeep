@@ -30,17 +30,25 @@ enum SecureUpdateURL {
 }
 
 enum UpdateHTTP {
-  static func successfulData(from url: URL) async throws -> Data? {
+  static func response(from url: URL) async throws -> (statusCode: Int, data: Data)? {
     var request = URLRequest(url: url)
     request.timeoutInterval = 15
     request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
     let (data, response) = try await URLSession.shared.data(for: request)
-    guard let httpResponse = response as? HTTPURLResponse,
-      (200..<300).contains(httpResponse.statusCode)
+    guard let httpResponse = response as? HTTPURLResponse else {
+      return nil
+    }
+    return (httpResponse.statusCode, data)
+  }
+
+  static func successfulData(from url: URL) async throws -> Data? {
+    guard let result = try await response(from: url),
+      (200..<300).contains(result.statusCode),
+      result.statusCode != 204
     else {
       return nil
     }
-    return data
+    return result.data
   }
 }
 

@@ -213,4 +213,54 @@ final class ProtocolUpdateParserTests: XCTestCase {
       try ApplicationPackageInstaller.verifySHA256(of: fileURL, expected: "abcd")
     )
   }
+
+  func testParsesVSCodeUpdatePayloadAndIgnoresCommitNotes() throws {
+    let data = Data(
+      """
+      {
+        "url": "https://vscode.download.prss.microsoft.com/stable/abc/VSCode-darwin-arm64.zip",
+        "name": "1.134.0",
+        "version": "110a328ea54b42367b803ec53ee0bf52ef26b419",
+        "productVersion": "1.134.0",
+        "timestamp": 1787078154886,
+        "sha256hash": "6df181646588f0132339d19f5bdfb20bd0d6db05e5801061f12e0dc93c85fa70",
+        "notes": "110a328ea54b42367b803ec53ee0bf52ef26b419"
+      }
+      """.utf8
+    )
+
+    let payload = try XCTUnwrap(VSCodeUpdatePayload.parse(data))
+    XCTAssertEqual(payload.productVersion, "1.134.0")
+    XCTAssertEqual(payload.commit, "110a328ea54b42367b803ec53ee0bf52ef26b419")
+    XCTAssertEqual(
+      payload.packageURL?.lastPathComponent,
+      "VSCode-darwin-arm64.zip"
+    )
+    XCTAssertEqual(
+      payload.sha256,
+      "6df181646588f0132339d19f5bdfb20bd0d6db05e5801061f12e0dc93c85fa70"
+    )
+    XCTAssertNil(payload.notes)
+    XCTAssertEqual(payload.timestamp, Date(timeIntervalSince1970: 1_787_078_154.886))
+    XCTAssertTrue(payload.shouldOfferUpdate(against: "1.133.0"))
+    XCTAssertTrue(payload.shouldOfferUpdate(against: "1.134.0"))
+    XCTAssertFalse(payload.shouldOfferUpdate(against: "1.135.0"))
+  }
+
+  func testBuildsVSCodeUpdaterCheckURL() throws {
+    let updateURL = try XCTUnwrap(URL(string: "https://update.code.visualstudio.com/"))
+    XCTAssertEqual(
+      VSCodeUpdaterDetector.checkURL(
+        updateURL: updateURL,
+        platform: "darwin-arm64",
+        quality: "stable",
+        commit: "abc123"
+      )?.absoluteString,
+      "https://update.code.visualstudio.com/api/update/darwin-arm64/stable/abc123"
+    )
+    XCTAssertEqual(
+      VSCodeUpdaterDetector.parseSourceIdentifier("stable/abc123")?.commit,
+      "abc123"
+    )
+  }
 }

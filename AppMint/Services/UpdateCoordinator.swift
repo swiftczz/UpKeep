@@ -35,6 +35,7 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
   private let sparkle = SparkleUpdateProvider()
   private let electronBuilder = ElectronBuilderUpdateProvider()
   private let tauri = TauriUpdateProvider()
+  private let vscode = VSCodeUpdateProvider()
   private let process: ApplicationProcessClient
 
   init(process: ApplicationProcessClient = .live) {
@@ -55,6 +56,8 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
       return await electronBuilder.check(application)
     case .tauri:
       return await tauri.check(application)
+    case .vscodeUpdater:
+      return await vscode.check(application)
     case .homebrew, .selfManaged, .sparkle:
       return application
     }
@@ -80,6 +83,8 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
         try await electronBuilder.upgrade(application, progress: progress)
       case .tauri:
         try await tauri.upgrade(application, progress: progress)
+      case .vscodeUpdater:
+        try await vscode.upgrade(application, progress: progress)
       case .selfManaged:
         throw ProcessRunnerError.failed(
           status: 1,
