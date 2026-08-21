@@ -120,7 +120,10 @@ private actor ControlledUpdateCoordinator: UpdateCoordinating {
     }
   }
 
-  func update(_ application: AppRecord) async throws {}
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {}
 
   func waitUntilCheckStarts() async {
     while !checkStarted {

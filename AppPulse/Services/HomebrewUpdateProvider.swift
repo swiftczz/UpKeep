@@ -50,14 +50,12 @@ struct HomebrewUpdateProvider: Sendable {
         application.latestVersion = remoteVersion == "latest" ? nil : remoteVersion
         application.releaseNotes = nil
         application.canAutomaticallyUpdate = cask.autoUpdates != true
-
-        if outdatedItem != nil {
-          application.status = .updateAvailable
-        } else if cask.autoUpdates == true || cask.version == "latest" {
-          application.status = .selfManaged
-        } else {
-          application.status = .upToDate
-        }
+        application.status = Self.resolvedStatus(
+          currentVersion: application.currentVersion,
+          remoteVersion: remoteVersion,
+          brewReportsOutdated: outdatedItem != nil,
+          autoUpdates: cask.autoUpdates
+        )
 
         return application
       }
@@ -68,7 +66,10 @@ struct HomebrewUpdateProvider: Sendable {
     }
   }
 
-  func upgrade(_ application: AppRecord) async throws {
+  func upgrade(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {
     guard let brewURL = Self.brewExecutableURL,
       let token = application.sourceIdentifier,
       application.canAutomaticallyUpdate
@@ -76,10 +77,39 @@ struct HomebrewUpdateProvider: Sendable {
       throw ProcessRunnerError.failed(status: 1, message: "此应用不能由 Homebrew 自动更新。")
     }
 
+    progress(.indeterminate("正在更新…"))
+    let parser = HomebrewOutputProgressParser()
     _ = try await ProcessRunner.run(
       executableURL: brewURL,
-      arguments: ["upgrade", "--cask", token]
+      arguments: ["upgrade", "--cask", token],
+      onOutput: { chunk in
+        progress(parser.consuming(chunk))
+      }
     )
+    progress(UpdateProgress(fractionCompleted: 1, status: "正在完成…"))
+  }
+
+  static func resolvedStatus(
+    currentVersion: String,
+    remoteVersion: String,
+    brewReportsOutdated: Bool,
+    autoUpdates: Bool?
+  ) -> UpdateStatus {
+    if remoteVersion == "latest" {
+      return .selfManaged
+    }
+
+    if brewReportsOutdated,
+      VersionComparator.isNewer(remoteVersion, than: currentVersion)
+    {
+      return .updateAvailable
+    }
+
+    if autoUpdates == true {
+      return .selfManaged
+    }
+
+    return .upToDate
   }
 
   private static var brewExecutableURL: URL? {
@@ -92,6 +122,36 @@ struct HomebrewUpdateProvider: Sendable {
       candidates
       .first(where: FileManager.default.isExecutableFile(atPath:))
       .map(URL.init(fileURLWithPath:))
+  }
+}
+
+final class HomebrewOutputProgressParser: @unchecked Sendable {
+  private let lock = NSLock()
+  private var progress = UpdateProgress.indeterminate("正在更新…")
+
+  func consuming(_ chunk: String) -> UpdateProgress {
+    lock.lock()
+    defer { lock.unlock() }
+
+    if let percent = Self.lastPercent(in: chunk) {
+      progress = UpdateProgress(
+        fractionCompleted: min(percent / 100, 0.9),
+        status: "正在下载…"
+      )
+    } else if chunk.localizedCaseInsensitiveContains("==> Installing")
+      || chunk.localizedCaseInsensitiveContains("==> Purging")
+    {
+      progress = UpdateProgress(fractionCompleted: 0.92, status: "正在安装…")
+    } else if chunk.localizedCaseInsensitiveContains("==> Downloading") {
+      progress = .indeterminate("正在下载…")
+    }
+    return progress
+  }
+
+  private static func lastPercent(in chunk: String) -> Double? {
+    let matches = chunk.matches(of: /(\d{1,3}(?:\.\d+)?)%/)
+    guard let match = matches.last else { return nil }
+    return Double(match.1)
   }
 }
 

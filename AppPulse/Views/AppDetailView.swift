@@ -3,6 +3,7 @@ import SwiftUI
 struct AppDetailView: View {
   let application: AppRecord
   let isUpdating: Bool
+  let updateProgress: UpdateProgress?
   let isUpdateIgnored: Bool
   let primaryAction: () -> Void
   let openApplication: () -> Void
@@ -56,7 +57,12 @@ struct AppDetailView: View {
       }
 
       Spacer(minLength: 24)
-      primaryActionMenu
+
+      if isUpdating {
+        updateProgressControl
+      } else {
+        primaryActionMenu
+      }
     }
   }
 
@@ -130,6 +136,42 @@ struct AppDetailView: View {
 
     Button("卸载应用", systemImage: "trash", role: .destructive) {}
       .disabled(true)
+  }
+
+  private var updateProgressControl: some View {
+    VStack(alignment: .trailing, spacing: 6) {
+      if let fraction = updateProgress?.fractionCompleted {
+        ProgressView(value: fraction)
+          .progressViewStyle(.linear)
+          .tint(.blue)
+          .frame(width: 168)
+        Text(progressCaption)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .monospacedDigit()
+      } else {
+        ProgressView(updateProgress?.status ?? "正在更新…")
+          .controlSize(.small)
+      }
+    }
+    .frame(minWidth: 168, alignment: .trailing)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(progressAccessibilityLabel)
+  }
+
+  private var progressCaption: String {
+    let status = updateProgress?.status ?? "正在更新…"
+    if let percentText = updateProgress?.percentText {
+      return "\(status) \(percentText)"
+    }
+    return status
+  }
+
+  private var progressAccessibilityLabel: String {
+    if let percentText = updateProgress?.percentText {
+      return "\(updateProgress?.status ?? "正在更新")，\(percentText)"
+    }
+    return updateProgress?.status ?? "正在更新"
   }
 
   private var primaryActionLabel: some View {

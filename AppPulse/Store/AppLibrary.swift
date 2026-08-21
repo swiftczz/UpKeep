@@ -10,6 +10,7 @@ final class AppLibrary {
   var lastCheckedAt: Date?
   var alertMessage: String?
   private(set) var updatingApplicationIDs = Set<AppRecord.ID>()
+  private(set) var updateProgressByID: [AppRecord.ID: UpdateProgress] = [:]
   private(set) var ignoredBundleIdentifiers: Set<String>
 
   private let scanner: any ApplicationScanning
@@ -167,13 +168,11 @@ final class AppLibrary {
     var failures: [String] = []
 
     for application in updates {
-      updatingApplicationIDs.insert(application.id)
       do {
-        try await coordinator.update(application)
+        _ = try await performVisibleUpdate(application)
       } catch {
         failures.append("\(application.name)：\(error.localizedDescription)")
       }
-      updatingApplicationIDs.remove(application.id)
     }
 
     if !failures.isEmpty {
@@ -187,15 +186,132 @@ final class AppLibrary {
   }
 
   private func update(_ application: AppRecord) async {
-    updatingApplicationIDs.insert(application.id)
-    defer { updatingApplicationIDs.remove(application.id) }
-
     do {
-      try await coordinator.update(application)
-      await refresh()
+      _ = try await performVisibleUpdate(application)
     } catch {
       alertMessage = error.localizedDescription
     }
+
+    await refreshIfNoUpdatesInFlight()
+  }
+
+  private func refreshIfNoUpdatesInFlight() async {
+    guard updatingApplicationIDs.isEmpty else { return }
+    await refresh()
+  }
+
+  @discardableResult
+  private func performVisibleUpdate(_ application: AppRecord) async throws -> Bool {
+    let applicationID = application.id
+    updatingApplicationIDs.insert(applicationID)
+    updateProgressByID[applicationID] = .indeterminate("正在更新…")
+
+    do {
+      try await performCoordinatorUpdate(application)
+      let diskRecord = await waitForInstalledDiskRecord(application)
+      updateProgressByID[applicationID] = UpdateProgress(
+        fractionCompleted: 1,
+        status: "正在完成…"
+      )
+      try? await Task.sleep(for: .milliseconds(300))
+      finishUpdating(application, diskRecord: diskRecord)
+      return diskRecord != nil
+    } catch {
+      finishUpdating(application, diskRecord: nil)
+      throw error
+    }
+  }
+
+  private func finishUpdating(_ application: AppRecord, diskRecord: AppRecord?) {
+    if let diskRecord {
+      applyInstalledDiskRecord(diskRecord, replacing: application)
+    }
+    updateProgressByID[application.id] = nil
+    updatingApplicationIDs.remove(application.id)
+  }
+
+  private func performCoordinatorUpdate(_ application: AppRecord) async throws {
+    let applicationID = application.id
+    let (stream, continuation) = AsyncStream.makeStream(of: UpdateProgress.self)
+    let consumeProgress = Task { @MainActor in
+      for await progress in stream {
+        guard self.updatingApplicationIDs.contains(applicationID) else { return }
+        self.updateProgressByID[applicationID] = progress
+      }
+    }
+
+    do {
+      try await coordinator.update(application) { progress in
+        continuation.yield(progress)
+      }
+      continuation.finish()
+      await consumeProgress.value
+    } catch {
+      continuation.finish()
+      await consumeProgress.value
+      throw error
+    }
+  }
+
+  private func waitForInstalledDiskRecord(_ application: AppRecord) async -> AppRecord? {
+    let applicationURL = application.applicationURL
+    guard FileManager.default.fileExists(atPath: applicationURL.path),
+      ApplicationScanner.makeRecord(from: applicationURL) != nil
+    else {
+      return nil
+    }
+
+    for attempt in 0..<48 {
+      if Task.isCancelled { return nil }
+      if let disk = ApplicationScanner.makeRecord(from: applicationURL) {
+        let versionChanged =
+          disk.currentVersion != application.currentVersion
+          || disk.buildVersion != application.buildVersion
+        if versionChanged {
+          return disk
+        }
+      }
+      if attempt < 47 {
+        try? await Task.sleep(for: .milliseconds(250))
+      }
+    }
+
+    return nil
+  }
+
+  private func applyInstalledDiskRecord(_ disk: AppRecord, replacing application: AppRecord) {
+    guard
+      let index = applications.firstIndex(where: {
+        $0.id == application.id || $0.bundleIdentifier == application.bundleIdentifier
+      })
+    else {
+      return
+    }
+
+    var record = disk
+    record.source = application.source
+    record.appStorePlatform = application.appStorePlatform
+    record.appStoreCountryCode = application.appStoreCountryCode
+    record.sourceURL = application.sourceURL
+    record.homepageURL = application.homepageURL
+    record.releaseNotes = application.releaseNotes
+    record.releaseDate = application.releaseDate
+    record.releaseNotesURL = application.releaseNotesURL
+    record.sourceIdentifier = application.sourceIdentifier
+    record.latestVersion = application.latestVersion
+    record.latestBuildVersion = application.latestBuildVersion
+
+    if let latestVersion = application.latestVersion,
+      VersionComparator.isNewer(latestVersion, than: disk.currentVersion)
+    {
+      record.status = .updateAvailable
+      record.canAutomaticallyUpdate = application.canAutomaticallyUpdate
+    } else {
+      record.status = .upToDate
+      record.canAutomaticallyUpdate = false
+    }
+
+    applications[index] = record
   }
 
   private func persistIgnoredBundleIdentifiers() {

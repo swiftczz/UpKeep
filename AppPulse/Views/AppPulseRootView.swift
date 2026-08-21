@@ -25,6 +25,7 @@ struct AppPulseRootView: View {
         searchText: searchText,
         phase: library.phase,
         ignoredApplicationIDs: library.ignoredApplicationIDs,
+        updateProgressByID: library.updateProgressByID,
         ignoreUpdates: { library.ignoreUpdates(for: $0) },
         stopIgnoringUpdates: { library.stopIgnoringUpdates(for: $0) }
       )
@@ -34,6 +35,7 @@ struct AppPulseRootView: View {
         AppDetailView(
           application: application,
           isUpdating: library.updatingApplicationIDs.contains(application.id),
+          updateProgress: library.updateProgressByID[application.id],
           isUpdateIgnored: library.isUpdateIgnored(application),
           primaryAction: {
             Task {

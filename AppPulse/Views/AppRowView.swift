@@ -3,6 +3,7 @@ import SwiftUI
 struct AppRowView: View {
   let application: AppRecord
   let isUpdateIgnored: Bool
+  var updateProgress: UpdateProgress? = nil
 
   private var listDate: Date? {
     if application.needsUpdate && !isUpdateIgnored {
@@ -69,7 +70,20 @@ struct AppRowView: View {
 
   @ViewBuilder
   private var sourceAccessory: some View {
-    if application.status == .checking {
+    if let updateProgress {
+      if let fraction = updateProgress.fractionCompleted {
+        ProgressView(value: fraction)
+          .progressViewStyle(.circular)
+          .controlSize(.small)
+          .help(updateProgress.status)
+          .accessibilityLabel(progressAccessibilityLabel(updateProgress))
+      } else {
+        ProgressView()
+          .controlSize(.small)
+          .help(updateProgress.status)
+          .accessibilityLabel(updateProgress.status)
+      }
+    } else if application.status == .checking {
       ProgressView()
         .controlSize(.small)
     } else {
@@ -79,6 +93,13 @@ struct AppRowView: View {
         .help(application.sourceTitle)
         .accessibilityLabel(application.sourceTitle)
     }
+  }
+
+  private func progressAccessibilityLabel(_ progress: UpdateProgress) -> String {
+    if let percentText = progress.percentText {
+      return "\(progress.status)，\(percentText)"
+    }
+    return progress.status
   }
 
   private var usesReleaseDate: Bool {

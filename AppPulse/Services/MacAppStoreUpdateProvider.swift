@@ -5,7 +5,10 @@ struct MacAppStoreUpdateProvider: Sendable {
     AppStoreUpdateSession.isAvailable
   }
 
-  func upgrade(_ application: AppRecord) async throws {
+  func upgrade(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {
     guard application.appStorePlatform == .mac else {
       throw MacAppStoreUpdateError.unsupportedPlatform
     }
@@ -16,16 +19,20 @@ struct MacAppStoreUpdateProvider: Sendable {
       throw MacAppStoreUpdateError.unavailable
     }
 
+    progress(.indeterminate("正在准备更新…"))
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
       let session = AppStoreUpdateSession()
       session.startUpdate(
         adamID: adamID,
         applicationURL: application.applicationURL,
-        progress: nil
+        progress: { updateProgress in
+          progress(updateProgress)
+        }
       ) { _, error in
         if let error {
           continuation.resume(throwing: error)
         } else {
+          progress(UpdateProgress(fractionCompleted: 1, status: "正在完成…"))
           continuation.resume(returning: ())
         }
       }

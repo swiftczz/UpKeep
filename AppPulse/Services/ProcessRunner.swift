@@ -29,25 +29,65 @@ enum ProcessRunnerError: LocalizedError {
 }
 
 enum ProcessRunner {
-  static func run(executableURL: URL, arguments: [String]) async throws -> ProcessOutput {
+  static func run(
+    executableURL: URL,
+    arguments: [String],
+    onOutput: (@Sendable (String) -> Void)? = nil
+  ) async throws -> ProcessOutput {
     let output = try await Task.detached(priority: .userInitiated) {
       let process = Process()
       let outputPipe = Pipe()
       let errorPipe = Pipe()
+      let collectedOutput = DataBuffer()
+      let collectedError = DataBuffer()
 
       process.executableURL = executableURL
       process.arguments = arguments
       process.standardOutput = outputPipe
       process.standardError = errorPipe
 
+      if onOutput != nil {
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+          let data = handle.availableData
+          guard !data.isEmpty else { return }
+          collectedOutput.append(data)
+          onOutput?(String(decoding: data, as: UTF8.self))
+        }
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+          let data = handle.availableData
+          guard !data.isEmpty else { return }
+          collectedError.append(data)
+          onOutput?(String(decoding: data, as: UTF8.self))
+        }
+      }
+
       try process.run()
-      let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-      let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+      if onOutput == nil {
+        collectedOutput.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+        collectedError.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+      }
+
       process.waitUntilExit()
+      outputPipe.fileHandleForReading.readabilityHandler = nil
+      errorPipe.fileHandleForReading.readabilityHandler = nil
+
+      if let remainingOutput = try outputPipe.fileHandleForReading.readToEnd(),
+        !remainingOutput.isEmpty
+      {
+        collectedOutput.append(remainingOutput)
+        onOutput?(String(decoding: remainingOutput, as: UTF8.self))
+      }
+      if let remainingError = try errorPipe.fileHandleForReading.readToEnd(),
+        !remainingError.isEmpty
+      {
+        collectedError.append(remainingError)
+        onOutput?(String(decoding: remainingError, as: UTF8.self))
+      }
 
       return ProcessOutput(
-        data: outputData,
-        errorData: errorData,
+        data: collectedOutput.data,
+        errorData: collectedError.data,
         terminationStatus: process.terminationStatus
       )
     }.value
@@ -58,5 +98,22 @@ enum ProcessRunner {
     }
 
     return output
+  }
+}
+
+private final class DataBuffer: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = Data()
+
+  var data: Data {
+    lock.lock()
+    defer { lock.unlock() }
+    return storage
+  }
+
+  func append(_ data: Data) {
+    lock.lock()
+    storage.append(data)
+    lock.unlock()
   }
 }

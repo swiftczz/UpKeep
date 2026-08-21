@@ -1,8 +1,30 @@
 import Foundation
 
+struct UpdateProgress: Hashable, Sendable {
+  var fractionCompleted: Double?
+  var status: String
+
+  static func indeterminate(_ status: String) -> UpdateProgress {
+    UpdateProgress(fractionCompleted: nil, status: status)
+  }
+
+  var percentText: String? {
+    guard let fractionCompleted else { return nil }
+    return "\(Int((min(max(fractionCompleted, 0), 1) * 100).rounded()))%"
+  }
+
+  static func clamp(_ value: Double) -> Double {
+    let normalized = value > 1.0001 ? value / 100 : value
+    return min(max(normalized, 0), 1)
+  }
+}
+
 protocol UpdateCoordinating: Sendable {
   func check(_ applications: [AppRecord]) async -> [AppRecord]
-  func update(_ application: AppRecord) async throws
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws
 }
 
 struct UpdateCoordinator: UpdateCoordinating, Sendable {
@@ -38,14 +60,17 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
     }
   }
 
-  func update(_ application: AppRecord) async throws {
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {
     switch application.source {
     case .homebrew:
-      try await homebrew.upgrade(application)
+      try await homebrew.upgrade(application, progress: progress)
     case .appStore:
-      try await macAppStore.upgrade(application)
+      try await macAppStore.upgrade(application, progress: progress)
     case .sparkle:
-      try await SparkleApplicationUpdater.upgrade(application)
+      try await SparkleApplicationUpdater.upgrade(application, progress: progress)
     case .github, .selfManaged:
       throw ProcessRunnerError.failed(
         status: 1,

@@ -13,7 +13,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
 
   private var adamID: UInt64 = 0
   private var applicationURL: URL?
-  private var progressHandler: (@Sendable (Double) -> Void)?
+  private var progressHandler: (@Sendable (UpdateProgress) -> Void)?
   private var completionHandler: (@Sendable (String?, NSError?) -> Void)?
   private var downloadQueue: AnyObject?
   private var currentDownload: AnyObject?
@@ -27,7 +27,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
   func startUpdate(
     adamID: UInt64,
     applicationURL: URL,
-    progress: (@Sendable (Double) -> Void)?,
+    progress: (@Sendable (UpdateProgress) -> Void)?,
     completion: @escaping @Sendable (String?, NSError?) -> Void
   ) {
     guard Thread.isMainThread else {
@@ -130,8 +130,13 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     refreshArtifactHardLinks()
 
     let status = (download as AnyObject).value(forKey: "status") as? NSObject
-    let progress = status?.value(forKey: "phasePercentComplete") as? NSNumber
-    progressHandler?(progress?.doubleValue ?? 0)
+    let rawProgress = status?.value(forKey: "phasePercentComplete") as? NSNumber
+    progressHandler?(
+      UpdateProgress(
+        fractionCompleted: UpdateProgress.clamp(rawProgress?.doubleValue ?? 0),
+        status: "正在下载…"
+      )
+    )
   }
 
   @objc(downloadQueue:changedWithRemoval:)
@@ -150,6 +155,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       let receiptHardLinkURL,
       let applicationURL
     {
+      progressHandler?(UpdateProgress(fractionCompleted: 0.95, status: "正在安装…"))
       DispatchQueue.global(qos: .userInitiated).async {
         let installError = Self.installDownloadedPackage(
           packageURL: packageHardLinkURL,

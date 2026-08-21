@@ -6,6 +6,7 @@ struct AppSidebarView: View {
   let searchText: String
   let phase: LibraryPhase
   let ignoredApplicationIDs: Set<AppRecord.ID>
+  let updateProgressByID: [AppRecord.ID: UpdateProgress]
   let ignoreUpdates: (AppRecord.ID) -> Void
   let stopIgnoringUpdates: (AppRecord.ID) -> Void
   @State private var scrollPosition = ScrollPosition()
@@ -33,7 +34,11 @@ struct AppSidebarView: View {
       if !availableUpdates.isEmpty {
         Section {
           ForEach(availableUpdates) { application in
-            AppRowView(application: application, isUpdateIgnored: false)
+            AppRowView(
+              application: application,
+              isUpdateIgnored: false,
+              updateProgress: updateProgressByID[application.id]
+            )
               .tag(application.id)
               .trackScrollVisibility(
                 applicationID: application.id,
@@ -131,7 +136,11 @@ struct AppSidebarView: View {
     isUpdateIgnored: Bool
   ) -> some View {
     if isUpdateIgnored {
-      AppRowView(application: application, isUpdateIgnored: true)
+      AppRowView(
+        application: application,
+        isUpdateIgnored: true,
+        updateProgress: updateProgressByID[application.id]
+      )
         .tag(application.id)
         .contextMenu {
           Button("取消忽略更新", systemImage: "bell") {
@@ -142,7 +151,11 @@ struct AppSidebarView: View {
           stopIgnoringUpdates(application.id)
         }
     } else {
-      AppRowView(application: application, isUpdateIgnored: false)
+      AppRowView(
+        application: application,
+        isUpdateIgnored: false,
+        updateProgress: updateProgressByID[application.id]
+      )
         .tag(application.id)
     }
   }
