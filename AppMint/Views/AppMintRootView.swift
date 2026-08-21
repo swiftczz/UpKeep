@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-struct AppPulseRootView: View {
+struct AppMintRootView: View {
   @Environment(\.openURL) private var openURL
   private let applicationLauncher: ApplicationLauncher
   @State private var library: AppLibrary
@@ -134,7 +134,7 @@ struct AppPulseRootView: View {
   }
 }
 
-#Preview("AppPulse") {
-  AppPulseRootView(library: AppLibrary(applications: AppRecord.previewApps))
+#Preview("AppMint") {
+  AppMintRootView(library: AppLibrary(applications: AppRecord.previewApps))
     .frame(width: 1160, height: 760)
 }

@@ -1,12 +1,12 @@
 import Foundation
 import XCTest
 
-@testable import AppPulse
+@testable import AppMint
 
 @MainActor
 final class AppLibraryRefreshTests: XCTestCase {
   func testRefreshKeepsPublishedListStableUntilChecksFinish() async throws {
-    let suiteName = "AppPulseTests.\(UUID().uuidString)"
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -37,7 +37,7 @@ final class AppLibraryRefreshTests: XCTestCase {
   }
 
   func testRefreshRequestedDuringCheckRunsAfterCurrentRefresh() async throws {
-    let suiteName = "AppPulseTests.\(UUID().uuidString)"
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 

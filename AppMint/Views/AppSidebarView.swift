@@ -80,13 +80,13 @@ struct AppSidebarView: View {
     } action: { _, newOffsetY in
       scrollOffsetY = newOffsetY
     }
-    .navigationTitle("AppPulse")
+    .navigationTitle("AppMint")
     .overlay {
       if applications.isEmpty, phase == .idle {
         ContentUnavailableView(
           "没有找到应用",
           systemImage: "app.dashed",
-          description: Text("AppPulse 会扫描“应用程序”和用户应用目录。")
+          description: Text("AppMint 会扫描“应用程序”和用户应用目录。")
         )
       } else if filteredApplications.isEmpty, !searchText.isEmpty {
         ContentUnavailableView.search(text: searchText)

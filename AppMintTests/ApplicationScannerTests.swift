@@ -2,13 +2,13 @@ import Darwin
 import Foundation
 import XCTest
 
-@testable import AppPulse
+@testable import AppMint
 
 final class ApplicationScannerTests: XCTestCase {
   func testUsesLocalizedNameWhenRawDisplayNameIsBlank() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
-      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
     let applicationURL = temporaryDirectory.appendingPathComponent(
       "Eudic.app",
       isDirectory: true
@@ -56,7 +56,7 @@ final class ApplicationScannerTests: XCTestCase {
   func testReloadsVersionAfterApplicationIsUpdatedInPlace() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
-      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
     let applicationURL = temporaryDirectory.appendingPathComponent(
       "Updated.app",
       isDirectory: true
@@ -150,7 +150,7 @@ final class ApplicationScannerTests: XCTestCase {
   func testDetectsNativeMacAppStoreReceipt() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
-      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
     let applicationURL = temporaryDirectory.appendingPathComponent(
       "MacStore.app",
       isDirectory: true
@@ -185,7 +185,7 @@ final class ApplicationScannerTests: XCTestCase {
   func testDetectsWrappedIPhoneAppStoreApplication() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
-      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
     let applicationURL = temporaryDirectory.appendingPathComponent(
       "NoWords.app",
       isDirectory: true
@@ -240,7 +240,7 @@ final class ApplicationScannerTests: XCTestCase {
   func testDetectsGitHubDownloadForOtherwiseUnknownApplication() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
-      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
     let applicationURL = temporaryDirectory.appendingPathComponent(
       "Downloaded.app",
       isDirectory: true
@@ -272,7 +272,7 @@ final class ApplicationScannerTests: XCTestCase {
   func testDetectsElectronGitHubProviderForOtherwiseUnknownApplication() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
-      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
     let applicationURL = temporaryDirectory.appendingPathComponent(
       "CodePilot.app",
       isDirectory: true
@@ -304,7 +304,7 @@ final class ApplicationScannerTests: XCTestCase {
   func testDoesNotTreatCustomElectronProviderAsGitHub() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
-      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
     let applicationURL = temporaryDirectory.appendingPathComponent(
       "CustomProvider.app",
       isDirectory: true

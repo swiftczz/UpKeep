@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 
-@testable import AppPulse
+@testable import AppMint
 
 final class AppStoreLookupTests: XCTestCase {
   func testIntegratedAppStoreUpdaterIsAvailable() {

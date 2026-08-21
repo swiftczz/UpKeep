@@ -66,7 +66,7 @@ private enum MacAppStoreUpdateError: LocalizedError {
     case .missingStoreIdentifier:
       "缺少 App Store 应用编号，无法开始更新。"
     case .unavailable:
-      "当前系统不支持 AppPulse 的 App Store 更新能力。"
+      "当前系统不支持 AppMint 的 App Store 更新能力。"
     case .unsupportedPlatform:
       "安装在 Mac 上的 iPhone 或 iPad 应用暂不支持直接更新。"
     }

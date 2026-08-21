@@ -1,12 +1,12 @@
 import Foundation
 import XCTest
 
-@testable import AppPulse
+@testable import AppMint
 
 @MainActor
 final class AppLibraryIgnoreTests: XCTestCase {
   func testIgnoredUpdateMovesOutOfAvailableUpdatesAndPersists() throws {
-    let suiteName = "AppPulseTests.\(UUID().uuidString)"
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -33,7 +33,7 @@ final class AppLibraryIgnoreTests: XCTestCase {
   }
 
   func testAvailableUpdatesAreSortedByReleaseDateDescending() throws {
-    let suiteName = "AppPulseTests.\(UUID().uuidString)"
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -54,7 +54,7 @@ final class AppLibraryIgnoreTests: XCTestCase {
   }
 
   func testIgnoredHomebrewUpdateIsExcludedFromUpdateAll() throws {
-    let suiteName = "AppPulseTests.\(UUID().uuidString)"
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 

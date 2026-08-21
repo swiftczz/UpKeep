@@ -1,6 +1,6 @@
-# AppPulse
+# AppMint
 
-AppPulse 是一个面向 macOS 26 及以上系统的应用更新检查工具。它扫描本机应用，识别实际更新来源，并在原生 SwiftUI 双栏界面中展示当前版本、最新版本和发行说明。
+AppMint 是一个面向 macOS 26 及以上系统的应用更新检查工具。它扫描本机应用，识别实际更新来源，并在原生 SwiftUI 双栏界面中展示当前版本、最新版本和发行说明。
 
 应用源码不直接导入 AppKit：窗口与网页 URL 操作使用 SwiftUI，应用图标通过 Quick Look Thumbnailing 读取为 Core Graphics 图像；本地应用启动、本机扫描、网络和进程操作由 Foundation 完成。
 
@@ -21,9 +21,9 @@ AppPulse 是一个面向 macOS 26 及以上系统的应用更新检查工具。�
 - 刷新时保持当前列表和选择稳定，扫描与检查结束后一次性提交最终分组，避免点击应用时列表跳动
 - 支持在更新列表中右键忽略应用更新，并在已安装列表中取消忽略；忽略状态会跨启动保留
 - 支持应用搜索、详情查看、检查更新和安全的更新入口
-- 原生 Mac App Store 应用可复用 App Store 当前登录账号，由 AppPulse 直接下载并安装更新
-- Homebrew Cask 可由 AppPulse 执行更新
-- 带安全下载项的 Sparkle Appcast 可由 AppPulse 调起 Sparkle 官方流程完成验证、下载和安装
+- 原生 Mac App Store 应用可复用 App Store 当前登录账号，由 AppMint 直接下载并安装更新
+- Homebrew Cask 可由 AppMint 执行更新
+- 带安全下载项的 Sparkle Appcast 可由 AppMint 调起 Sparkle 官方流程完成验证、下载和安装
 - GitHub 等其他来源交回原管理工具
 
 ## 环境要求
@@ -32,7 +32,7 @@ AppPulse 是一个面向 macOS 26 及以上系统的应用更新检查工具。�
 - Xcode 26+
 - Swift 6.2+
 - Homebrew 为可选项；未安装时不启用 Homebrew 来源
-- 不需要安装 `mas`；App Store 更新逻辑已经集成到 AppPulse
+- 不需要安装 `mas`；App Store 更新逻辑已经集成到 AppMint
 - Sparkle 更新使用项目内嵌的 Sparkle 2，不需要目标应用保持打开
 
 > App Store 直接更新使用 macOS 私有的 CommerceKit 与 StoreFoundation 框架，适合本地或
@@ -43,10 +43,10 @@ AppPulse 是一个面向 macOS 26 及以上系统的应用更新检查工具。�
 
 工程由根目录的 `Package.swift` 管理，不依赖 `.xcodeproj`。
 
-在 Xcode 中打开 `Package.swift`，选择 AppPulse executable scheme 后运行；也可以在项目目录执行：
+在 Xcode 中打开 `Package.swift`，选择 AppMint executable scheme 后运行；也可以在项目目录执行：
 
 ```sh
-swift run AppPulse
+swift run AppMint
 ```
 
 运行测试：
@@ -80,9 +80,9 @@ APP_VERSION=0.1.0 ./script/build_and_run.sh --build-only arm64     --sign --dmg
 APP_VERSION=0.1.0 ./script/build_and_run.sh --build-only x86_64    --sign --dmg
 ```
 
-- `--build-only` 使用 Release 配置，并在 `dist/` 生成 `AppPulse.app`。
+- `--build-only` 使用 Release 配置，并在 `dist/` 生成 `AppMint.app`。
 - `--sign` 默认使用 Ad-hoc 签名；设置 `SIGN_IDENTITY="Developer ID Application: …"` 可改用 Developer ID 和 Hardened Runtime。
-- `--dmg` 生成 `AppPulse-<架构>-<版本>.dmg`，内含应用和指向 `/Applications` 的拖拽安装入口。
+- `--dmg` 生成 `AppMint-<架构>-<版本>.dmg`，内含应用和指向 `/Applications` 的拖拽安装入口。
 - `APP_VERSION` 默认取最近的 Git tag，没有 tag 时为 `0.1.0-dev`。
 - `APP_BUILD` 默认取当前仓库提交数，也可以通过环境变量明确指定。
 - 如果添加 `Resources/AppIcon.icns`，脚本会自动将其写入应用包。
@@ -104,17 +104,17 @@ python3 script/make_app_icon.py Resources
 ## 目录结构
 
 ```text
-AppPulse/
+AppMint/
 ├── Package.swift
 ├── script/
 │   └── build_and_run.sh
-├── AppPulse/
+├── AppMint/
 │   ├── Models/
 │   ├── Services/
 │   ├── Store/
 │   ├── Views/
 │   └── Resources/
-├── AppPulseTests/
+├── AppMintTests/
 └── 需求文档.md
 ```
 
@@ -122,7 +122,7 @@ AppPulse/
 
 - 原生 Mac App Store 应用支持直接更新；安装在 Mac 上的 iPhone/iPad 应用仍跳转至官方商店。
 - Sparkle 应用在 Appcast 含 HTTPS 安装包时支持直接更新；仅含说明、动态生成或需要鉴权的 Feed 仍打开应用处理。
-- GitHub 兜底识别只标注可确认的来源，不等同于 AppPulse 已能自动下载或安装 GitHub Releases。
+- GitHub 兜底识别只标注可确认的来源，不等同于 AppMint 已能自动下载或安装 GitHub Releases。
 - Homebrew 通常不提供发行说明，因此详情可能只有版本与主页。
 - 动态或需要鉴权的更新源不会被强行解析。
 - 脚本可以生成 `.app` 和 DMG；公开分发前仍需配置 Developer ID 签名、公证和正式应用图标。

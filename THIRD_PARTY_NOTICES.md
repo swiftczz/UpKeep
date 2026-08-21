@@ -2,14 +2,14 @@
 
 ## Sparkle
 
-AppPulse embeds [Sparkle](https://github.com/sparkle-project/Sparkle) to securely
+AppMint embeds [Sparkle](https://github.com/sparkle-project/Sparkle) to securely
 update Sparkle-enabled applications. Sparkle is distributed under the MIT
 License and includes components under compatible licenses. The complete
-license text is bundled with AppPulse as `Sparkle-LICENSE.txt`.
+license text is bundled with AppMint as `Sparkle-LICENSE.txt`.
 
 ## mas-cli/mas
 
-The App Store transaction flow in `AppPulse/Services/AppStoreUpdateSession.swift` is derived from
+The App Store transaction flow in `AppMint/Services/AppStoreUpdateSession.swift` is derived from
 [mas-cli/mas](https://github.com/mas-cli/mas).
 
 The MIT License (MIT)

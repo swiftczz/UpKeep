@@ -43,7 +43,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     }
 
     guard PrivateFrameworks.load() != nil else {
-      completion(nil, Self.bridgeError(1, "当前系统不支持 AppPulse 的 App Store 更新能力。"))
+      completion(nil, Self.bridgeError(1, "当前系统不支持 AppMint 的 App Store 更新能力。"))
       return
     }
     guard adamID != 0 else {
@@ -61,7 +61,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     guard let queueClass = NSClassFromString("CKDownloadQueue"),
       let queue = ObjC.call(queueClass, "sharedDownloadQueue")
     else {
-      complete(installedPath: nil, error: Self.bridgeError(1, "当前系统不支持 AppPulse 的 App Store 更新能力。"))
+      complete(installedPath: nil, error: Self.bridgeError(1, "当前系统不支持 AppMint 的 App Store 更新能力。"))
       return
     }
 
@@ -79,7 +79,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       let controllerClass = NSClassFromString("CKPurchaseController"),
       let controller = ObjC.call(controllerClass, "sharedPurchaseController")
     else {
-      complete(installedPath: nil, error: Self.bridgeError(1, "当前系统不支持 AppPulse 的 App Store 更新能力。"))
+      complete(installedPath: nil, error: Self.bridgeError(1, "当前系统不支持 AppMint 的 App Store 更新能力。"))
       return
     }
 
@@ -355,7 +355,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     }
 
     guard let execute = authorizationExecuteWithPrivileges else {
-      return bridgeError(1, "当前系统不支持 AppPulse 的 App Store 更新能力。")
+      return bridgeError(1, "当前系统不支持 AppMint 的 App Store 更新能力。")
     }
 
     let receiptDirectoryURL = applicationURL.appendingPathComponent(
@@ -367,12 +367,12 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       /usr/sbin/installer -dumplog -pkg "$1" -target / && \
       /bin/mkdir -p "$3" && /bin/cp -f "$2" "$4" && \
       /usr/sbin/chown 0:0 "$4" && /bin/chmod 644 "$4" && \
-      /usr/bin/mdimport "$5" && /bin/echo APPPULSE_INSTALL_OK
+      /usr/bin/mdimport "$5" && /bin/echo APPMINT_INSTALL_OK
       """
     let arguments = [
       "-c",
       script,
-      "AppPulse",
+      "AppMint",
       packageURL.path,
       receiptURL.path,
       receiptDirectoryURL.path,
@@ -395,7 +395,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     if status != errAuthorizationSuccess {
       return bridgeError(Int(status), "管理员安装进程无法启动。")
     }
-    if !output.contains("APPPULSE_INSTALL_OK") {
+    if !output.contains("APPMINT_INSTALL_OK") {
       let message = output.isEmpty ? "系统安装器未能完成更新。" : output
       return bridgeError(3, message)
     }
@@ -411,7 +411,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     if let underlying {
       userInfo[NSUnderlyingErrorKey] = underlying
     }
-    return NSError(domain: "AppPulse.AppStoreBridge", code: code, userInfo: userInfo)
+    return NSError(domain: "AppMint.AppStoreBridge", code: code, userInfo: userInfo)
   }
 }
 

@@ -3,31 +3,31 @@
 import PackageDescription
 
 let package = Package(
-  name: "AppPulse",
+  name: "AppMint",
   platforms: [
     .macOS(.v26)
   ],
   products: [
-    .executable(name: "AppPulse", targets: ["AppPulse"])
+    .executable(name: "AppMint", targets: ["AppMint"])
   ],
   dependencies: [
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.5")
   ],
   targets: [
     .executableTarget(
-      name: "AppPulse",
+      name: "AppMint",
       dependencies: [
         .product(name: "Sparkle", package: "Sparkle"),
       ],
-      path: "AppPulse",
+      path: "AppMint",
       linkerSettings: [
         .linkedFramework("Security"),
       ]
     ),
     .testTarget(
-      name: "AppPulseTests",
-      dependencies: ["AppPulse"],
-      path: "AppPulseTests"
+      name: "AppMintTests",
+      dependencies: ["AppMint"],
+      path: "AppMintTests"
     ),
   ]
 )

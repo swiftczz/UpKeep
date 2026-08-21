@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import AppPulse
+@testable import AppMint
 
 final class VersionComparatorTests: XCTestCase {
   func testNumericVersionComparison() {
