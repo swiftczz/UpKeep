@@ -65,7 +65,64 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.sourceIdentifier = sourceIdentifier
     self.canAutomaticallyUpdate = canAutomaticallyUpdate
   }
+}
 
+extension AppRecord: Codable {
+  private enum CodingKeys: String, CodingKey {
+    case name
+    case bundleIdentifier
+    case applicationURL
+    case currentVersion
+    case buildVersion
+    case applicationModificationDate
+    case source
+    case appStorePlatform
+    case appStoreCountryCode
+    case status
+    case latestVersion
+    case latestBuildVersion
+    case releaseNotes
+    case releaseDate
+    case sourceURL
+    case homepageURL
+    case releaseNotesURL
+    case sourceIdentifier
+    case canAutomaticallyUpdate
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      name: try container.decode(String.self, forKey: .name),
+      bundleIdentifier: try container.decode(String.self, forKey: .bundleIdentifier),
+      applicationURL: try container.decode(URL.self, forKey: .applicationURL),
+      currentVersion: try container.decode(String.self, forKey: .currentVersion),
+      buildVersion: try container.decodeIfPresent(String.self, forKey: .buildVersion),
+      applicationModificationDate: try container.decodeIfPresent(
+        Date.self,
+        forKey: .applicationModificationDate
+      ),
+      source: try container.decode(UpdateSource.self, forKey: .source),
+      appStorePlatform: try container.decodeIfPresent(AppStorePlatform.self, forKey: .appStorePlatform),
+      appStoreCountryCode: try container.decodeIfPresent(String.self, forKey: .appStoreCountryCode),
+      status: try container.decode(UpdateStatus.self, forKey: .status),
+      latestVersion: try container.decodeIfPresent(String.self, forKey: .latestVersion),
+      latestBuildVersion: try container.decodeIfPresent(String.self, forKey: .latestBuildVersion),
+      releaseNotes: try container.decodeIfPresent(String.self, forKey: .releaseNotes),
+      releaseDate: try container.decodeIfPresent(Date.self, forKey: .releaseDate),
+      sourceURL: try container.decodeIfPresent(URL.self, forKey: .sourceURL),
+      homepageURL: try container.decodeIfPresent(URL.self, forKey: .homepageURL),
+      releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
+      sourceIdentifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
+      canAutomaticallyUpdate: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .canAutomaticallyUpdate
+      ) ?? false
+    )
+  }
+}
+
+extension AppRecord {
   var needsUpdate: Bool {
     status == .updateAvailable
   }
@@ -112,7 +169,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   }
 }
 
-enum AppStorePlatform: String, Hashable, Sendable {
+enum AppStorePlatform: String, Hashable, Sendable, Codable {
   case mac
   case iPhone
   case iPad
@@ -138,7 +195,7 @@ enum AppStorePlatform: String, Hashable, Sendable {
   }
 }
 
-enum UpdateSource: String, Hashable, Sendable {
+enum UpdateSource: String, Hashable, Sendable, Codable {
   case appStore
   case homebrew
   case sparkle
@@ -169,7 +226,7 @@ enum UpdateSource: String, Hashable, Sendable {
   }
 }
 
-enum UpdateStatus: Hashable, Sendable {
+enum UpdateStatus: Hashable, Sendable, Codable {
   case checking
   case upToDate
   case updateAvailable

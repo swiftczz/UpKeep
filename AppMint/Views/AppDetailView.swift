@@ -10,6 +10,7 @@ struct AppDetailView: View {
   let showInFinder: () -> Void
   let openAppStore: () -> Void
   let openReleaseNotes: () -> Void
+  let uninstallApplication: () -> Void
 
   var body: some View {
     ScrollView {
@@ -134,8 +135,7 @@ struct AppDetailView: View {
 
     Divider()
 
-    Button("卸载应用", systemImage: "trash", role: .destructive) {}
-      .disabled(true)
+    Button("卸载应用", systemImage: "trash", role: .destructive, action: uninstallApplication)
   }
 
   private var updateProgressControl: some View {

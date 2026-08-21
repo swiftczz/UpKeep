@@ -117,12 +117,21 @@ struct AppSidebarView: View {
     }
     .navigationTitle("AppMint")
     .overlay {
-      if applications.isEmpty, phase == .idle {
-        ContentUnavailableView(
-          "没有找到应用",
-          systemImage: "app.dashed",
-          description: Text("AppMint 会扫描“应用程序”和用户应用目录。")
-        )
+      if applications.isEmpty {
+        if phase != .idle {
+          VStack(spacing: 10) {
+            ProgressView()
+              .controlSize(.small)
+            Text(phase.title ?? "正在扫描应用…")
+              .foregroundStyle(.secondary)
+          }
+        } else {
+          ContentUnavailableView(
+            "没有找到应用",
+            systemImage: "app.dashed",
+            description: Text("AppMint 会扫描“应用程序”和用户应用目录。")
+          )
+        }
       } else if filteredApplications.isEmpty, !searchText.isEmpty {
         ContentUnavailableView.search(text: searchText)
       }

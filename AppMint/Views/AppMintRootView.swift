@@ -3,9 +3,13 @@ import SwiftUI
 
 struct AppMintRootView: View {
   @Environment(\.openURL) private var openURL
+  @Environment(\.scenePhase) private var scenePhase
   private let applicationLauncher: ApplicationLauncher
   @State private var library: AppLibrary
   @State private var searchText = ""
+  @State private var uninstallingApplication: AppRecord?
+
+  private static let backgroundRefreshInterval: TimeInterval = 30 * 60
 
   init(
     library: AppLibrary = AppLibrary(),
@@ -32,34 +36,54 @@ struct AppMintRootView: View {
       .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 430)
     } detail: {
       if let application = library.selectedApplication {
-        AppDetailView(
-          application: application,
-          isUpdating: library.updatingApplicationIDs.contains(application.id),
-          updateProgress: library.updateProgressByID[application.id],
-          isUpdateIgnored: library.isUpdateIgnored(application),
-          primaryAction: {
-            Task {
-              if let destination = await library.performPrimaryAction(for: application.id) {
-                open(destination)
-              }
+        if let uninstallingApplication, uninstallingApplication.id == application.id {
+          UninstallApplicationView(
+            application: uninstallingApplication,
+            onCancel: {
+              self.uninstallingApplication = nil
+            },
+            onUninstalled: {
+              library.forgetUninstalled(uninstallingApplication)
+              self.uninstallingApplication = nil
+            },
+            onFailed: { message in
+              library.alertMessage = message
             }
-          },
-          openApplication: {
-            open(application.applicationURL)
-          },
-          showInFinder: {
-            NSWorkspace.shared.activateFileViewerSelecting([application.applicationURL])
-          },
-          openAppStore: {
-            guard let destination = library.appStoreURL(for: application.id) else { return }
-            open(destination)
-          },
-          openReleaseNotes: {
-            guard let releaseNotesURL = application.releaseNotesURL else { return }
-            open(releaseNotesURL)
-          }
-        )
-        .id(application.id)
+          )
+          .id("uninstall-\(uninstallingApplication.id)")
+        } else {
+          AppDetailView(
+            application: application,
+            isUpdating: library.updatingApplicationIDs.contains(application.id),
+            updateProgress: library.updateProgressByID[application.id],
+            isUpdateIgnored: library.isUpdateIgnored(application),
+            primaryAction: {
+              Task {
+                if let destination = await library.performPrimaryAction(for: application.id) {
+                  open(destination)
+                }
+              }
+            },
+            openApplication: {
+              open(application.applicationURL)
+            },
+            showInFinder: {
+              NSWorkspace.shared.activateFileViewerSelecting([application.applicationURL])
+            },
+            openAppStore: {
+              guard let destination = library.appStoreURL(for: application.id) else { return }
+              open(destination)
+            },
+            openReleaseNotes: {
+              guard let releaseNotesURL = application.releaseNotesURL else { return }
+              open(releaseNotesURL)
+            },
+            uninstallApplication: {
+              uninstallingApplication = application
+            }
+          )
+          .id(application.id)
+        }
       } else {
         DetailUnavailableView(isLoading: library.isRefreshing)
       }
@@ -74,7 +98,7 @@ struct AppMintRootView: View {
               await library.updateAll()
             }
           }
-          .disabled(library.isRefreshing || !library.updatingApplicationIDs.isEmpty)
+          .disabled(!library.updatingApplicationIDs.isEmpty)
           .help("更新 \(library.automaticUpdates.count) 个可自动更新的应用")
         }
 
@@ -95,13 +119,32 @@ struct AppMintRootView: View {
           .frame(width: 16, height: 16)
         }
         .keyboardShortcut("r", modifiers: .command)
-        .disabled(library.isRefreshing || !library.updatingApplicationIDs.isEmpty)
+        .disabled(!library.updatingApplicationIDs.isEmpty)
         .help(library.phase.title ?? "重新扫描并检查所有应用")
         .accessibilityLabel(library.phase.title ?? "检查更新")
       }
     }
     .task {
       await library.loadIfNeeded()
+    }
+    .onChange(of: scenePhase) { _, phase in
+      guard phase == .active else { return }
+      Task {
+        await library.refreshIfStale()
+      }
+    }
+    .task(id: scenePhase) {
+      guard scenePhase == .active else { return }
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(Self.backgroundRefreshInterval))
+        guard !Task.isCancelled, scenePhase == .active else { return }
+        await library.refreshIfStale(after: 0)
+      }
+    }
+    .onChange(of: library.selectedApplicationID) { _, selectedID in
+      if uninstallingApplication?.id != selectedID {
+        uninstallingApplication = nil
+      }
     }
     .alert(
       "操作未完成",

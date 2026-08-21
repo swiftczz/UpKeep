@@ -7,7 +7,7 @@ struct DetailUnavailableView: View {
     if isLoading {
       VStack(spacing: 12) {
         ProgressView()
-        Text("正在检查应用…")
+        Text("正在扫描应用…")
           .foregroundStyle(.secondary)
       }
     } else {

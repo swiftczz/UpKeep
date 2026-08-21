@@ -16,6 +16,7 @@ final class AppLibrary {
   private let scanner: any ApplicationScanning
   private let coordinator: any UpdateCoordinating
   @ObservationIgnored private let userDefaults: UserDefaults
+  @ObservationIgnored private let libraryStore: ApplicationLibraryStore
   private var hasLoaded: Bool
   private var refreshRequested = false
 
@@ -25,19 +26,34 @@ final class AppLibrary {
     applications: [AppRecord] = [],
     scanner: any ApplicationScanning = ApplicationScanner(),
     coordinator: any UpdateCoordinating = UpdateCoordinator(),
-    userDefaults: UserDefaults = .standard
+    userDefaults: UserDefaults = .standard,
+    libraryStore: ApplicationLibraryStore = .live()
   ) {
     let ignoredBundleIdentifiers = Set(
       userDefaults.stringArray(forKey: Self.ignoredBundleIdentifiersKey) ?? []
     )
-    self.applications = applications
+    let loadedApplications: [AppRecord]
+    let loadedCheckedAt: Date?
+    if applications.isEmpty, let snapshot = libraryStore.load() {
+      loadedApplications = snapshot.applications.filter {
+        FileManager.default.fileExists(atPath: $0.applicationURL.path)
+      }
+      loadedCheckedAt = snapshot.lastCheckedAt
+    } else {
+      loadedApplications = applications
+      loadedCheckedAt = applications.isEmpty ? nil : .now
+    }
+
+    self.applications = loadedApplications
     self.scanner = scanner
     self.coordinator = coordinator
     self.userDefaults = userDefaults
+    self.libraryStore = libraryStore
     self.ignoredBundleIdentifiers = ignoredBundleIdentifiers
     self.hasLoaded = !applications.isEmpty
+    self.lastCheckedAt = loadedCheckedAt
     self.selectedApplicationID = Self.preferredSelection(
-      in: applications,
+      in: loadedApplications,
       ignoring: ignoredBundleIdentifiers
     )
   }
@@ -96,13 +112,39 @@ final class AppLibrary {
     persistIgnoredBundleIdentifiers()
   }
 
+  func forgetUninstalled(_ application: AppRecord) {
+    applications.removeAll {
+      $0.id == application.id
+        || ($0.bundleIdentifier == application.bundleIdentifier
+          && $0.applicationURL.standardizedFileURL
+            == application.applicationURL.standardizedFileURL)
+    }
+
+    if selectedApplicationID == application.id {
+      selectedApplicationID = Self.preferredSelection(
+        in: applications,
+        ignoring: ignoredBundleIdentifiers
+      )
+    }
+    persistSnapshot()
+  }
+
   func loadIfNeeded() async {
     guard !hasLoaded else { return }
     hasLoaded = true
     await refresh()
   }
 
+  func refreshIfStale(after interval: TimeInterval = 60) async {
+    guard hasLoaded, phase == .idle, updatingApplicationIDs.isEmpty else { return }
+    if let lastCheckedAt, Date.now.timeIntervalSince(lastCheckedAt) < interval {
+      return
+    }
+    await refresh()
+  }
+
   func refresh() async {
+    guard updatingApplicationIDs.isEmpty else { return }
     guard phase == .idle else {
       refreshRequested = true
       return
@@ -116,6 +158,7 @@ final class AppLibrary {
 
   private func performRefresh() async {
     let previousSelection = selectedApplicationID
+    let previousApplications = applications
     phase = .scanning
     alertMessage = nil
 
@@ -126,19 +169,106 @@ final class AppLibrary {
       selectedApplicationID = nil
       phase = .idle
       lastCheckedAt = .now
+      persistSnapshot()
       return
     }
 
-    phase = .checking
-    let checkedApplications = await coordinator.check(scannedApplications)
-    applications = checkedApplications
-    selectedApplicationID = Self.validSelection(
-      previousSelection,
-      in: checkedApplications,
-      ignoring: ignoredBundleIdentifiers
+    publish(
+      Self.mergeKeepingCheckResults(scannedApplications, previous: previousApplications),
+      selecting: previousSelection
     )
+    phase = .checking
+    await Task.yield()
+
+    let enrichedApplications = await coordinator.enrich(applications)
+    publish(
+      Self.mergeKeepingCheckResults(enrichedApplications, previous: applications),
+      selecting: selectedApplicationID
+    )
+
+    let coordinator = coordinator
+    await withTaskGroup(of: AppRecord.self) { group in
+      for application in enrichedApplications {
+        group.addTask {
+          await coordinator.check(application)
+        }
+      }
+
+      for await checked in group {
+        applyChecked(checked)
+      }
+    }
+
     lastCheckedAt = .now
     phase = .idle
+    persistSnapshot()
+  }
+
+  private func publish(_ applications: [AppRecord], selecting selection: AppRecord.ID?) {
+    self.applications = applications
+    selectedApplicationID = Self.validSelection(
+      selection,
+      in: applications,
+      ignoring: ignoredBundleIdentifiers
+    )
+  }
+
+  private func applyChecked(_ application: AppRecord) {
+    guard !updatingApplicationIDs.contains(application.id),
+      let index = applications.firstIndex(where: { $0.id == application.id })
+    else {
+      return
+    }
+    applications[index] = application
+  }
+
+  private func persistSnapshot() {
+    libraryStore.save(
+      ApplicationLibrarySnapshot(lastCheckedAt: lastCheckedAt, applications: applications)
+    )
+  }
+
+  private static func mergeKeepingCheckResults(
+    _ incoming: [AppRecord],
+    previous: [AppRecord]
+  ) -> [AppRecord] {
+    let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+    return incoming.map { current in
+      guard let previous = previousByID[current.id] else {
+        return current
+      }
+
+      if current.source == .homebrew {
+        return current
+      }
+
+      if current.currentVersion != previous.currentVersion
+        || current.buildVersion != previous.buildVersion
+      {
+        return current
+      }
+
+      var merged = current
+      if previous.status != .checking {
+        merged.status = previous.status
+        merged.latestVersion = previous.latestVersion
+        merged.latestBuildVersion = previous.latestBuildVersion
+        merged.releaseNotes = previous.releaseNotes
+        merged.releaseDate = previous.releaseDate
+        merged.releaseNotesURL = previous.releaseNotesURL
+        merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
+      }
+      if merged.sourceURL == nil {
+        merged.sourceURL = previous.sourceURL
+      }
+      if merged.homepageURL == nil {
+        merged.homepageURL = previous.homepageURL
+      }
+      if merged.sourceIdentifier == nil {
+        merged.sourceIdentifier = previous.sourceIdentifier
+      }
+      return merged
+    }
   }
 
   func performPrimaryAction(for applicationID: AppRecord.ID) async -> URL? {
@@ -316,6 +446,7 @@ final class AppLibrary {
     }
 
     applications[index] = record
+    persistSnapshot()
   }
 
   private func persistIgnoredBundleIdentifiers() {

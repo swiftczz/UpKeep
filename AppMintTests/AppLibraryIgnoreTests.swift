@@ -11,7 +11,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     let application = makeUpdateApplication()
-    let library = AppLibrary(applications: [application], userDefaults: defaults)
+    let library = AppLibrary(applications: [application], userDefaults: defaults,
+      libraryStore: .memory())
 
     XCTAssertEqual(library.availableUpdates.map(\.id), [application.id])
     XCTAssertFalse(library.isUpdateIgnored(application))
@@ -23,7 +24,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertEqual(library.ignoredApplicationIDs, [application.id])
     XCTAssertEqual(library.ignoredUpdates.map(\.id), [application.id])
 
-    let restoredLibrary = AppLibrary(applications: [application], userDefaults: defaults)
+    let restoredLibrary = AppLibrary(applications: [application], userDefaults: defaults,
+      libraryStore: .memory())
     XCTAssertTrue(restoredLibrary.isUpdateIgnored(application))
     XCTAssertTrue(restoredLibrary.availableUpdates.isEmpty)
 
@@ -32,6 +34,31 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertFalse(restoredLibrary.isUpdateIgnored(application))
     XCTAssertTrue(restoredLibrary.ignoredUpdates.isEmpty)
     XCTAssertEqual(restoredLibrary.availableUpdates.map(\.id), [application.id])
+  }
+
+  func testForgetUninstalledRemovesApplicationAndReselects() throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let first = makeUpdateApplication(
+      name: "First",
+      bundleIdentifier: "com.example.first",
+      releaseDate: Date(timeIntervalSince1970: 200)
+    )
+    let second = makeUpdateApplication(
+      name: "Second",
+      bundleIdentifier: "com.example.second",
+      releaseDate: Date(timeIntervalSince1970: 100)
+    )
+    let library = AppLibrary(applications: [first, second], userDefaults: defaults,
+      libraryStore: .memory())
+    XCTAssertEqual(library.selectedApplicationID, first.id)
+
+    library.forgetUninstalled(first)
+
+    XCTAssertEqual(library.applications.map(\.id), [second.id])
+    XCTAssertEqual(library.selectedApplicationID, second.id)
   }
 
   func testAvailableUpdatesAreSortedByReleaseDateDescending() throws {
@@ -49,7 +76,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
       bundleIdentifier: "com.example.newer",
       releaseDate: Date(timeIntervalSince1970: 200)
     )
-    let library = AppLibrary(applications: [older, newer], userDefaults: defaults)
+    let library = AppLibrary(applications: [older, newer], userDefaults: defaults,
+      libraryStore: .memory())
 
     XCTAssertEqual(library.availableUpdates.map(\.name), ["Newer", "Older"])
     XCTAssertEqual(library.selectedApplicationID, newer.id)
@@ -64,7 +92,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
       source: .homebrew,
       canAutomaticallyUpdate: true
     )
-    let library = AppLibrary(applications: [application], userDefaults: defaults)
+    let library = AppLibrary(applications: [application], userDefaults: defaults,
+      libraryStore: .memory())
 
     XCTAssertEqual(library.automaticUpdates.map(\.id), [application.id])
 

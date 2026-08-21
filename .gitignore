@@ -13,6 +13,7 @@ xcuserdata/
 *.hmap
 
 # 打包产物
+__pycache__
 dist/
 *.iconset/
 *.app

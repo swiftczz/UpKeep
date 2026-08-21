@@ -5,77 +5,152 @@ import XCTest
 
 @MainActor
 final class AppLibraryRefreshTests: XCTestCase {
-  func testRefreshKeepsPublishedListStableUntilChecksFinish() async throws {
+  func testRestoresCachedApplicationsImmediately() throws {
     let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
-    let existingApplication = makeApplication(name: "Existing", status: .upToDate)
-    let scannedApplication = makeApplication(name: "Scanned", status: .checking)
-    let coordinator = ControlledUpdateCoordinator()
-    let library = AppLibrary(
-      applications: [existingApplication],
-      scanner: StaticApplicationScanner(applications: [scannedApplication]),
-      coordinator: coordinator,
-      userDefaults: defaults
+    let fileManager = FileManager.default
+    let applicationURL = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintCached-\(UUID().uuidString).app", isDirectory: true)
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: applicationURL) }
+
+    let store = ApplicationLibraryStore.memory()
+    let cached = AppRecord(
+      name: "Cached",
+      bundleIdentifier: "com.example.cached",
+      applicationURL: applicationURL,
+      currentVersion: "1.0",
+      source: .sparkle,
+      status: .updateAvailable,
+      latestVersion: "2.0",
+      sourceURL: URL(string: "https://example.com/appcast.xml")
+    )
+    store.save(
+      ApplicationLibrarySnapshot(lastCheckedAt: Date(timeIntervalSince1970: 1), applications: [cached])
     )
 
-    let refreshTask = Task { await library.refresh() }
-    await coordinator.waitUntilCheckStarts()
+    let library = AppLibrary(
+      scanner: StubScanner(applications: []),
+      coordinator: StubCoordinator(),
+      userDefaults: defaults,
+      libraryStore: store
+    )
 
-    XCTAssertEqual(library.applications, [existingApplication])
-    XCTAssertEqual(library.selectedApplicationID, existingApplication.id)
-    XCTAssertEqual(library.phase, .checking)
+    XCTAssertEqual(library.applications.map(\.name), ["Cached"])
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Cached"])
+    XCTAssertEqual(library.selectedApplicationID, cached.id)
+    XCTAssertFalse(library.isRefreshing)
+  }
 
-    await coordinator.releaseCheck()
-    await refreshTask.value
+  func testPublishesAvailableUpdatesAsEachCheckFinishes() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
 
-    XCTAssertEqual(library.applications.map(\.id), [scannedApplication.id])
-    XCTAssertEqual(library.applications.first?.status, .upToDate)
-    XCTAssertEqual(library.selectedApplicationID, scannedApplication.id)
+    let fast = makeApplication(name: "Fast", status: .checking)
+    let slow = makeApplication(name: "Slow", status: .checking)
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      if application.name == "Slow" {
+        try? await Task.sleep(for: .milliseconds(400))
+        return application
+      }
+      var updated = application
+      updated.status = .updateAvailable
+      updated.latestVersion = "2.0"
+      return updated
+    }
+
+    let library = AppLibrary(
+      applications: [],
+      scanner: StubScanner(applications: [fast, slow]),
+      coordinator: coordinator,
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    let refresh = Task { await library.refresh() }
+
+    var sawIncrementalUpdate = false
+    for _ in 0..<40 {
+      try await Task.sleep(for: .milliseconds(25))
+      if library.availableUpdates.map(\.name) == ["Fast"],
+        library.applications.contains(where: { $0.name == "Slow" && $0.status == .checking })
+      {
+        sawIncrementalUpdate = true
+        break
+      }
+    }
+
+    await refresh.value
+    XCTAssertTrue(sawIncrementalUpdate)
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Fast"])
     XCTAssertEqual(library.phase, .idle)
   }
 
-  func testRefreshRequestedDuringCheckRunsAfterCurrentRefresh() async throws {
+  func testRefreshIfStaleSkipsWhenRecentlyChecked() async throws {
     let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
-    let application = makeApplication(name: "Example", status: .checking)
-    let scanner = CountingApplicationScanner(applications: [application])
-    let coordinator = ControlledUpdateCoordinator()
+    let application = makeApplication(name: "Example", status: .upToDate)
+    let scanner = CountingScanner(applications: [application])
     let library = AppLibrary(
+      applications: [application],
       scanner: scanner,
-      coordinator: coordinator,
-      userDefaults: defaults
+      coordinator: StubCoordinator(),
+      userDefaults: defaults,
+      libraryStore: .memory()
     )
+    library.lastCheckedAt = .now
 
-    let initialRefresh = Task { await library.refresh() }
-    await coordinator.waitUntilCheckStarts()
+    await library.refreshIfStale(after: 60)
 
-    await library.refresh()
-    await coordinator.releaseCheck()
-    await initialRefresh.value
-
-    let scanCount = await scanner.scanCount()
-    let checkCount = await coordinator.checkCount()
-    XCTAssertEqual(scanCount, 2)
-    XCTAssertEqual(checkCount, 2)
-    XCTAssertEqual(library.phase, .idle)
+    XCTAssertEqual(scanner.scanCount, 0)
   }
 
-  private func makeApplication(name: String, status: UpdateStatus) -> AppRecord {
+  func testRefreshIfStaleRunsWhenLastCheckIsOld() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let application = makeApplication(name: "Example", status: .upToDate)
+    let scanner = CountingScanner(applications: [application])
+    let library = AppLibrary(
+      applications: [application],
+      scanner: scanner,
+      coordinator: StubCoordinator(),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+    library.lastCheckedAt = Date.now.addingTimeInterval(-120)
+
+    await library.refreshIfStale(after: 60)
+
+    XCTAssertEqual(scanner.scanCount, 1)
+  }
+
+  private func makeApplication(
+    name: String,
+    status: UpdateStatus,
+    latestVersion: String? = nil
+  ) -> AppRecord {
     AppRecord(
       name: name,
       bundleIdentifier: "com.example.\(name.lowercased())",
       applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
-      status: status
+      source: .sparkle,
+      status: status,
+      latestVersion: latestVersion,
+      sourceURL: URL(string: "https://example.com/appcast.xml")
     )
   }
 }
 
-private struct StaticApplicationScanner: ApplicationScanning {
+private struct StubScanner: ApplicationScanning {
   let applications: [AppRecord]
 
   func scan() async -> [AppRecord] {
@@ -83,59 +158,36 @@ private struct StaticApplicationScanner: ApplicationScanning {
   }
 }
 
-private actor CountingApplicationScanner: ApplicationScanning {
-  let applications: [AppRecord]
-  private var count = 0
+private final class CountingScanner: ApplicationScanning, @unchecked Sendable {
+  var applications: [AppRecord]
+  private(set) var scanCount = 0
 
   init(applications: [AppRecord]) {
     self.applications = applications
   }
 
   func scan() async -> [AppRecord] {
-    count += 1
+    scanCount += 1
     return applications
-  }
-
-  func scanCount() -> Int {
-    count
   }
 }
 
-private actor ControlledUpdateCoordinator: UpdateCoordinating {
-  private var checkStarted = false
-  private var checkReleased = false
-  private var count = 0
+private final class StubCoordinator: UpdateCoordinating, @unchecked Sendable {
+  var checkHandler: (@Sendable (AppRecord) async -> AppRecord)?
 
-  func check(_ applications: [AppRecord]) async -> [AppRecord] {
-    count += 1
-    checkStarted = true
-    while !checkReleased {
-      await Task.yield()
-    }
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+    applications
+  }
 
-    return applications.map { application in
-      var application = application
-      application.status = .upToDate
-      return application
+  func check(_ application: AppRecord) async -> AppRecord {
+    if let checkHandler {
+      return await checkHandler(application)
     }
+    return application
   }
 
   func update(
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {}
-
-  func waitUntilCheckStarts() async {
-    while !checkStarted {
-      await Task.yield()
-    }
-  }
-
-  func releaseCheck() {
-    checkReleased = true
-  }
-
-  func checkCount() -> Int {
-    count
-  }
 }

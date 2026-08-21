@@ -20,7 +20,8 @@ struct UpdateProgress: Hashable, Sendable {
 }
 
 protocol UpdateCoordinating: Sendable {
-  func check(_ applications: [AppRecord]) async -> [AppRecord]
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord]
+  func check(_ application: AppRecord) async -> AppRecord
   func update(
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
@@ -40,34 +41,22 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
     self.process = process
   }
 
-  func check(_ applications: [AppRecord]) async -> [AppRecord] {
-    let enrichedApplications = await homebrew.enrich(applications)
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+    await homebrew.enrich(applications)
+  }
 
-    return await withTaskGroup(of: (Int, AppRecord).self) { group in
-      for (index, application) in enrichedApplications.enumerated() {
-        group.addTask {
-          let result: AppRecord
-          switch application.source {
-          case .appStore:
-            result = await appStore.check(application)
-          case .sparkle where application.sourceURL != nil:
-            result = await sparkle.check(application)
-          case .electronBuilder:
-            result = await electronBuilder.check(application)
-          case .tauri:
-            result = await tauri.check(application)
-          case .homebrew, .selfManaged, .sparkle:
-            result = application
-          }
-          return (index, result)
-        }
-      }
-
-      var results = enrichedApplications
-      for await (index, application) in group {
-        results[index] = application
-      }
-      return results
+  func check(_ application: AppRecord) async -> AppRecord {
+    switch application.source {
+    case .appStore:
+      return await appStore.check(application)
+    case .sparkle where application.sourceURL != nil:
+      return await sparkle.check(application)
+    case .electronBuilder:
+      return await electronBuilder.check(application)
+    case .tauri:
+      return await tauri.check(application)
+    case .homebrew, .selfManaged, .sparkle:
+      return application
     }
   }
 

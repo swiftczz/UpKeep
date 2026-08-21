@@ -242,36 +242,11 @@ enum ApplicationPackageInstaller {
       throw ApplicationPackageInstallerError.bundleIdentifierMismatch
     }
 
-    let installedTeam = teamIdentifier(at: application.applicationURL)
-    let candidateTeam = teamIdentifier(at: candidateURL)
+    let installedTeam = ApplicationCodeSigning.teamIdentifier(at: application.applicationURL)
+    let candidateTeam = ApplicationCodeSigning.teamIdentifier(at: candidateURL)
     if let installedTeam, let candidateTeam, installedTeam != candidateTeam {
       throw ApplicationPackageInstallerError.teamIdentifierMismatch
     }
-  }
-
-  private static func teamIdentifier(at applicationURL: URL) -> String? {
-    guard
-      let output = try? ProcessRunner.blockingRun(
-        executableURL: URL(fileURLWithPath: "/usr/bin/codesign"),
-        arguments: ["-dv", "--verbose=2", applicationURL.path]
-      )
-    else {
-      return nil
-    }
-
-    let text = output.standardError + output.standardOutput
-    guard
-      let match = text.range(
-        of: #"TeamIdentifier=([A-Z0-9]+)"#,
-        options: .regularExpression
-      )
-    else {
-      return nil
-    }
-
-    let line = String(text[match])
-    let identifier = line.replacingOccurrences(of: "TeamIdentifier=", with: "")
-    return identifier == "notset" ? nil : identifier
   }
 
   private static func run(_ executable: String, _ arguments: [String]) throws {
