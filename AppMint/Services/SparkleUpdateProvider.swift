@@ -19,7 +19,13 @@ struct SparkleUpdateProvider: Sendable {
 
       let parser = SparkleAppcastParser(data: data)
       let candidates = try parser.parse()
-      guard let candidate = Self.bestCandidate(from: candidates) else {
+      let releasedCandidates = candidates.filter { !$0.isPrerelease }
+      guard !releasedCandidates.isEmpty else {
+        application.status = .upToDate
+        application.canAutomaticallyUpdate = false
+        return application
+      }
+      guard let candidate = Self.bestCandidate(from: releasedCandidates) else {
         application.status = .unavailable("更新源中没有兼容此 Mac 的版本。")
         return application
       }
@@ -93,6 +99,9 @@ struct SparkleUpdateProvider: Sendable {
     return
       candidates
       .filter { candidate in
+        guard !candidate.isPrerelease else {
+          return false
+        }
         let supportsOS =
           candidate.operatingSystem == nil
           || candidate.operatingSystem?.lowercased().contains("mac") == true
@@ -290,6 +299,7 @@ struct SparkleCandidate: Hashable, Sendable {
   var minimumSystemVersion: String?
   var operatingSystem: String?
   var architecture: String?
+  var channel: String?
 
   var displayVersion: String? {
     if let title {
@@ -307,6 +317,12 @@ struct SparkleCandidate: Hashable, Sendable {
     }
 
     return shortVersion ?? buildVersion
+  }
+
+  var isPrerelease: Bool {
+    channel != nil
+      || VersionComparator.isPrerelease(shortVersion ?? "")
+      || VersionComparator.isPrerelease(displayVersion ?? "")
   }
 
   func hasSecureDownload(relativeTo feedURL: URL) -> Bool {
@@ -398,6 +414,7 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       "shortversionstring",
       "version",
       "minimumsystemversion",
+      "channel",
     ]
 
     if capturable.contains(key) {
@@ -440,6 +457,7 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
     case "shortversionstring": currentCandidate?.shortVersion = value
     case "version": currentCandidate?.buildVersion = value
     case "minimumsystemversion": currentCandidate?.minimumSystemVersion = value
+    case "channel": currentCandidate?.channel = value.nonBlankValue
     default: break
     }
 

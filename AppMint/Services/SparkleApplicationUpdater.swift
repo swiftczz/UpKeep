@@ -148,7 +148,7 @@ private final class SparkleUpdateSession: NSObject, SPUUpdaterDelegate {
 
   private static func isBenignCompletion(_ error: NSError) -> Bool {
     guard error.domain == SUSparkleErrorDomain else { return false }
-    return error.code == 1001 || error.code == 4007
+    return error.code == 4007
   }
 
   private static func versionSnapshot(at applicationURL: URL) -> VersionSnapshot? {
@@ -257,6 +257,9 @@ private final class SparkleProgressUserDriver: NSObject, SPUUserDriver {
     retryTerminatingApplication: @escaping () -> Void
   ) {
     onProgress(UpdateProgress(fractionCompleted: 0.96, status: "正在安装…"))
+    if !applicationTerminated {
+      retryTerminatingApplication()
+    }
   }
 
   func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {

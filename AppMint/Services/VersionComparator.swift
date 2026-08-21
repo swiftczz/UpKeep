@@ -15,6 +15,11 @@ enum VersionComparator {
       locale: Locale(identifier: "en_US_POSIX")
     ) == .orderedDescending
   }
+
+  static func isPrerelease(_ rawValue: String) -> Bool {
+    guard let parsed = ParsedVersion(rawValue) else { return false }
+    return parsed.prereleaseRank < 3
+  }
 }
 
 private struct ParsedVersion: Comparable {

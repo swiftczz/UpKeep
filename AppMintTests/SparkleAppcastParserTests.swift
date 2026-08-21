@@ -37,6 +37,46 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertEqual(candidate.downloadURL?.absoluteString, "https://example.com/App.zip")
     XCTAssertEqual(candidate.releaseNotesURL?.absoluteString, "https://example.com/notes")
     XCTAssertEqual(candidate.publicationDate, "Thu, 20 Aug 2026 12:00:00 +0000")
+    XCTAssertNil(candidate.channel)
+  }
+
+  func testIgnoresSparkleBetaChannelAndPrereleaseItems() throws {
+    let xml = """
+      <?xml version="1.0" encoding="utf-8"?>
+      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+        <channel>
+          <item>
+            <title>v4.2.1</title>
+            <sparkle:version>99</sparkle:version>
+            <sparkle:shortVersionString>4.2.1</sparkle:shortVersionString>
+            <enclosure url="https://example.com/MacShot-4.2.1.dmg" />
+          </item>
+          <item>
+            <title>v4.2.2-beta.2</title>
+            <sparkle:version>101</sparkle:version>
+            <sparkle:shortVersionString>4.2.2-beta.2</sparkle:shortVersionString>
+            <sparkle:channel>beta</sparkle:channel>
+            <enclosure url="https://example.com/MacShot-4.2.2-beta.2.dmg" />
+          </item>
+        </channel>
+      </rss>
+      """
+
+    let candidates = try SparkleAppcastParser(data: Data(xml.utf8)).parse()
+    XCTAssertEqual(candidates.map(\.channel), [nil, "beta"])
+
+    let candidate = try XCTUnwrap(SparkleUpdateProvider.bestCandidate(from: candidates))
+    XCTAssertEqual(candidate.shortVersion, "4.2.1")
+    XCTAssertEqual(candidate.buildVersion, "99")
+    XCTAssertNil(candidate.channel)
+  }
+
+  func testIgnoresUnchanneledPrereleaseVersion() {
+    let stable = SparkleCandidate(shortVersion: "1.0.0", buildVersion: "10")
+    let beta = SparkleCandidate(shortVersion: "1.1.0-beta.1", buildVersion: "11")
+
+    let candidate = SparkleUpdateProvider.bestCandidate(from: [stable, beta])
+    XCTAssertEqual(candidate?.shortVersion, "1.0.0")
   }
 
   func testParsesUnixTimestampPublicationDate() throws {

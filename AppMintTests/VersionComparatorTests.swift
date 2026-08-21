@@ -19,4 +19,12 @@ final class VersionComparatorTests: XCTestCase {
     XCTAssertTrue(VersionComparator.isNewer("4.0", than: "4.0 beta"))
     XCTAssertTrue(VersionComparator.isNewer("4.0 rc1", than: "4.0 beta 2"))
   }
+
+  func testDetectsPrereleaseVersions() {
+    XCTAssertTrue(VersionComparator.isPrerelease("4.2.2-beta.2"))
+    XCTAssertTrue(VersionComparator.isPrerelease("1.0 alpha"))
+    XCTAssertTrue(VersionComparator.isPrerelease("2.0-rc.1"))
+    XCTAssertFalse(VersionComparator.isPrerelease("4.2.1"))
+    XCTAssertFalse(VersionComparator.isPrerelease("2.19.0.2258 release"))
+  }
 }
