@@ -1,15 +1,17 @@
-import AppKit
+import CoreGraphics
 import SwiftUI
 
 struct AppIconView: View {
   let applicationURL: URL
   let size: CGFloat
-  @State private var icon: NSImage?
+  @Environment(\.applicationIconClient) private var applicationIconClient
+  @Environment(\.displayScale) private var displayScale
+  @State private var icon: CGImage?
 
   var body: some View {
     Group {
       if let icon {
-        Image(nsImage: icon)
+        Image(decorative: icon, scale: displayScale)
           .resizable()
           .scaledToFit()
       } else {
@@ -22,7 +24,9 @@ struct AppIconView: View {
     }
     .frame(width: size, height: size)
     .task(id: applicationURL) {
-      icon = NSWorkspace.shared.icon(forFile: applicationURL.path)
+      let loadedIcon = await applicationIconClient.load(applicationURL, displayScale)
+      guard !Task.isCancelled else { return }
+      icon = loadedIcon
     }
     .accessibilityHidden(true)
   }

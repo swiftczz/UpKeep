@@ -99,6 +99,31 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertNil(response.result(matching: "com.baidu.netdisk", platform: .mac))
   }
 
+  func testSelectsMacReleaseWhenSupportedDevicesIsMissing() throws {
+    let data = Data(
+      """
+      {
+        "results": [
+          {
+            "bundleId": "com.sequel-ace.sequel-ace",
+            "version": "5.4.0",
+            "currentVersionReleaseDate": "2026-08-15T16:06:07Z",
+            "trackViewUrl": "https://apps.apple.com/cn/app/sequel-ace/id1518036000"
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let response = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
+    let result = try XCTUnwrap(
+      response.result(matching: "com.sequel-ace.sequel-ace", platform: .mac)
+    )
+
+    XCTAssertEqual(result.version, "5.4.0")
+    XCTAssertTrue(result.supports(.mac))
+  }
+
   func testSelectsIPhoneReleaseForWrappedApplication() throws {
     let data = Data(
       """

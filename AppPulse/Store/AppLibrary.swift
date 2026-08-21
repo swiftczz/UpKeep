@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import Observation
 
@@ -128,28 +127,19 @@ final class AppLibrary {
     phase = .idle
   }
 
-  func performPrimaryAction(for applicationID: AppRecord.ID) async {
+  func performPrimaryAction(for applicationID: AppRecord.ID) async -> URL? {
     guard let application = applications.first(where: { $0.id == applicationID }) else {
-      return
-    }
-
-    if application.needsUpdate,
-      application.source == .homebrew,
-      application.canAutomaticallyUpdate
-    {
-      await update(application)
-      return
+      return nil
     }
 
     if application.needsUpdate,
       application.source == .appStore,
       let sourceURL = application.sourceURL
     {
-      open(sourceURL)
-      return
+      return Self.nativeAppStoreURL(from: sourceURL)
     }
 
-    open(application.applicationURL)
+    return application.applicationURL
   }
 
   func updateAll() async {
@@ -173,28 +163,8 @@ final class AppLibrary {
     await refresh()
   }
 
-  func openReleaseNotes(for application: AppRecord) {
-    guard let releaseNotesURL = application.releaseNotesURL else { return }
-    open(releaseNotesURL)
-  }
-
-  private func update(_ application: AppRecord) async {
-    updatingApplicationIDs.insert(application.id)
-    defer { updatingApplicationIDs.remove(application.id) }
-
-    do {
-      try await coordinator.update(application)
-      await refresh()
-    } catch {
-      alertMessage = error.localizedDescription
-    }
-  }
-
-  private func open(_ url: URL) {
-    guard NSWorkspace.shared.open(url) else {
-      alertMessage = "无法打开 \(url.lastPathComponent)。"
-      return
-    }
+  func reportOpeningFailure(for url: URL) {
+    alertMessage = "无法打开 \(url.lastPathComponent)。"
   }
 
   private func persistIgnoredBundleIdentifiers() {
@@ -206,6 +176,19 @@ final class AppLibrary {
 
   private static func ignoreIdentifier(for application: AppRecord) -> String {
     application.bundleIdentifier.lowercased()
+  }
+
+  private static func nativeAppStoreURL(from sourceURL: URL) -> URL {
+    guard
+      let host = sourceURL.host?.lowercased(),
+      host == "apps.apple.com" || host == "itunes.apple.com",
+      var components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false)
+    else {
+      return sourceURL
+    }
+
+    components.scheme = "macappstore"
+    return components.url ?? sourceURL
   }
 
   private static func validSelection(

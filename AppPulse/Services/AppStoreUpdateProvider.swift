@@ -139,9 +139,16 @@ struct AppStoreLookupResult: Decodable, Sendable {
 
   func supports(_ platform: AppStorePlatform) -> Bool {
     switch platform {
-    case .mac: supportsMacDesktop
-    case .iPhone: supportsIPhone
-    case .iPad: supportsIPad
+    case .mac:
+      // The desktopSoftware lookup occasionally omits supportedDevices entirely.
+      // Its exact Bundle ID match is still safe to use unless Apple explicitly
+      // identifies the result as belonging to another platform.
+      guard let supportedDevices, !supportedDevices.isEmpty else {
+        return true
+      }
+      return supportsMacDesktop
+    case .iPhone: return supportsIPhone
+    case .iPad: return supportsIPad
     }
   }
 

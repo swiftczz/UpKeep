@@ -2,10 +2,13 @@
 
 AppPulse 是一个面向 macOS 26 及以上系统的应用更新检查工具。它扫描本机应用，识别实际更新来源，并在原生 SwiftUI 双栏界面中展示当前版本、最新版本和发行说明。
 
+应用源码不直接导入 AppKit：窗口与网页 URL 操作使用 SwiftUI，应用图标通过 Quick Look Thumbnailing 读取为 Core Graphics 图像；本地应用启动、本机扫描、网络和进程操作由 Foundation 完成。
+
 ## 当前能力
 
 - 扫描 `/Applications` 和 `~/Applications`
 - 读取应用图标、名称、Bundle ID、版本和构建号
+- 对应用图标进行异步生成、请求合并和内存缓存，长列表滚动时不重复读取同一图标
 - 按系统首选语言读取应用名称，并按应用包本地修改时间从新到旧排列
 - 识别原生 Mac App Store receipt，以及安装在 Mac 上的 iPhone/iPad App Store 包
 - 按本地应用平台分别查询 Mac 或 iPhone/iPad 商店版本，避免跨平台误配

@@ -1,11 +1,17 @@
 import SwiftUI
 
 struct AppPulseRootView: View {
+  @Environment(\.openURL) private var openURL
+  private let applicationLauncher: ApplicationLauncher
   @State private var library: AppLibrary
   @State private var searchText = ""
 
-  init(library: AppLibrary = AppLibrary()) {
+  init(
+    library: AppLibrary = AppLibrary(),
+    applicationLauncher: ApplicationLauncher = .live
+  ) {
     _library = State(initialValue: library)
+    self.applicationLauncher = applicationLauncher
   }
 
   var body: some View {
@@ -30,11 +36,14 @@ struct AppPulseRootView: View {
           isUpdateIgnored: library.isUpdateIgnored(application),
           primaryAction: {
             Task {
-              await library.performPrimaryAction(for: application.id)
+              if let destination = await library.performPrimaryAction(for: application.id) {
+                open(destination)
+              }
             }
           },
           openReleaseNotes: {
-            library.openReleaseNotes(for: application)
+            guard let releaseNotesURL = application.releaseNotesURL else { return }
+            open(releaseNotesURL)
           }
         )
         .id(application.id)
@@ -46,12 +55,6 @@ struct AppPulseRootView: View {
     .searchable(text: $searchText, placement: .sidebar, prompt: "搜索应用")
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
-        if let phaseTitle = library.phase.title {
-          ProgressView()
-            .controlSize(.small)
-            .help(phaseTitle)
-        }
-
         if !library.automaticUpdates.isEmpty {
           Button("更新全部", systemImage: "arrow.down.circle") {
             Task {
@@ -62,14 +65,26 @@ struct AppPulseRootView: View {
           .help("通过 Homebrew 更新 \(library.automaticUpdates.count) 个应用")
         }
 
-        Button("检查更新", systemImage: "arrow.clockwise") {
+        Button {
           Task {
             await library.refresh()
           }
+        } label: {
+          Group {
+            if library.isRefreshing {
+              ProgressView()
+                .controlSize(.small)
+                .accessibilityHidden(true)
+            } else {
+              Image(systemName: "arrow.clockwise")
+            }
+          }
+          .frame(width: 16, height: 16)
         }
         .keyboardShortcut("r", modifiers: .command)
         .disabled(library.isRefreshing || !library.updatingApplicationIDs.isEmpty)
-        .help("重新扫描并检查所有应用")
+        .help(library.phase.title ?? "重新扫描并检查所有应用")
+        .accessibilityLabel(library.phase.title ?? "检查更新")
       }
     }
     .task {
@@ -88,6 +103,21 @@ struct AppPulseRootView: View {
     } message: {
       Text(library.alertMessage ?? "发生未知错误。")
     }
+  }
+
+  private func open(_ url: URL) {
+    guard !url.isFileURL else {
+      Task {
+        do {
+          try await applicationLauncher.launch(url)
+        } catch {
+          library.reportOpeningFailure(for: url)
+        }
+      }
+      return
+    }
+
+    openURL(url)
   }
 }
 

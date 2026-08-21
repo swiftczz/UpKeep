@@ -65,11 +65,13 @@ struct AppDetailView: View {
           ProgressView()
             .controlSize(.small)
         } else {
-          Label(primaryActionTitle, systemImage: primaryActionSymbol)
+          Label(primaryActionTitle, systemImage: "arrow.up.forward.app")
         }
       }
       .buttonStyle(.glassProminent)
       .disabled(isUpdating)
+      .help(primaryActionHelp)
+      .accessibilityHint(primaryActionHelp)
     } else {
       Button(action: primaryAction) {
         Label("打开", systemImage: "arrow.up.forward.app")
@@ -159,26 +161,17 @@ struct AppDetailView: View {
     return "版本 \(application.versionSummary)"
   }
 
-  private var primaryActionTitle: String {
+  private var primaryActionHelp: String {
     switch application.source {
-    case .homebrew where application.canAutomaticallyUpdate:
-      "更新"
     case .appStore:
-      "在 App Store 中查看"
+      "在 \(application.sourceTitle) 中打开此应用的更新页面"
     case .sparkle, .github, .selfManaged, .homebrew:
-      "打开应用"
+      "打开应用并使用其更新器"
     }
   }
 
-  private var primaryActionSymbol: String {
-    switch application.source {
-    case .homebrew where application.canAutomaticallyUpdate:
-      "arrow.down.circle"
-    case .appStore:
-      "arrow.up.forward.app"
-    case .sparkle, .github, .selfManaged, .homebrew:
-      "arrow.up.forward.app"
-    }
+  private var primaryActionTitle: String {
+    application.source == .appStore ? "打开 App Store" : "打开应用"
   }
 
   private var releaseNotesPlaceholder: String {
