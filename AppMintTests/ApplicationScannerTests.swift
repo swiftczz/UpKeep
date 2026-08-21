@@ -132,11 +132,35 @@ final class ApplicationScannerTests: XCTestCase {
     )
     let unknown = makeApplication(name: "Unknown", modifiedAt: nil)
 
-    let installed = [unknown, ignored, older, newer].installedApplications(
-      ignoredIDs: [ignored.id]
+    let installed = [unknown, ignored, older, newer].installedApplications()
+
+    XCTAssertEqual(installed.map(\.name), ["Newer", "Older", "Unknown"])
+  }
+
+  func testIgnoredUpdatesAreSortedByReleaseDateAndExcludedFromInstalledApplications() {
+    let older = makeApplication(name: "Older", modifiedAt: Date(timeIntervalSince1970: 100))
+    let newerIgnored = makeApplication(
+      name: "Newer Ignored",
+      modifiedAt: Date(timeIntervalSince1970: 150),
+      status: .updateAvailable,
+      releaseDate: Date(timeIntervalSince1970: 400)
+    )
+    let olderIgnored = makeApplication(
+      name: "Older Ignored",
+      modifiedAt: Date(timeIntervalSince1970: 50),
+      status: .updateAvailable,
+      releaseDate: Date(timeIntervalSince1970: 200)
     )
 
-    XCTAssertEqual(installed.map(\.name), ["Newer", "Ignored", "Older", "Unknown"])
+    let applications = [older, newerIgnored, olderIgnored]
+    let ignoredIDs = Set([newerIgnored.id, olderIgnored.id])
+
+    XCTAssertEqual(applications.installedApplications().map(\.name), ["Older"])
+    XCTAssertEqual(
+      applications.ignoredUpdates(ignoredIDs: ignoredIDs).map(\.name),
+      ["Newer Ignored", "Older Ignored"]
+    )
+    XCTAssertTrue(applications.ignoredUpdates(ignoredIDs: []).isEmpty)
   }
 
   func testSlashDateTextUsesYearMonthDay() {

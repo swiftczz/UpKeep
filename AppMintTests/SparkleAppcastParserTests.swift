@@ -67,6 +67,38 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertEqual(components.minute, 8)
   }
 
+  func testParsesCTimeStylePublicationDateWithNamedTimeZone() throws {
+    let date = try XCTUnwrap(
+      SparkleUpdateProvider.parsePublicationDate("Mon Aug 3 18:18:39 CEST 2026")
+    )
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+    let components = calendar.dateComponents(
+      [.year, .month, .day, .hour, .minute],
+      from: date
+    )
+    XCTAssertEqual(components.year, 2026)
+    XCTAssertEqual(components.month, 8)
+    XCTAssertEqual(components.day, 3)
+    XCTAssertEqual(components.hour, 16)
+    XCTAssertEqual(components.minute, 18)
+  }
+
+  func testParsesCTimeStylePublicationDateWithTwoDigitDay() throws {
+    let date = try XCTUnwrap(
+      SparkleUpdateProvider.parsePublicationDate("Tue Jun 23 15:23:58 CEST 2026")
+    )
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+    let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
+    XCTAssertEqual(components.year, 2026)
+    XCTAssertEqual(components.month, 6)
+    XCTAssertEqual(components.day, 23)
+    XCTAssertEqual(components.hour, 13)
+  }
+
   func testParsesGMTPublicationDate() throws {
     let date = try XCTUnwrap(
       SparkleUpdateProvider.parsePublicationDate("Thu, 20 Aug 2026 12:00:00 GMT")

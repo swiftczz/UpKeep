@@ -51,6 +51,10 @@ final class AppLibrary {
     applications.availableUpdates(ignoredIDs: ignoredApplicationIDs)
   }
 
+  var ignoredUpdates: [AppRecord] {
+    applications.ignoredUpdates(ignoredIDs: ignoredApplicationIDs)
+  }
+
   var ignoredApplicationIDs: Set<AppRecord.ID> {
     Set(
       applications.lazy
@@ -361,6 +365,7 @@ final class AppLibrary {
         .map(\.id)
     )
     return applications.availableUpdates(ignoredIDs: ignoredIDs).first?.id
-      ?? applications.installedApplications(ignoredIDs: ignoredIDs).first?.id
+      ?? applications.installedApplications().first?.id
+      ?? applications.ignoredUpdates(ignoredIDs: ignoredIDs).first?.id
   }
 }

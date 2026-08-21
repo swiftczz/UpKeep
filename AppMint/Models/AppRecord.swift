@@ -179,9 +179,14 @@ extension Array where Element == AppRecord {
       .sortedByDescendingDate(\.releaseDate)
   }
 
-  func installedApplications(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
-    filter { !$0.needsUpdate || ignoredIDs.contains($0.id) }
+  func installedApplications() -> [AppRecord] {
+    filter { !$0.needsUpdate }
       .sortedByDescendingDate(\.applicationModificationDate)
+  }
+
+  func ignoredUpdates(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
+    filter { $0.needsUpdate && ignoredIDs.contains($0.id) }
+      .sortedByDescendingDate(\.releaseDate)
   }
 
   func sortedByDescendingDate(_ keyPath: KeyPath<AppRecord, Date?>) -> [AppRecord] {

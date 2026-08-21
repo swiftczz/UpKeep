@@ -26,7 +26,11 @@ struct AppSidebarView: View {
   }
 
   private var installedApplications: [AppRecord] {
-    filteredApplications.installedApplications(ignoredIDs: ignoredApplicationIDs)
+    filteredApplications.installedApplications()
+  }
+
+  private var ignoredUpdates: [AppRecord] {
+    filteredApplications.ignoredUpdates(ignoredIDs: ignoredApplicationIDs)
   }
 
   var body: some View {
@@ -61,15 +65,46 @@ struct AppSidebarView: View {
       if !installedApplications.isEmpty {
         Section {
           ForEach(installedApplications) { application in
-            let isUpdateIgnored = ignoredApplicationIDs.contains(application.id)
-            installedApplicationRow(application, isUpdateIgnored: isUpdateIgnored)
-              .trackScrollVisibility(
-                applicationID: application.id,
-                visibleApplicationIDs: $visibleApplicationIDs
-              )
+            AppRowView(
+              application: application,
+              isUpdateIgnored: false,
+              updateProgress: updateProgressByID[application.id]
+            )
+            .tag(application.id)
+            .trackScrollVisibility(
+              applicationID: application.id,
+              visibleApplicationIDs: $visibleApplicationIDs
+            )
           }
         } header: {
           sectionHeader("已安装的应用", count: installedApplications.count)
+        }
+      }
+
+      if !ignoredUpdates.isEmpty {
+        Section {
+          ForEach(ignoredUpdates) { application in
+            AppRowView(
+              application: application,
+              isUpdateIgnored: true,
+              updateProgress: updateProgressByID[application.id]
+            )
+            .tag(application.id)
+            .trackScrollVisibility(
+              applicationID: application.id,
+              visibleApplicationIDs: $visibleApplicationIDs
+            )
+            .contextMenu {
+              Button("取消忽略更新", systemImage: "bell") {
+                stopIgnoringUpdates(application.id)
+              }
+            }
+            .accessibilityAction(named: Text("取消忽略更新")) {
+              stopIgnoringUpdates(application.id)
+            }
+          }
+        } header: {
+          sectionHeader("已忽略的更新", count: ignoredUpdates.count)
         }
       }
     }
@@ -127,36 +162,6 @@ struct AppSidebarView: View {
       Text(title)
       Text("(\(count))")
         .foregroundStyle(.tertiary)
-    }
-  }
-
-  @ViewBuilder
-  private func installedApplicationRow(
-    _ application: AppRecord,
-    isUpdateIgnored: Bool
-  ) -> some View {
-    if isUpdateIgnored {
-      AppRowView(
-        application: application,
-        isUpdateIgnored: true,
-        updateProgress: updateProgressByID[application.id]
-      )
-        .tag(application.id)
-        .contextMenu {
-          Button("取消忽略更新", systemImage: "bell") {
-            stopIgnoringUpdates(application.id)
-          }
-        }
-        .accessibilityAction(named: Text("取消忽略更新")) {
-          stopIgnoringUpdates(application.id)
-        }
-    } else {
-      AppRowView(
-        application: application,
-        isUpdateIgnored: false,
-        updateProgress: updateProgressByID[application.id]
-      )
-        .tag(application.id)
     }
   }
 }

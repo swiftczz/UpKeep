@@ -125,6 +125,7 @@ struct SparkleUpdateProvider: Sendable {
     }
 
     let rfc822Value = rfc822DateString(from: trimmed)
+    let namedZoneValue = replaceNamedTimeZone(in: rfc822Value)
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.timeZone = TimeZone(secondsFromGMT: 0)
@@ -134,13 +135,18 @@ struct SparkleUpdateProvider: Sendable {
       "EEE, d MMM yyyy HH:mm:ss Z",
       "EEE, dd MMM yyyy HH:mm:ss z",
       "EEE, d MMM yyyy HH:mm:ss z",
+      "EEE MMM d HH:mm:ss Z yyyy",
+      "EEE MMM dd HH:mm:ss Z yyyy",
       "yyyy-MM-dd'T'HH:mm:ssXXXXX",
       "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
       "yyyy-MM-dd'T'HH:mm:ssZ",
       "yyyy-MM-dd",
     ] {
       formatter.dateFormat = format
-      if let date = formatter.date(from: rfc822Value) ?? formatter.date(from: trimmed) {
+      if let date = formatter.date(from: namedZoneValue)
+        ?? formatter.date(from: rfc822Value)
+        ?? formatter.date(from: trimmed)
+      {
         return date
       }
     }
@@ -154,6 +160,46 @@ struct SparkleUpdateProvider: Sendable {
     let iso = ISO8601DateFormatter()
     iso.formatOptions = [.withInternetDateTime]
     return iso.date(from: trimmed)
+  }
+
+  private static let namedTimeZoneOffsets: [String: String] = [
+    "UT": "+0000",
+    "UTC": "+0000",
+    "GMT": "+0000",
+    "WET": "+0000",
+    "WEST": "+0100",
+    "CET": "+0100",
+    "CEST": "+0200",
+    "EET": "+0200",
+    "EEST": "+0300",
+    "BST": "+0100",
+    "EST": "-0500",
+    "EDT": "-0400",
+    "CST": "-0600",
+    "CDT": "-0500",
+    "MST": "-0700",
+    "MDT": "-0600",
+    "PST": "-0800",
+    "PDT": "-0700",
+  ]
+
+  private static func replaceNamedTimeZone(in value: String) -> String {
+    guard
+      let expression = try? NSRegularExpression(pattern: #"\b([A-Z]{2,5})\b"#),
+      let match = expression.matches(
+        in: value,
+        range: NSRange(value.startIndex..., in: value)
+      ).last,
+      let tokenRange = Range(match.range(at: 1), in: value)
+    else {
+      return value
+    }
+
+    let token = String(value[tokenRange])
+    guard let offset = namedTimeZoneOffsets[token] else {
+      return value
+    }
+    return value.replacingCharacters(in: tokenRange, with: offset)
   }
 
   private static func rfc822DateString(from value: String) -> String {

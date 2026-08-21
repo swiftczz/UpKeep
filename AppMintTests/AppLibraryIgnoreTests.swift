@@ -21,6 +21,7 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertTrue(library.availableUpdates.isEmpty)
     XCTAssertTrue(library.isUpdateIgnored(application))
     XCTAssertEqual(library.ignoredApplicationIDs, [application.id])
+    XCTAssertEqual(library.ignoredUpdates.map(\.id), [application.id])
 
     let restoredLibrary = AppLibrary(applications: [application], userDefaults: defaults)
     XCTAssertTrue(restoredLibrary.isUpdateIgnored(application))
@@ -29,6 +30,7 @@ final class AppLibraryIgnoreTests: XCTestCase {
     restoredLibrary.stopIgnoringUpdates(for: application.id)
 
     XCTAssertFalse(restoredLibrary.isUpdateIgnored(application))
+    XCTAssertTrue(restoredLibrary.ignoredUpdates.isEmpty)
     XCTAssertEqual(restoredLibrary.availableUpdates.map(\.id), [application.id])
   }
 
