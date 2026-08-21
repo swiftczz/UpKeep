@@ -58,8 +58,8 @@ struct AppRowView: View {
 
   @ViewBuilder
   private var versionLabel: some View {
-    if let latestVersion = application.latestVersion, application.needsUpdate {
-      Text("\(application.currentVersion) → \(latestVersion)")
+    if let updateVersionSummary = application.updateVersionSummary {
+      Text(updateVersionSummary)
     } else {
       Text("版本 \(application.versionSummary)")
     }
@@ -111,5 +111,13 @@ struct AppRowView: View {
   private func dateAccessibilityLabel(for date: Date) -> String {
     let formattedDate = date.formatted(date: .long, time: .omitted)
     return usesReleaseDate ? "发布于\(formattedDate)" : "更新于\(formattedDate)"
+  }
+}
+
+extension AppRowView: Equatable {
+  nonisolated static func == (lhs: AppRowView, rhs: AppRowView) -> Bool {
+    lhs.application == rhs.application
+      && lhs.isUpdateIgnored == rhs.isUpdateIgnored
+      && lhs.updateProgress == rhs.updateProgress
   }
 }

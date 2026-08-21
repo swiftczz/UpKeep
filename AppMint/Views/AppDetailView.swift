@@ -9,6 +9,7 @@ struct AppDetailView: View {
   let openApplication: () -> Void
   let showInFinder: () -> Void
   let openAppStore: () -> Void
+  let openHomepage: () -> Void
   let openReleaseNotes: () -> Void
   let uninstallApplication: () -> Void
 
@@ -35,6 +36,7 @@ struct AppDetailView: View {
   private var header: some View {
     HStack(alignment: .center, spacing: 18) {
       AppIconView(applicationURL: application.applicationURL, size: 80)
+        .id(application.id)
 
       VStack(alignment: .leading, spacing: 6) {
         Text(application.name)
@@ -133,6 +135,10 @@ struct AppDetailView: View {
       Button("在 App Store 中查看", systemImage: "apple.logo", action: openAppStore)
     }
 
+    if canOpenHomepage {
+      Button("在主页查看", systemImage: "globe", action: openHomepage)
+    }
+
     Divider()
 
     Button("卸载应用", systemImage: "trash", role: .destructive, action: uninstallApplication)
@@ -197,25 +203,16 @@ struct AppDetailView: View {
       Text("应用信息")
         .font(.headline)
 
-      Grid(alignment: .leading, horizontalSpacing: 22, verticalSpacing: 10) {
-        informationRow(
-          "状态",
-          value: isUpdateIgnored ? "已忽略更新" : application.status.title
-        )
-        informationRow("当前版本", value: application.versionSummary)
-
-        if let latestVersion = application.latestVersion {
-          informationRow("最新版本", value: latestVersion)
-        }
-
-        informationRow("更新来源", value: application.sourceTitle)
-        informationRow("Bundle ID", value: application.bundleIdentifier)
-
-        if let releaseDate = application.releaseDate {
-          informationRow(
-            "发布日期",
-            value: releaseDate.formatted(date: .abbreviated, time: .omitted)
-          )
+      LazyVGrid(
+        columns: [
+          GridItem(.flexible(), spacing: 32, alignment: .topLeading),
+          GridItem(.flexible(), spacing: 32, alignment: .topLeading),
+        ],
+        alignment: .leading,
+        spacing: 12
+      ) {
+        ForEach(informationItems, id: \.label) { item in
+          informationRow(item.label, value: item.value)
         }
       }
 
@@ -224,6 +221,22 @@ struct AppDetailView: View {
         .foregroundStyle(.tertiary)
         .textSelection(.enabled)
     }
+  }
+
+  private var informationItems: [(label: String, value: String)] {
+    var items: [(label: String, value: String)] = [
+      ("状态", isUpdateIgnored ? "已忽略更新" : application.status.title),
+      ("当前版本", application.versionSummary),
+      ("更新来源", application.sourceTitle),
+      ("Bundle ID", application.bundleIdentifier),
+    ]
+    if let latestVersionSummary = application.latestVersionSummary {
+      items.append(("最新版本", latestVersionSummary))
+    }
+    if let releaseDate = application.releaseDate {
+      items.append(("发布日期", releaseDate.formatted(date: .abbreviated, time: .omitted)))
+    }
+    return items
   }
 
   @ViewBuilder
@@ -258,17 +271,20 @@ struct AppDetailView: View {
   }
 
   private func informationRow(_ label: String, value: String) -> some View {
-    GridRow {
+    HStack(alignment: .firstTextBaseline, spacing: 12) {
       Text(label)
         .foregroundStyle(.secondary)
+        .frame(minWidth: 64, alignment: .leading)
       Text(value)
         .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var versionDescription: String {
-    if let latestVersion = application.latestVersion, application.needsUpdate {
-      return "版本 \(application.currentVersion) → \(latestVersion)"
+    if let updateVersionSummary = application.updateVersionSummary {
+      return "版本 \(updateVersionSummary)"
     }
     return "版本 \(application.versionSummary)"
   }
@@ -308,10 +324,14 @@ struct AppDetailView: View {
     application.source == .appStore && application.sourceURL != nil
   }
 
+  private var canOpenHomepage: Bool {
+    application.source == .homebrew && application.homepageURL != nil
+  }
+
   private var releaseNotesPlaceholder: String {
     switch application.status {
     case .unavailable(let message): message
-    case .selfManaged: "此应用由自身更新器管理，当前没有可读取的发行说明。"
+    case .selfManaged: "此应用需在自身内检查更新，当前没有可读取的发行说明。"
     default: "此版本未提供发行说明。"
     }
   }

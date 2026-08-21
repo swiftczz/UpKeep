@@ -76,7 +76,7 @@ struct SparkleUpdateProvider: Sendable {
     return application
   }
 
-  private static func bestCandidate(from candidates: [SparkleCandidate]) -> SparkleCandidate? {
+  static func bestCandidate(from candidates: [SparkleCandidate]) -> SparkleCandidate? {
     let operatingSystem = ProcessInfo.processInfo.operatingSystemVersion
     let systemVersion =
       "\(operatingSystem.majorVersion).\(operatingSystem.minorVersion).\(operatingSystem.patchVersion)"
@@ -105,10 +105,21 @@ struct SparkleUpdateProvider: Sendable {
         return supportsOS && supportsArchitecture && supportsSystemVersion
       }
       .max { lhs, rhs in
-        let left = lhs.shortVersion ?? lhs.buildVersion ?? "0"
-        let right = rhs.shortVersion ?? rhs.buildVersion ?? "0"
-        return VersionComparator.isNewer(right, than: left)
+        Self.isOlder(lhs, than: rhs)
       }
+  }
+
+  private static func isOlder(_ lhs: SparkleCandidate, than rhs: SparkleCandidate) -> Bool {
+    if let leftBuild = lhs.buildVersion,
+      let rightBuild = rhs.buildVersion,
+      leftBuild != rightBuild
+    {
+      return VersionComparator.isNewer(rightBuild, than: leftBuild)
+    }
+
+    let left = lhs.shortVersion ?? lhs.buildVersion ?? "0"
+    let right = rhs.shortVersion ?? rhs.buildVersion ?? "0"
+    return VersionComparator.isNewer(right, than: left)
   }
 
   static func parsePublicationDate(_ value: String) -> Date? {

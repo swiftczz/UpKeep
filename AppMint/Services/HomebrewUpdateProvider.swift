@@ -34,17 +34,29 @@ struct HomebrewUpdateProvider: Sendable {
 
       return applications.map { application in
         guard application.source != .appStore,
-          application.source != .electronBuilder,
-          application.source != .tauri,
           let cask = caskByTargetPath[application.applicationURL.standardizedFileURL.path]
         else {
           return application
         }
 
-        var application = application
         let outdatedItem = outdatedByToken[cask.token]
         let remoteVersion = outdatedItem?.currentVersion ?? cask.version
+        let brewHasUpdate =
+          outdatedItem != nil
+          && remoteVersion != "latest"
+          && VersionComparator.isNewer(remoteVersion, than: application.currentVersion)
 
+        guard
+          Self.shouldClaimInstalledCask(
+            source: application.source,
+            hasCheckableFeed: application.sourceURL != nil,
+            brewHasUpdate: brewHasUpdate
+          )
+        else {
+          return application
+        }
+
+        var application = application
         application.source = .homebrew
         application.sourceIdentifier = cask.token
         application.homepageURL = cask.homepage.flatMap(URL.init(string:))
@@ -113,6 +125,25 @@ struct HomebrewUpdateProvider: Sendable {
     }
 
     return .upToDate
+  }
+
+  static func shouldClaimInstalledCask(
+    source: UpdateSource,
+    hasCheckableFeed: Bool,
+    brewHasUpdate: Bool
+  ) -> Bool {
+    if brewHasUpdate {
+      return true
+    }
+
+    switch source {
+    case .appStore, .electronBuilder, .tauri:
+      return false
+    case .sparkle:
+      return !hasCheckableFeed
+    case .homebrew, .selfManaged:
+      return true
+    }
   }
 
   private static var brewExecutableURL: URL? {

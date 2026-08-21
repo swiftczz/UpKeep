@@ -83,7 +83,7 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
       case .selfManaged:
         throw ProcessRunnerError.failed(
           status: 1,
-          message: "此应用需要由 \(application.sourceTitle) 完成更新。"
+          message: "此应用没有可自动安装的更新源。"
         )
       }
     }

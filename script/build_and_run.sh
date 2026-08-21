@@ -229,6 +229,16 @@ build_debug_app() {
   package_app_from_binary "$build_dir/$APP_NAME"
 }
 
+quit_running_app() {
+  /usr/bin/pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  for _ in {1..30}; do
+    if ! /usr/bin/pgrep -x "$APP_NAME" >/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+}
+
 register_app() {
   local lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
   if [[ -x "$lsregister" ]]; then
@@ -238,14 +248,24 @@ register_app() {
 
 open_app() {
   register_app
-  /usr/bin/pkill -x "$APP_NAME" >/dev/null 2>&1 || true
-  for _ in {1..20}; do
-    if ! /usr/bin/pgrep -x "$APP_NAME" >/dev/null; then
-      break
-    fi
-    sleep 0.1
+  quit_running_app
+  local attempt
+  local open_error=""
+  for attempt in {1..5}; do
+    open_error="$(/usr/bin/open "$APP_BUNDLE" 2>&1)" || true
+    for _ in {1..15}; do
+      if /usr/bin/pgrep -x "$APP_NAME" >/dev/null; then
+        return 0
+      fi
+      sleep 0.1
+    done
+    sleep 0.3
   done
-  /usr/bin/open "$APP_BUNDLE"
+  if [[ -n "$open_error" ]]; then
+    echo "$open_error" >&2
+  fi
+  echo "无法打开 $APP_BUNDLE" >&2
+  return 1
 }
 
 usage() {
@@ -257,19 +277,23 @@ case "$MODE" in
     build_only "${@:2}"
     ;;
   run)
+    quit_running_app
     build_debug_app
     open_app
     ;;
   --debug|debug)
+    quit_running_app
     build_debug_app
     lldb -- "$APP_BINARY"
     ;;
   --logs|logs)
+    quit_running_app
     build_debug_app
     open_app
     /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
     ;;
   --verify|verify)
+    quit_running_app
     build_debug_app
     open_app
     sleep 2

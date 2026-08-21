@@ -135,4 +135,50 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertFalse(insecureCandidate.hasSecureDownload(relativeTo: feedURL))
     XCTAssertFalse(informationOnlyCandidate.hasSecureDownload(relativeTo: feedURL))
   }
+
+  func testPrefersHigherBuildWhenMarketingVersionsMatch() {
+    let older = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "108")
+    let newer = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "110")
+
+    let candidate = SparkleUpdateProvider.bestCandidate(from: [older, newer])
+
+    XCTAssertEqual(candidate?.buildVersion, "110")
+    XCTAssertEqual(candidate?.shortVersion, "2.4.1")
+  }
+
+  func testShowsBuildWhenSparkleMarketingVersionIsUnchanged() {
+    let application = AppRecord(
+      name: "ExcalidrawZ",
+      bundleIdentifier: "com.chocoford.excalidraw",
+      applicationURL: URL(fileURLWithPath: "/Applications/ExcalidrawZ.app"),
+      currentVersion: "2.4.1",
+      buildVersion: "108",
+      source: .sparkle,
+      status: .updateAvailable,
+      latestVersion: "2.4.1",
+      latestBuildVersion: "110"
+    )
+
+    XCTAssertEqual(application.versionSummary, "2.4.1 (108)")
+    XCTAssertEqual(application.latestVersionSummary, "2.4.1 (110)")
+    XCTAssertEqual(application.updateVersionSummary, "2.4.1 (108) → 2.4.1 (110)")
+  }
+
+  func testOmitsBuildWhenMarketingVersionsAlreadyDiffer() {
+    let application = AppRecord(
+      name: "macshot",
+      bundleIdentifier: "com.sw33tlie.macshot.macshot",
+      applicationURL: URL(fileURLWithPath: "/Applications/macshot.app"),
+      currentVersion: "4.2.1",
+      buildVersion: "99",
+      source: .sparkle,
+      status: .updateAvailable,
+      latestVersion: "4.2.2-beta.2",
+      latestBuildVersion: "101"
+    )
+
+    XCTAssertEqual(application.versionSummary, "4.2.1")
+    XCTAssertEqual(application.latestVersionSummary, "4.2.2-beta.2")
+    XCTAssertEqual(application.updateVersionSummary, "4.2.1 → 4.2.2-beta.2")
+  }
 }

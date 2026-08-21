@@ -405,7 +405,7 @@ final class ApplicationScannerTests: XCTestCase {
       "https://github.com/op7418/CodePilot/releases/latest/download/latest-mac.yml"
     )
     XCTAssertEqual(application.homepageURL?.absoluteString, "https://github.com/op7418/CodePilot")
-    XCTAssertEqual(application.sourceTitle, "Electron-builder")
+    XCTAssertEqual(application.sourceTitle, "electron-updater")
   }
 
   func testDetectsElectronBuilderGenericProvider() throws {
@@ -529,7 +529,7 @@ final class ApplicationScannerTests: XCTestCase {
       application.sourceURL?.absoluteString,
       "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
     )
-    XCTAssertEqual(application.sourceTitle, "Tauri")
+    XCTAssertEqual(application.sourceTitle, "Tauri updater")
   }
 
   func testDetectsInstalledReasonixUpdaterWhenPresent() throws {

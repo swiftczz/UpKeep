@@ -17,6 +17,8 @@ final class AppLibrary {
   private let coordinator: any UpdateCoordinating
   @ObservationIgnored private let userDefaults: UserDefaults
   @ObservationIgnored private let libraryStore: ApplicationLibraryStore
+  @ObservationIgnored private var pendingCheckedApplications: [AppRecord] = []
+  @ObservationIgnored private var pendingCheckedFlushTask: Task<Void, Never>?
   private var hasLoaded: Bool
   private var refreshRequested = false
 
@@ -159,6 +161,9 @@ final class AppLibrary {
   private func performRefresh() async {
     let previousSelection = selectedApplicationID
     let previousApplications = applications
+    pendingCheckedFlushTask?.cancel()
+    pendingCheckedFlushTask = nil
+    pendingCheckedApplications.removeAll(keepingCapacity: true)
     phase = .scanning
     alertMessage = nil
 
@@ -195,9 +200,10 @@ final class AppLibrary {
       }
 
       for await checked in group {
-        applyChecked(checked)
+        queueChecked(checked)
       }
     }
+    flushPendingChecked()
 
     lastCheckedAt = .now
     phase = .idle
@@ -213,19 +219,47 @@ final class AppLibrary {
     )
   }
 
-  private func applyChecked(_ application: AppRecord) {
-    guard !updatingApplicationIDs.contains(application.id),
-      let index = applications.firstIndex(where: { $0.id == application.id })
-    else {
+  private func queueChecked(_ application: AppRecord) {
+    pendingCheckedApplications.append(application)
+    if pendingCheckedApplications.count >= 12 {
+      flushPendingChecked()
       return
     }
-    applications[index] = application
+    guard pendingCheckedFlushTask == nil else { return }
+    pendingCheckedFlushTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(80))
+      flushPendingChecked()
+    }
+  }
+
+  private func flushPendingChecked() {
+    pendingCheckedFlushTask?.cancel()
+    pendingCheckedFlushTask = nil
+    let pending = pendingCheckedApplications
+    pendingCheckedApplications.removeAll(keepingCapacity: true)
+    guard !pending.isEmpty else { return }
+
+    var updated = applications
+    for application in pending {
+      guard !updatingApplicationIDs.contains(application.id),
+        let index = updated.firstIndex(where: { $0.id == application.id })
+      else {
+        continue
+      }
+      updated[index] = application
+    }
+    applications = updated
   }
 
   private func persistSnapshot() {
-    libraryStore.save(
-      ApplicationLibrarySnapshot(lastCheckedAt: lastCheckedAt, applications: applications)
+    let snapshot = ApplicationLibrarySnapshot(
+      lastCheckedAt: lastCheckedAt,
+      applications: applications
     )
+    let save = libraryStore.save
+    Task.detached {
+      save(snapshot)
+    }
   }
 
   private static func mergeKeepingCheckResults(
@@ -435,9 +469,7 @@ final class AppLibrary {
     record.latestVersion = application.latestVersion
     record.latestBuildVersion = application.latestBuildVersion
 
-    if let latestVersion = application.latestVersion,
-      VersionComparator.isNewer(latestVersion, than: disk.currentVersion)
-    {
+    if application.hasNewerRelease(than: disk) {
       record.status = .updateAvailable
       record.canAutomaticallyUpdate = application.canAutomaticallyUpdate
     } else {

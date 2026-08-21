@@ -57,7 +57,7 @@ private actor ApplicationIconCache {
       fileAt: applicationURL,
       size: CGSize(width: 128, height: 128),
       scale: max(displayScale, 1),
-      representationTypes: .all
+        representationTypes: .icon
     )
 
     do {

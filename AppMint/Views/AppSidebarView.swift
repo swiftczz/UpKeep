@@ -9,9 +9,6 @@ struct AppSidebarView: View {
   let updateProgressByID: [AppRecord.ID: UpdateProgress]
   let ignoreUpdates: (AppRecord.ID) -> Void
   let stopIgnoringUpdates: (AppRecord.ID) -> Void
-  @State private var scrollPosition = ScrollPosition()
-  @State private var scrollOffsetY: CGFloat = 0
-  @State private var visibleApplicationIDs = Set<AppRecord.ID>()
 
   private var filteredApplications: [AppRecord] {
     guard !searchText.isEmpty else { return applications }
@@ -34,7 +31,7 @@ struct AppSidebarView: View {
   }
 
   var body: some View {
-    List(selection: scrollStableSelection) {
+    List(selection: $selection) {
       if !availableUpdates.isEmpty {
         Section {
           ForEach(availableUpdates) { application in
@@ -43,19 +40,16 @@ struct AppSidebarView: View {
               isUpdateIgnored: false,
               updateProgress: updateProgressByID[application.id]
             )
-              .tag(application.id)
-              .trackScrollVisibility(
-                applicationID: application.id,
-                visibleApplicationIDs: $visibleApplicationIDs
-              )
-              .contextMenu {
-                Button("忽略更新", systemImage: "bell.slash") {
-                  ignoreUpdates(application.id)
-                }
-              }
-              .accessibilityAction(named: Text("忽略更新")) {
+            .equatable()
+            .tag(application.id)
+            .contextMenu {
+              Button("忽略更新", systemImage: "bell.slash") {
                 ignoreUpdates(application.id)
               }
+            }
+            .accessibilityAction(named: Text("忽略更新")) {
+              ignoreUpdates(application.id)
+            }
           }
         } header: {
           sectionHeader("可用更新", count: availableUpdates.count)
@@ -70,11 +64,8 @@ struct AppSidebarView: View {
               isUpdateIgnored: false,
               updateProgress: updateProgressByID[application.id]
             )
+            .equatable()
             .tag(application.id)
-            .trackScrollVisibility(
-              applicationID: application.id,
-              visibleApplicationIDs: $visibleApplicationIDs
-            )
           }
         } header: {
           sectionHeader("已安装的应用", count: installedApplications.count)
@@ -89,11 +80,8 @@ struct AppSidebarView: View {
               isUpdateIgnored: true,
               updateProgress: updateProgressByID[application.id]
             )
+            .equatable()
             .tag(application.id)
-            .trackScrollVisibility(
-              applicationID: application.id,
-              visibleApplicationIDs: $visibleApplicationIDs
-            )
             .contextMenu {
               Button("取消忽略更新", systemImage: "bell") {
                 stopIgnoringUpdates(application.id)
@@ -109,12 +97,7 @@ struct AppSidebarView: View {
       }
     }
     .listStyle(.sidebar)
-    .scrollPosition($scrollPosition)
-    .onScrollGeometryChange(for: CGFloat.self) { geometry in
-      geometry.contentOffset.y
-    } action: { _, newOffsetY in
-      scrollOffsetY = newOffsetY
-    }
+    .animation(nil, value: applications)
     .navigationTitle("AppMint")
     .overlay {
       if applications.isEmpty {
@@ -138,34 +121,6 @@ struct AppSidebarView: View {
     }
   }
 
-  private var scrollStableSelection: Binding<AppRecord.ID?> {
-    Binding(
-      get: { selection },
-      set: { newSelection in
-        let wasSelectionOutsideViewport =
-          selection.map {
-            !visibleApplicationIDs.contains($0)
-          } ?? false
-        let isNewSelectionVisible = newSelection.map(visibleApplicationIDs.contains) == true
-        let shouldRestoreScrollPosition =
-          wasSelectionOutsideViewport && isNewSelectionVisible
-        let preservedOffsetY = scrollOffsetY
-
-        selection = newSelection
-
-        guard shouldRestoreScrollPosition else { return }
-        Task { @MainActor in
-          await Task.yield()
-          var transaction = Transaction()
-          transaction.disablesAnimations = true
-          withTransaction(transaction) {
-            scrollPosition.scrollTo(y: preservedOffsetY)
-          }
-        }
-      }
-    )
-  }
-
   private func sectionHeader(_ title: String, count: Int) -> some View {
     HStack(spacing: 5) {
       Text(title)
@@ -175,17 +130,12 @@ struct AppSidebarView: View {
   }
 }
 
-extension View {
-  fileprivate func trackScrollVisibility(
-    applicationID: AppRecord.ID,
-    visibleApplicationIDs: Binding<Set<AppRecord.ID>>
-  ) -> some View {
-    onScrollVisibilityChange(threshold: 0.01) { isVisible in
-      if isVisible {
-        visibleApplicationIDs.wrappedValue.insert(applicationID)
-      } else {
-        visibleApplicationIDs.wrappedValue.remove(applicationID)
-      }
-    }
+extension AppSidebarView: Equatable {
+  nonisolated static func == (lhs: AppSidebarView, rhs: AppSidebarView) -> Bool {
+    lhs.applications == rhs.applications
+      && lhs.searchText == rhs.searchText
+      && lhs.phase == rhs.phase
+      && lhs.ignoredApplicationIDs == rhs.ignoredApplicationIDs
+      && lhs.updateProgressByID == rhs.updateProgressByID
   }
 }

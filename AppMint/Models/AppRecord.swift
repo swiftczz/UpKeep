@@ -146,15 +146,49 @@ extension AppRecord {
   }
 
   var versionSummary: String {
-    guard let buildVersion,
-      !buildVersion.isEmpty,
-      buildVersion != currentVersion,
-      !currentVersion.localizedCaseInsensitiveContains(buildVersion)
-    else {
-      return currentVersion
+    Self.formattedVersion(
+      currentVersion,
+      build: includesBuildToDistinguishUpdate ? buildVersion : nil
+    )
+  }
+
+  var latestVersionSummary: String? {
+    guard let latestVersion else { return nil }
+    return Self.formattedVersion(
+      latestVersion,
+      build: includesBuildToDistinguishUpdate ? latestBuildVersion : nil
+    )
+  }
+
+  private var includesBuildToDistinguishUpdate: Bool {
+    guard needsUpdate, let latestVersion else { return false }
+    return currentVersion.localizedCaseInsensitiveCompare(latestVersion) == .orderedSame
+  }
+
+  var updateVersionSummary: String? {
+    guard needsUpdate, let latestVersionSummary else { return nil }
+    return "\(versionSummary) → \(latestVersionSummary)"
+  }
+
+  func hasNewerRelease(than installed: AppRecord) -> Bool {
+    if let latestBuild = latestBuildVersion, let installedBuild = installed.buildVersion {
+      return VersionComparator.isNewer(latestBuild, than: installedBuild)
     }
 
-    return "\(currentVersion) (\(buildVersion))"
+    guard let latestVersion else { return false }
+    return VersionComparator.isNewer(latestVersion, than: installed.currentVersion)
+  }
+
+  static func formattedVersion(_ version: String, build: String?) -> String {
+    guard let build,
+      !build.isEmpty,
+      build != version,
+      !version.localizedCaseInsensitiveContains(build)
+    else {
+      return version
+    }
+
+    return "\(version) (\(build))"
   }
 
   func sidebarDate(isUpdateIgnored: Bool) -> Date? {
@@ -208,9 +242,9 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .appStore: "App Store"
     case .homebrew: "Homebrew"
     case .sparkle: "Sparkle"
-    case .electronBuilder: "Electron-builder"
-    case .tauri: "Tauri"
-    case .selfManaged: "应用自身"
+    case .electronBuilder: "electron-updater"
+    case .tauri: "Tauri updater"
+    case .selfManaged: "未知"
     }
   }
 
@@ -219,8 +253,8 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .appStore: "apple.logo"
     case .homebrew: "mug.fill"
     case .sparkle: "sparkles"
-    case .electronBuilder: "bolt.fill"
-    case .tauri: "leaf.fill"
+    case .electronBuilder: "atom"
+    case .tauri: "drop.fill"
     case .selfManaged: "app.dashed"
     }
   }
@@ -238,7 +272,7 @@ enum UpdateStatus: Hashable, Sendable, Codable {
     case .checking: "正在检查"
     case .upToDate: "已是最新"
     case .updateAvailable: "可用更新"
-    case .selfManaged: "由应用管理"
+    case .selfManaged: "自行更新"
     case .unavailable: "无法检查"
     }
   }

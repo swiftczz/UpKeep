@@ -33,6 +33,7 @@ struct AppMintRootView: View {
         ignoreUpdates: { library.ignoreUpdates(for: $0) },
         stopIgnoringUpdates: { library.stopIgnoringUpdates(for: $0) }
       )
+      .equatable()
       .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 430)
     } detail: {
       if let application = library.selectedApplication {
@@ -74,6 +75,15 @@ struct AppMintRootView: View {
               guard let destination = library.appStoreURL(for: application.id) else { return }
               open(destination)
             },
+            openHomepage: {
+              guard
+                application.source == .homebrew,
+                let homepageURL = application.homepageURL
+              else {
+                return
+              }
+              open(homepageURL)
+            },
             openReleaseNotes: {
               guard let releaseNotesURL = application.releaseNotesURL else { return }
               open(releaseNotesURL)
@@ -82,13 +92,13 @@ struct AppMintRootView: View {
               uninstallingApplication = application
             }
           )
-          .id(application.id)
         }
       } else {
         DetailUnavailableView(isLoading: library.isRefreshing)
       }
     }
     .navigationSplitViewStyle(.balanced)
+    .animation(nil, value: library.selectedApplicationID)
     .searchable(text: $searchText, placement: .sidebar, prompt: "搜索应用")
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {

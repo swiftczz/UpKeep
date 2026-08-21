@@ -140,7 +140,7 @@ struct TauriUpdateProvider: Sendable {
     } catch is CancellationError {
       return application
     } catch {
-      application.status = .unavailable("Tauri 更新源暂时无法访问。")
+      application.status = .unavailable("Tauri updater 更新源暂时无法访问。")
     }
 
     return application
@@ -153,7 +153,7 @@ struct TauriUpdateProvider: Sendable {
     guard let endpoint = application.sourceURL,
       SecureUpdateURL.https(endpoint) != nil
     else {
-      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 Tauri 更新源。")
+      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 Tauri updater 更新源。")
     }
 
     progress(.indeterminate("正在检查更新…"))
@@ -180,7 +180,7 @@ struct TauriUpdateProvider: Sendable {
       (200..<300).contains(httpResponse.statusCode),
       let manifest = TauriUpdateManifest.parse(data)
     else {
-      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri 更新清单。")
+      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
     }
     return manifest
   }

@@ -23,6 +23,71 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertEqual(status, .selfManaged)
   }
 
+  func testClaimsElectronCaskOnlyWhenBrewHasUpdate() {
+    XCTAssertTrue(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .electronBuilder,
+        hasCheckableFeed: true,
+        brewHasUpdate: true
+      )
+    )
+    XCTAssertFalse(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .electronBuilder,
+        hasCheckableFeed: true,
+        brewHasUpdate: false
+      )
+    )
+  }
+
+  func testClaimsTauriAndSparkleCasksWhenBrewHasUpdate() {
+    XCTAssertTrue(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .tauri,
+        hasCheckableFeed: true,
+        brewHasUpdate: true
+      )
+    )
+    XCTAssertFalse(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .tauri,
+        hasCheckableFeed: true,
+        brewHasUpdate: false
+      )
+    )
+    XCTAssertTrue(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .sparkle,
+        hasCheckableFeed: true,
+        brewHasUpdate: true
+      )
+    )
+    XCTAssertFalse(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .sparkle,
+        hasCheckableFeed: true,
+        brewHasUpdate: false
+      )
+    )
+  }
+
+  func testStillClaimsSparkleWithoutFeedAndSelfManagedCasks() {
+    XCTAssertTrue(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .sparkle,
+        hasCheckableFeed: false,
+        brewHasUpdate: false
+      )
+    )
+    XCTAssertTrue(
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: .selfManaged,
+        hasCheckableFeed: false,
+        brewHasUpdate: false
+      )
+    )
+  }
+
   func testParsesCurlProgressBarPercent() {
     let parser = HomebrewOutputProgressParser()
     let progress = parser.consuming("####                                                                     12.5%\r")
