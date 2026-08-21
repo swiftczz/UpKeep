@@ -1,0 +1,70 @@
+import Foundation
+
+enum VersionComparator {
+  static func isNewer(_ candidate: String, than installed: String) -> Bool {
+    if let candidateValue = ParsedVersion(candidate),
+      let installedValue = ParsedVersion(installed)
+    {
+      return candidateValue > installedValue
+    }
+
+    return candidate.compare(
+      installed,
+      options: [.numeric, .caseInsensitive],
+      range: nil,
+      locale: Locale(identifier: "en_US_POSIX")
+    ) == .orderedDescending
+  }
+}
+
+private struct ParsedVersion: Comparable {
+  let components: [Int]
+  let prereleaseRank: Int
+
+  init?(_ rawValue: String) {
+    let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+      let expression = try? NSRegularExpression(
+        pattern: #"(?i)^v?(\d+(?:[._-]\d+)*)"#
+      ),
+      let match = expression.firstMatch(
+        in: value,
+        range: NSRange(value.startIndex..., in: value)
+      ),
+      let versionRange = Range(match.range(at: 1), in: value)
+    else {
+      return nil
+    }
+
+    components = value[versionRange]
+      .split(whereSeparator: { $0 == "." || $0 == "_" || $0 == "-" })
+      .compactMap { Int($0) }
+
+    guard !components.isEmpty else { return nil }
+
+    let suffix = value[versionRange.upperBound...].lowercased()
+    if suffix.contains("alpha") {
+      prereleaseRank = 0
+    } else if suffix.contains("beta") {
+      prereleaseRank = 1
+    } else if suffix.contains("rc") || suffix.contains("pre") {
+      prereleaseRank = 2
+    } else {
+      prereleaseRank = 3
+    }
+  }
+
+  static func < (lhs: ParsedVersion, rhs: ParsedVersion) -> Bool {
+    let length = max(lhs.components.count, rhs.components.count)
+
+    for index in 0..<length {
+      let left = index < lhs.components.count ? lhs.components[index] : 0
+      let right = index < rhs.components.count ? rhs.components[index] : 0
+      if left != right {
+        return left < right
+      }
+    }
+
+    return lhs.prereleaseRank < rhs.prereleaseRank
+  }
+}

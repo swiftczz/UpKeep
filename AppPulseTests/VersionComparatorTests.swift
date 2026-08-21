@@ -1,0 +1,22 @@
+import XCTest
+
+@testable import AppPulse
+
+final class VersionComparatorTests: XCTestCase {
+  func testNumericVersionComparison() {
+    XCTAssertTrue(VersionComparator.isNewer("2.10", than: "2.9"))
+    XCTAssertFalse(VersionComparator.isNewer("2.9", than: "2.10"))
+    XCTAssertFalse(VersionComparator.isNewer("3.1.0", than: "3.1.0"))
+  }
+
+  func testStableSuffixDoesNotCreateFalseUpdate() {
+    XCTAssertFalse(
+      VersionComparator.isNewer("2.19.0.2258 release", than: "2.19.0.2258")
+    )
+  }
+
+  func testReleaseIsNewerThanPrereleaseWithSameComponents() {
+    XCTAssertTrue(VersionComparator.isNewer("4.0", than: "4.0 beta"))
+    XCTAssertTrue(VersionComparator.isNewer("4.0 rc1", than: "4.0 beta 2"))
+  }
+}
