@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 
@@ -27,6 +28,27 @@ final class UpdateRelaunchTests: XCTestCase {
 
     let events = recorder.events()
     XCTAssertEqual(events, [.launch(application.applicationURL)])
+  }
+
+  func testDoesNotTreatMissingApplicationBundleAsRunning() {
+    let application = makeApplication(source: .sparkle)
+    XCTAssertTrue(ApplicationProcess.processIDs(inside: application.applicationURL).isEmpty)
+    XCTAssertFalse(ApplicationProcess.isRunning(application))
+  }
+
+  func testDetectsCurrentProcessByExecutableDirectory() {
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    let length = buffer.withUnsafeMutableBufferPointer { pointer in
+      proc_pidpath(getpid(), pointer.baseAddress, UInt32(pointer.count))
+    }
+    XCTAssertGreaterThan(length, 0)
+
+    let processPath = String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
+    let directory = URL(fileURLWithPath: processPath).deletingLastPathComponent()
+    XCTAssertTrue(
+      ApplicationProcess.processIDs(inside: directory).contains(getpid()),
+      "processPath=\(processPath)"
+    )
   }
 
   func testQuitsHomebrewApplicationBeforeUpdatingThenRelaunches() async throws {

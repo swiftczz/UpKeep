@@ -42,9 +42,9 @@ enum ApplicationUninstaller {
       $0.url.standardizedFileURL == application.applicationURL.standardizedFileURL
     }
 
-    if removingApplication, process.isRunning(application.bundleIdentifier) {
+    if removingApplication, process.isRunning(application) {
       try await process.quit(application)
-      if process.isRunning(application.bundleIdentifier) {
+      if process.isRunning(application) {
         throw ApplicationUninstallerError.applicationStillRunning(application.name)
       }
     }

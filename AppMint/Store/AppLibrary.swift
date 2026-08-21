@@ -15,6 +15,7 @@ final class AppLibrary {
 
   private let scanner: any ApplicationScanning
   private let coordinator: any UpdateCoordinating
+  @ObservationIgnored private let process: ApplicationProcessClient
   @ObservationIgnored private let userDefaults: UserDefaults
   @ObservationIgnored private let libraryStore: ApplicationLibraryStore
   @ObservationIgnored private var pendingCheckedApplications: [AppRecord] = []
@@ -28,6 +29,7 @@ final class AppLibrary {
     applications: [AppRecord] = [],
     scanner: any ApplicationScanning = ApplicationScanner(),
     coordinator: any UpdateCoordinating = UpdateCoordinator(),
+    process: ApplicationProcessClient = .live,
     userDefaults: UserDefaults = .standard,
     libraryStore: ApplicationLibraryStore = .live()
   ) {
@@ -49,6 +51,7 @@ final class AppLibrary {
     self.applications = loadedApplications
     self.scanner = scanner
     self.coordinator = coordinator
+    self.process = process
     self.userDefaults = userDefaults
     self.libraryStore = libraryStore
     self.ignoredBundleIdentifiers = ignoredBundleIdentifiers
@@ -83,6 +86,20 @@ final class AppLibrary {
 
   var automaticUpdates: [AppRecord] {
     availableUpdates.filter(\.canAutomaticallyUpdate)
+  }
+
+  func isRunning(_ application: AppRecord) -> Bool {
+    process.isRunning(application)
+  }
+
+  func requiresRelaunchConfirmation(for application: AppRecord) -> Bool {
+    application.needsUpdate
+      && application.canAutomaticallyUpdate
+      && isRunning(application)
+  }
+
+  func automaticUpdatesRequiringRelaunch() -> [AppRecord] {
+    automaticUpdates.filter(isRunning)
   }
 
   var isRefreshing: Bool {

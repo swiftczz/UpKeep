@@ -8,6 +8,7 @@ struct AppMintRootView: View {
   @State private var library: AppLibrary
   @State private var searchText = ""
   @State private var uninstallingApplication: AppRecord?
+  @State private var pendingUpdateAllRelaunch: [AppRecord] = []
 
   private static let backgroundRefreshInterval: TimeInterval = 30 * 60
 
@@ -58,6 +59,7 @@ struct AppMintRootView: View {
             isUpdating: library.updatingApplicationIDs.contains(application.id),
             updateProgress: library.updateProgressByID[application.id],
             isUpdateIgnored: library.isUpdateIgnored(application),
+            isApplicationRunning: { library.isRunning(application) },
             primaryAction: {
               Task {
                 if let destination = await library.performPrimaryAction(for: application.id) {
@@ -104,9 +106,7 @@ struct AppMintRootView: View {
       ToolbarItemGroup(placement: .primaryAction) {
         if !library.automaticUpdates.isEmpty {
           Button("更新全部", systemImage: "arrow.down.circle") {
-            Task {
-              await library.updateAll()
-            }
+            beginUpdateAll()
           }
           .disabled(!library.updatingApplicationIDs.isEmpty)
           .help("更新 \(library.automaticUpdates.count) 个可自动更新的应用")
@@ -157,17 +157,93 @@ struct AppMintRootView: View {
       }
     }
     .alert(
-      "操作未完成",
+      rootAlertTitle,
       isPresented: Binding(
-        get: { library.alertMessage != nil },
-        set: { if !$0 { library.alertMessage = nil } }
+        get: { presentedRootAlert != nil },
+        set: { if !$0 { dismissRootAlert() } }
       )
     ) {
-      Button("好", role: .cancel) {
-        library.alertMessage = nil
+      if case .relaunchAll = presentedRootAlert {
+        Button("更新全部") {
+          confirmPendingUpdateAll()
+        }
+        Button("取消", role: .cancel) {
+          pendingUpdateAllRelaunch = []
+        }
+      } else {
+        Button("好", role: .cancel) {
+          library.alertMessage = nil
+        }
       }
     } message: {
-      Text(library.alertMessage ?? "发生未知错误。")
+      Text(rootAlertMessage)
+    }
+  }
+
+  private var presentedRootAlert: RootAlert? {
+    if !pendingUpdateAllRelaunch.isEmpty {
+      return .relaunchAll
+    }
+    if library.alertMessage != nil {
+      return .failure
+    }
+    return nil
+  }
+
+  private var rootAlertTitle: String {
+    switch presentedRootAlert {
+    case .relaunchAll:
+      return updateAllRelaunchTitle
+    case .failure, .none:
+      return "操作未完成"
+    }
+  }
+
+  private var rootAlertMessage: String {
+    switch presentedRootAlert {
+    case .relaunchAll:
+      return updateAllRelaunchMessage
+    case .failure, .none:
+      return library.alertMessage ?? "发生未知错误。"
+    }
+  }
+
+  private func dismissRootAlert() {
+    pendingUpdateAllRelaunch = []
+    library.alertMessage = nil
+  }
+
+  private var updateAllRelaunchTitle: String {
+    if pendingUpdateAllRelaunch.count == 1, let name = pendingUpdateAllRelaunch.first?.name {
+      return "将关闭并重新打开「\(name)」"
+    }
+    return "将关闭并重新打开正在运行的应用"
+  }
+
+  private var updateAllRelaunchMessage: String {
+    let names = pendingUpdateAllRelaunch.map { "「\($0.name)」" }.joined(separator: "、")
+    if pendingUpdateAllRelaunch.count <= 1 {
+      return "\(names) 正在运行。更新需要退出此应用，安装完成后会重新打开。"
+    }
+    return "\(names) 正在运行。更新需要退出这些应用，安装完成后会重新打开。"
+  }
+
+  private func beginUpdateAll() {
+    let running = library.automaticUpdatesRequiringRelaunch()
+    guard !running.isEmpty else {
+      Task {
+        await library.updateAll()
+      }
+      return
+    }
+    pendingUpdateAllRelaunch = running
+    ApplicationProcess.activateHost()
+  }
+
+  private func confirmPendingUpdateAll() {
+    pendingUpdateAllRelaunch = []
+    Task {
+      await library.updateAll()
     }
   }
 
@@ -190,4 +266,9 @@ struct AppMintRootView: View {
 #Preview("AppMint") {
   AppMintRootView(library: AppLibrary(applications: AppRecord.previewApps))
     .frame(width: 1160, height: 760)
+}
+
+private enum RootAlert {
+  case relaunchAll
+  case failure
 }

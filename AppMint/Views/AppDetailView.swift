@@ -5,6 +5,7 @@ struct AppDetailView: View {
   let isUpdating: Bool
   let updateProgress: UpdateProgress?
   let isUpdateIgnored: Bool
+  let isApplicationRunning: () -> Bool
   let primaryAction: () -> Void
   let openApplication: () -> Void
   let showInFinder: () -> Void
@@ -12,6 +13,8 @@ struct AppDetailView: View {
   let openHomepage: () -> Void
   let openReleaseNotes: () -> Void
   let uninstallApplication: () -> Void
+
+  @State private var isConfirmingRelaunch = false
 
   var body: some View {
     ScrollView {
@@ -31,6 +34,20 @@ struct AppDetailView: View {
     }
     .navigationTitle(application.name)
     .background(.background)
+    .onChange(of: application.id) { _, _ in
+      isConfirmingRelaunch = false
+    }
+    .alert(
+      "将关闭并重新打开「\(application.name)」",
+      isPresented: $isConfirmingRelaunch
+    ) {
+      Button("更新") {
+        primaryAction()
+      }
+      Button("取消", role: .cancel) {}
+    } message: {
+      Text("此应用正在运行。更新会退出应用，安装完成后会重新打开。")
+    }
   }
 
   private var header: some View {
@@ -75,7 +92,7 @@ struct AppDetailView: View {
 
   private var splitActionControl: some View {
     HStack(spacing: 0) {
-      Button(action: primaryAction) {
+      Button(action: handlePrimaryAction) {
         primaryActionLabel
           .padding(.leading, 14)
           .padding(.trailing, 12)
@@ -311,6 +328,15 @@ struct AppDetailView: View {
 
   private var usesUpdatePrimaryAction: Bool {
     application.needsUpdate && application.canAutomaticallyUpdate
+  }
+
+  private func handlePrimaryAction() {
+    if usesUpdatePrimaryAction, isApplicationRunning() {
+      ApplicationProcess.activateHost()
+      isConfirmingRelaunch = true
+      return
+    }
+    primaryAction()
   }
 
   private var canOpenAppStore: Bool {
