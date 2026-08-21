@@ -1,30 +1,51 @@
 #!/usr/bin/env python3
-"""把一张方形图稿转换成符合 Apple 规范的 AppIcon.png 与 AppIcon.icns。
+"""绘制 AppPulse 的应用图标，输出 AppIcon.png 与 AppIcon.icns。
 
 用法：
-    python3 script/make_app_icon.py <源图稿> [输出目录]
+    python3 script/make_app_icon.py [输出目录]
 
-源图稿可以带白色/浅色底，脚本会识别图形本体、按 macOS 圆角规范重新裁形。
+图标完全由下面的参数生成，不依赖外部图稿：调参数后重跑即可。
+
+关于画布：macOS 26 只要在 .icns 里发现透明像素，就会把它判定成旧格式图标，
+塞进一块灰色玻璃底板里缩小显示。所以这里必须交满幅、完全不透明的方图，
+圆角、投影、玻璃边缘一律交给系统合成，不要自己烘焙。
 """
 
 from __future__ import annotations
 
+import math
 import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 CANVAS = 1024
-# Big Sur 之后的 macOS 图标规范：1024 画布内图形占 824，四周留白供投影使用。
-ART = 824
-CORNER_RADIUS = 185.4
-# 连续曲率圆角（Apple squircle）的超椭圆指数，越大越方。
-SQUIRCLE_EXPONENT = 5.0
 SUPERSAMPLE = 4
-# 判定"这个像素属于图形本体"的色差阈值，用来剔除图稿自带的底色与外发光。
-BACKDROP_TOLERANCE = 40
+
+# 底色以 rgb(226,55,50) 的正红为基调，上下只差一档明度，保持接近平面的观感。
+GRADIENT_TOP = (228, 69, 64)
+GRADIENT_BOTTOM = (203, 50, 45)
+GLYPH_COLOR = (255, 255, 255)
+
+# 图形是一个开口在右侧的环形更新箭头，外加中心圆点。
+# RING_RADIUS（圆弧中心线）、STROKE_WIDTH、DOT_RADIUS 相对画布边长，箭头尺寸相对笔画宽度。
+RING_RADIUS = 0.250
+STROKE_WIDTH = 0.076
+# PIL 角度：0 为 3 点方向、顺时针递增。
+# 圆弧顺时针从 3 点略上方一路画到 12 点，开口留在右上；终点切线正好水平，箭头因此完全轴对齐。
+ARC_START_DEG = -20.0
+ARC_END_DEG = 270.0
+ARROW_HALF_WIDTH = 1.05
+ARROW_LENGTH = 1.60
+# 底边相对圆弧端面回退的比例，留一点重叠避免接缝。
+ARROW_BASE_INSET = 0.12
+DOT_RADIUS = 0.053
+
+# 图形下方一层极淡的投影，只为和底色分层，不做玻璃高光。
+GLYPH_SHADOW_ALPHA = 30
+GLYPH_SHADOW_OFFSET = 0.006
+GLYPH_SHADOW_BLUR = 0.0085
 
 ICONSET_ENTRIES = [
     ("icon_16x16.png", 16),
@@ -40,126 +61,101 @@ ICONSET_ENTRIES = [
 ]
 
 
-def squircle_mask(size: int, radius: float) -> Image.Image:
-    """生成连续曲率圆角矩形遮罩，四角用超椭圆而非圆弧。"""
+def vertical_gradient(size: int, top: tuple[int, int, int], bottom: tuple[int, int, int]) -> Image.Image:
+    column = [
+        tuple(round(a + (b - a) * y / (size - 1)) for a, b in zip(top, bottom))
+        for y in range(size)
+    ]
+    gradient = Image.new("RGB", (1, size))
+    gradient.putdata(column)
+    return gradient.resize((size, size), Image.Resampling.BILINEAR)
+
+
+def glyph_mask(size: int) -> Image.Image:
+    """绘制环形更新箭头：圆弧 + 一端圆头收尾、一端三角箭头，中心一个圆点。"""
     hi = size * SUPERSAMPLE
-    r = radius * SUPERSAMPLE
     mask = Image.new("L", (hi, hi), 0)
-    pixels = mask.load()
-    n = SQUIRCLE_EXPONENT
-    for y in range(hi):
-        # 只在角落区域逐像素判断，其余整行直接填充。
-        dy = min(y + 0.5, hi - y - 0.5)
-        if dy >= r:
-            for x in range(hi):
-                pixels[x, y] = 255
-            continue
-        ky = ((r - dy) / r) ** n
-        for x in range(hi):
-            dx = min(x + 0.5, hi - x - 0.5)
-            if dx >= r:
-                pixels[x, y] = 255
-            elif ky + ((r - dx) / r) ** n <= 1.0:
-                pixels[x, y] = 255
-    return mask.resize((size, size), Image.LANCZOS)
+    draw = ImageDraw.Draw(mask)
 
+    center = hi / 2
+    radius = RING_RADIUS * hi
+    stroke = STROKE_WIDTH * hi
+    # PIL 的圆弧描边由外沿向内生长，外沿要放到中心线之外半个笔画宽。
+    outer = radius + stroke / 2
+    box = (center - outer, center - outer, center + outer, center + outer)
+    draw.arc(box, ARC_START_DEG, ARC_END_DEG, fill=255, width=round(stroke))
 
-def subject_mask(image: Image.Image) -> Image.Image:
-    """标出图形本体：与画布边缘连通的底色算背景，被图形包围的高光不算。"""
-    alpha = image.getchannel("A")
-    if alpha.getextrema()[0] < 250:
-        backdrop = alpha.point(lambda v: 255 if v <= 8 else 0)
-    else:
-        rgb = image.convert("RGB")
-        flat = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
-        diff = ImageChops.difference(rgb, flat).convert("L")
-        backdrop = diff.point(lambda v: 255 if v < BACKDROP_TOLERANCE else 0)
+    # PIL 的圆弧是平头，起点补一个圆盘做成圆头收尾。
+    start = math.radians(ARC_START_DEG)
+    cap = (center + radius * math.cos(start), center + radius * math.sin(start))
+    draw.ellipse(
+        (cap[0] - stroke / 2, cap[1] - stroke / 2, cap[0] + stroke / 2, cap[1] + stroke / 2),
+        fill=255,
+    )
 
-    if backdrop.getpixel((0, 0)) != 255:
-        return Image.new("L", image.size, 255)
+    # 箭头沿圆弧终点的顺时针切线方向，底边与半径方向对齐。
+    end = math.radians(ARC_END_DEG)
+    tip_anchor = (center + radius * math.cos(end), center + radius * math.sin(end))
+    tangent = (-math.sin(end), math.cos(end))
+    radial = (math.cos(end), math.sin(end))
+    length = ARROW_LENGTH * stroke
+    half = ARROW_HALF_WIDTH * stroke
+    base = (
+        tip_anchor[0] - tangent[0] * length * ARROW_BASE_INSET,
+        tip_anchor[1] - tangent[1] * length * ARROW_BASE_INSET,
+    )
+    draw.polygon(
+        [
+            (base[0] + radial[0] * half, base[1] + radial[1] * half),
+            (base[0] - radial[0] * half, base[1] - radial[1] * half),
+            (base[0] + tangent[0] * length, base[1] + tangent[1] * length),
+        ],
+        fill=255,
+    )
 
-    ImageDraw.floodfill(backdrop, (0, 0), 128)
-    return backdrop.point(lambda v: 0 if v == 128 else 255)
+    dot = DOT_RADIUS * hi
+    draw.ellipse((center - dot, center - dot, center + dot, center + dot), fill=255)
 
-
-def square_crop(image: Image.Image, mask: Image.Image) -> tuple[Image.Image, Image.Image]:
-    """按图形本体的外接正方形裁切，避免非等比缩放导致变形。"""
+    # 箭头肩部让图形上下不对称，按外接框重新居中。
     box = mask.getbbox()
-    if box is None:
-        return image, mask
-    left, top, right, bottom = box
-    side = max(right - left, bottom - top)
-    cx, cy = (left + right) / 2, (top + bottom) / 2
-    box = (
-        round(cx - side / 2),
-        round(cy - side / 2),
-        round(cx - side / 2) + side,
-        round(cy - side / 2) + side,
-    )
-    return image.crop(box), mask.crop(box)
+    if box is not None:
+        mask = ImageChops.offset(
+            mask,
+            round(center - (box[0] + box[2]) / 2),
+            round(center - (box[1] + box[3]) / 2),
+        )
+
+    return mask.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def extend_edges(rgb: Image.Image, known: Image.Image, radius: int = 40) -> Image.Image:
-    """把图形边缘的颜色向外扩散，填补规范圆角比原图更方时露出的缺口。"""
-    # 图稿最外圈像素混了底色，若拿来当取样源会在角落留下浅色接缝，先向内腐蚀掉。
-    for _ in range(2):
-        known = known.filter(ImageFilter.MinFilter(9))
-    weight = np.asarray(known, dtype=np.float32) / 255.0
-    premultiplied = Image.fromarray(
-        (np.asarray(rgb, dtype=np.float32) * weight[:, :, None]).astype(np.uint8)
-    )
+def build_master() -> Image.Image:
+    art = vertical_gradient(CANVAS, GRADIENT_TOP, GRADIENT_BOTTOM)
+    glyph = glyph_mask(CANVAS)
 
-    blur = ImageFilter.GaussianBlur(radius)
-    spread = np.asarray(premultiplied.filter(blur), dtype=np.float32)
-    coverage = np.asarray(known.filter(blur), dtype=np.float32) / 255.0
-    estimate = spread / np.maximum(coverage, 1e-3)[:, :, None]
-
-    # 羽化取样边界，否则原图与扩散色之间会留下一道硬接缝。
-    blend = (
-        np.asarray(known.filter(ImageFilter.GaussianBlur(8)), dtype=np.float32) / 255.0
-    )[:, :, None]
-    filled = blend * np.asarray(rgb, dtype=np.float32) + (1.0 - blend) * estimate
-    return Image.fromarray(np.clip(filled, 0, 255).astype(np.uint8))
-
-
-def build_master(source: Path) -> Image.Image:
-    original = Image.open(source).convert("RGBA")
-    art, mask = square_crop(original, subject_mask(original))
-    art = art.resize((ART, ART), Image.LANCZOS)
-    mask = mask.resize((ART, ART), Image.LANCZOS).point(lambda v: 255 if v > 127 else 0)
-
-    shape = squircle_mask(ART, CORNER_RADIUS)
-    filled = extend_edges(art.convert("RGB"), mask)
-    filled.putalpha(shape)
-
-    offset = (CANVAS - ART) // 2
     shadow = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-    shadow.paste((0, 0, 0, 56), (offset, offset + 10), shape)
-    shadow = shadow.filter(ImageFilter.GaussianBlur(11))
+    shadow.paste((0, 0, 0, GLYPH_SHADOW_ALPHA), (0, round(CANVAS * GLYPH_SHADOW_OFFSET)), glyph)
+    art.paste(
+        Image.new("RGB", (CANVAS, CANVAS), (0, 0, 0)),
+        (0, 0),
+        shadow.filter(ImageFilter.GaussianBlur(CANVAS * GLYPH_SHADOW_BLUR)).getchannel("A"),
+    )
 
-    canvas = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-    canvas.alpha_composite(shadow)
-    canvas.alpha_composite(filled, (offset, offset))
-    return canvas
+    art.paste(GLYPH_COLOR, (0, 0), glyph)
+    return art
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-
-    source = Path(sys.argv[1])
-    out_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("Resources")
+    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("Resources")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    master = build_master(source)
+    master = build_master()
     png_path = out_dir / "AppIcon.png"
     master.save(png_path)
 
     iconset = out_dir / "AppIcon.iconset"
     iconset.mkdir(exist_ok=True)
     for name, size in ICONSET_ENTRIES:
-        master.resize((size, size), Image.LANCZOS).save(iconset / name)
+        master.resize((size, size), Image.Resampling.LANCZOS).save(iconset / name)
 
     icns_path = out_dir / "AppIcon.icns"
     subprocess.run(

@@ -89,15 +89,17 @@ APP_VERSION=0.1.0 ./script/build_and_run.sh --build-only x86_64    --sign --dmg
 
 ## 应用图标
 
-图标是一条玻璃质感的脉冲曲线，末端收成向上的箭头，对应「持续观察 + 有新版本」。
+图标是红底上的环形更新箭头，扁平化处理，底色上下只差一档明度。
 
-`Resources/AppIcon-source.png` 是 1024×1024 的图稿，`Resources/AppIcon.png` 与 `AppIcon.icns` 由脚本生成：
+`Resources/AppIcon.png` 与 `AppIcon.icns` 不是图片素材，而是由脚本按参数绘制出来的：
 
 ```sh
-python3 script/make_app_icon.py Resources/AppIcon-source.png Resources
+python3 script/make_app_icon.py Resources
 ```
 
-脚本会识别图稿本体、按 macOS 规范重新裁成 1024 画布内 824 的连续曲率圆角（半径 185.4），补上投影留白，再导出全套尺寸并调用 `iconutil` 打包。换图稿时只需替换源文件后重跑一次。依赖 `pillow` 与 `numpy`。
+脚本顶部集中了所有可调参数（渐变色、圆弧半径、笔画宽度、箭头比例等），改完重跑即可。依赖 `pillow`。
+
+输出是 1024×1024 满幅、完全不透明的方图，自己不做圆角也不烘焙投影。macOS 26 一旦在 `.icns` 里发现透明像素，就会把它当成旧格式图标，塞进一块灰色玻璃底板里缩小显示，于是出现双层圆角套框；交满幅不透明方图，系统才会自己套上正确的圆角、投影和玻璃边缘。改图标时注意别把这条规则改回旧的「1024 画布内 824 图形」布局。
 
 ## 目录结构
 
