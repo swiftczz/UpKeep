@@ -29,6 +29,41 @@ enum SecureUpdateURL {
   }
 }
 
+enum UpdateHTTP {
+  static func successfulData(from url: URL) async throws -> Data? {
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 15
+    request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse,
+      (200..<300).contains(httpResponse.statusCode)
+    else {
+      return nil
+    }
+    return data
+  }
+}
+
+enum ISO8601Parsing {
+  static func date(from value: String) -> Date? {
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = iso.date(from: value) {
+      return date
+    }
+    iso.formatOptions = [.withInternetDateTime]
+    return iso.date(from: value)
+  }
+}
+
+enum HomebrewCLI {
+  static var executableURL: URL? {
+    ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+      .first(where: FileManager.default.isExecutableFile(atPath:))
+      .map(URL.init(fileURLWithPath:))
+  }
+}
+
 enum MacCPUArchitecture: Equatable, Sendable {
   case arm64
   case x64
@@ -39,5 +74,12 @@ enum MacCPUArchitecture: Equatable, Sendable {
     #else
       .x64
     #endif
+  }
+}
+
+extension String {
+  var nonBlankValue: String? {
+    let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 }

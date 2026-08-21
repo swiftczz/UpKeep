@@ -75,7 +75,7 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
       case .appStore:
         try await macAppStore.upgrade(application, progress: progress)
       case .sparkle:
-        try await SparkleApplicationUpdater.upgrade(application, progress: progress)
+        try await sparkle.upgrade(application, progress: progress)
       case .electronBuilder:
         try await electronBuilder.upgrade(application, progress: progress)
       case .tauri:

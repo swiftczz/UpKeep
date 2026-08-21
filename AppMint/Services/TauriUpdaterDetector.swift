@@ -43,9 +43,7 @@ enum TauriUpdaterDetector {
       }
     }
 
-    return urls.sorted { lhs, rhs in
-      githubPreference(lhs) > githubPreference(rhs)
-    }
+    return urls
   }
 
   static func updaterJSONURL(inFile fileURL: URL) -> URL? {
@@ -187,10 +185,6 @@ enum TauriUpdaterDetector {
   private static func isUpdaterJSON(_ url: URL) -> Bool {
     let name = url.lastPathComponent.lowercased()
     return name == "latest.json" || name == "update-proxy.json"
-  }
-
-  private static func githubPreference(_ url: URL) -> Int {
-    url.host?.lowercased() == "github.com" ? 1 : 0
   }
 
   private static func stringValues(in json: Any, keys: Set<String>) -> [String] {

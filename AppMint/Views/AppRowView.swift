@@ -61,7 +61,7 @@ struct AppRowView: View {
     if let updateVersionSummary = application.updateVersionSummary {
       Text(updateVersionSummary)
     } else {
-      Text("版本 \(application.versionSummary)")
+      Text(application.versionDescription)
     }
   }
 

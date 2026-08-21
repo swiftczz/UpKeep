@@ -5,20 +5,14 @@ struct SparkleUpdateProvider: Sendable {
     var application = application
 
     guard let feedURL = application.sourceURL,
-      feedURL.scheme?.lowercased() == "https"
+      SecureUpdateURL.https(feedURL) != nil
     else {
       application.status = .selfManaged
       return application
     }
 
     do {
-      var request = URLRequest(url: feedURL)
-      request.timeoutInterval = 15
-      let (data, response) = try await URLSession.shared.data(for: request)
-
-      guard let httpResponse = response as? HTTPURLResponse,
-        (200..<300).contains(httpResponse.statusCode)
-      else {
+      guard let data = try await UpdateHTTP.successfulData(from: feedURL) else {
         application.status = .unavailable("Sparkle 更新源暂时无法访问。")
         return application
       }
@@ -43,7 +37,7 @@ struct SparkleUpdateProvider: Sendable {
 
       if application.releaseNotes == nil,
         let releaseNotesURL = candidate.releaseNotesURL,
-        releaseNotesURL.scheme?.lowercased() == "https"
+        SecureUpdateURL.https(releaseNotesURL) != nil
       {
         application.releaseNotes = await Self.fetchReleaseNotes(from: releaseNotesURL)
       }
@@ -74,6 +68,13 @@ struct SparkleUpdateProvider: Sendable {
     }
 
     return application
+  }
+
+  func upgrade(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {
+    try await SparkleApplicationUpdater.upgrade(application, progress: progress)
   }
 
   static func bestCandidate(from candidates: [SparkleCandidate]) -> SparkleCandidate? {
@@ -162,15 +163,7 @@ struct SparkleUpdateProvider: Sendable {
       }
     }
 
-    let isoWithFractionalSeconds = ISO8601DateFormatter()
-    isoWithFractionalSeconds.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = isoWithFractionalSeconds.date(from: trimmed) {
-      return date
-    }
-
-    let iso = ISO8601DateFormatter()
-    iso.formatOptions = [.withInternetDateTime]
-    return iso.date(from: trimmed)
+    return ISO8601Parsing.date(from: trimmed)
   }
 
   private static let namedTimeZoneOffsets: [String: String] = [
@@ -236,11 +229,8 @@ struct SparkleUpdateProvider: Sendable {
 
   private static func fetchReleaseNotes(from url: URL) async -> String? {
     do {
-      var request = URLRequest(url: url)
-      request.timeoutInterval = 10
-      let (data, response) = try await URLSession.shared.data(for: request)
-      guard let httpResponse = response as? HTTPURLResponse,
-        (200..<300).contains(httpResponse.statusCode),
+      guard
+        let data = try await UpdateHTTP.successfulData(from: url),
         data.count <= 2_000_000,
         let html = String(data: data, encoding: .utf8)
       else {
@@ -321,8 +311,11 @@ struct SparkleCandidate: Hashable, Sendable {
 
   func hasSecureDownload(relativeTo feedURL: URL) -> Bool {
     guard let downloadURL else { return false }
-    let resolvedURL = URL(string: downloadURL.relativeString, relativeTo: feedURL)?.absoluteURL
-    return resolvedURL?.scheme?.lowercased() == "https"
+    guard let resolvedURL = URL(string: downloadURL.relativeString, relativeTo: feedURL)?.absoluteURL
+    else {
+      return false
+    }
+    return SecureUpdateURL.https(resolvedURL) != nil
   }
 }
 

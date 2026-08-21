@@ -46,7 +46,7 @@ private final class SparkleUpdateSession: NSObject, SPUUpdaterDelegate {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
-    guard application.sourceURL?.scheme?.lowercased() == "https" else {
+    guard let sourceURL = application.sourceURL, SecureUpdateURL.https(sourceURL) != nil else {
       throw SparkleApplicationUpdaterError.insecureFeed
     }
     guard let bundle = Bundle(url: application.applicationURL) else {

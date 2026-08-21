@@ -98,7 +98,7 @@ struct ApplicationScanner: ApplicationScanning {
     let hasAppStoreReceipt = FileManager.default.fileExists(atPath: receiptURL.path)
     let iOSAppStoreMetadata = iOSAppStoreMetadata(at: applicationURL, bundleInfo: info)
     let hasSparkle = FileManager.default.fileExists(atPath: sparkleURL.path)
-    let feedURL = (info["SUFeedURL"] as? String).flatMap(URL.init(string:))
+    let feedURL = (info["SUFeedURL"] as? String).flatMap(SecureUpdateURL.https(string:))
 
     let source: UpdateSource
     let appStorePlatform: AppStorePlatform?
@@ -350,11 +350,4 @@ private struct IOSAppStoreMetadata {
   let storeIdentifier: String?
   let countryCode: String?
   let platform: AppStorePlatform
-}
-
-extension String {
-  fileprivate var nonBlankValue: String? {
-    let value = trimmingCharacters(in: .whitespacesAndNewlines)
-    return value.isEmpty ? nil : value
-  }
 }

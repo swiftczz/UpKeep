@@ -2,7 +2,7 @@ import Foundation
 
 struct HomebrewUpdateProvider: Sendable {
   func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
-    guard let brewURL = Self.brewExecutableURL else {
+    guard let brewURL = HomebrewCLI.executableURL else {
       return applications
     }
 
@@ -84,7 +84,7 @@ struct HomebrewUpdateProvider: Sendable {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
-    guard let brewURL = Self.brewExecutableURL,
+    guard let brewURL = HomebrewCLI.executableURL,
       let token = application.sourceIdentifier,
       application.canAutomaticallyUpdate
     else {
@@ -144,18 +144,6 @@ struct HomebrewUpdateProvider: Sendable {
     case .homebrew, .selfManaged:
       return true
     }
-  }
-
-  private static var brewExecutableURL: URL? {
-    let candidates = [
-      "/opt/homebrew/bin/brew",
-      "/usr/local/bin/brew",
-    ]
-
-    return
-      candidates
-      .first(where: FileManager.default.isExecutableFile(atPath:))
-      .map(URL.init(fileURLWithPath:))
   }
 }
 

@@ -89,14 +89,7 @@ enum ApplicationUninstaller {
   }
 
   private static func uninstallHomebrewCask(token: String, brewExecutableURL: URL?) async throws {
-    let brewURL =
-      brewExecutableURL
-      ?? [
-        "/opt/homebrew/bin/brew",
-        "/usr/local/bin/brew",
-      ]
-      .map(URL.init(fileURLWithPath:))
-      .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    let brewURL = brewExecutableURL ?? HomebrewCLI.executableURL
 
     guard let brewURL else { return }
     _ = try await ProcessRunner.run(

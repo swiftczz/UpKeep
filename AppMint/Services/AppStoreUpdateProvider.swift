@@ -22,12 +22,8 @@ struct AppStoreUpdateProvider: Sendable {
         return application
       }
 
-      var request = URLRequest(url: url)
-      request.timeoutInterval = 15
-      let (data, response) = try await URLSession.shared.data(for: request)
-
-      guard let httpResponse = response as? HTTPURLResponse,
-        (200..<300).contains(httpResponse.statusCode)
+      guard
+        let data = try await UpdateHTTP.successfulData(from: url)
       else {
         application.status = .unavailable("App Store 暂时无法访问。")
         return application
@@ -58,8 +54,8 @@ struct AppStoreUpdateProvider: Sendable {
 
       application.appStorePlatform = result.appStorePlatform ?? platform
       application.latestVersion = result.version
-      application.releaseNotes = result.releaseNotes?.nilIfBlank
-      application.releaseDate = result.releaseDate.flatMap(Self.parseISO8601Date)
+      application.releaseNotes = result.releaseNotes?.nonBlankValue
+      application.releaseDate = result.releaseDate.flatMap(ISO8601Parsing.date(from:))
       application.sourceURL = result.trackViewURL.flatMap(URL.init(string:))
       application.homepageURL = application.sourceURL
       application.sourceIdentifier = result.trackID.map(String.init)
@@ -121,21 +117,12 @@ struct AppStoreUpdateProvider: Sendable {
       return nil
     }
 
-    var request = URLRequest(url: url)
-    request.timeoutInterval = 15
-    let (data, response) = try await URLSession.shared.data(for: request)
-    guard let httpResponse = response as? HTTPURLResponse,
-      (200..<300).contains(httpResponse.statusCode)
-    else {
+    guard let data = try await UpdateHTTP.successfulData(from: url) else {
       return nil
     }
 
     let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
     return lookup.result(matching: bundleIdentifier, platform: platform)
-  }
-
-  private static func parseISO8601Date(_ value: String) -> Date? {
-    ISO8601DateFormatter().date(from: value)
   }
 }
 
@@ -208,12 +195,5 @@ struct AppStoreLookupResult: Decodable, Sendable {
     case releaseDate = "currentVersionReleaseDate"
     case trackViewURL = "trackViewUrl"
     case supportedDevices
-  }
-}
-
-extension String {
-  fileprivate var nilIfBlank: String? {
-    let value = trimmingCharacters(in: .whitespacesAndNewlines)
-    return value.isEmpty ? nil : value
   }
 }

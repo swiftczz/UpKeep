@@ -170,6 +170,32 @@ extension AppRecord {
     return "\(versionSummary) → \(latestVersionSummary)"
   }
 
+  var versionDescription: String {
+    if let updateVersionSummary {
+      return "版本 \(updateVersionSummary)"
+    }
+    return "版本 \(versionSummary)"
+  }
+
+  mutating func applyRemoteRelease(
+    version: String,
+    releaseDate: Date? = nil,
+    releaseNotes: String? = nil,
+    releaseNotesURL: URL? = nil,
+    canInstall: Bool
+  ) {
+    latestVersion = version
+    self.releaseDate = releaseDate
+    self.releaseNotes = releaseNotes
+    if let releaseNotesURL {
+      self.releaseNotesURL = releaseNotesURL
+    }
+
+    let newer = VersionComparator.isNewer(version, than: currentVersion)
+    status = newer ? .updateAvailable : .upToDate
+    canAutomaticallyUpdate = newer && canInstall
+  }
+
   func hasNewerRelease(than installed: AppRecord) -> Bool {
     if let latestBuild = latestBuildVersion, let installedBuild = installed.buildVersion {
       return VersionComparator.isNewer(latestBuild, than: installedBuild)

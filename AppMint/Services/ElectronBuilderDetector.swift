@@ -1,16 +1,9 @@
 import Foundation
 
 struct ElectronBuilderMetadata: Equatable, Sendable {
-  enum Provider: String, Equatable, Sendable {
-    case github
-    case generic
-  }
-
-  let provider: Provider
   let identifier: String
   let feedURL: URL
   let homepageURL: URL?
-  let repositoryIdentifier: String?
 }
 
 enum ElectronBuilderDetector {
@@ -71,11 +64,9 @@ enum ElectronBuilderDetector {
     }
 
     return ElectronBuilderMetadata(
-      provider: .github,
       identifier: "\(owner)/\(repository)",
       feedURL: feedURL,
-      homepageURL: URL(string: "https://github.com/\(owner)/\(repository)"),
-      repositoryIdentifier: "\(owner)/\(repository)"
+      homepageURL: URL(string: "https://github.com/\(owner)/\(repository)")
     )
   }
 
@@ -93,11 +84,9 @@ enum ElectronBuilderDetector {
     }
 
     return ElectronBuilderMetadata(
-      provider: .generic,
       identifier: baseURL.absoluteString,
       feedURL: feedURL,
-      homepageURL: baseURL,
-      repositoryIdentifier: nil
+      homepageURL: baseURL
     )
   }
 
@@ -198,7 +187,7 @@ enum ElectronBuilderYAML {
       let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-      if let multilineKey, let multilineIndent {
+      if multilineKey != nil, let multilineIndent {
         if trimmed.isEmpty {
           multilineLines.append("")
           continue
@@ -316,13 +305,7 @@ enum ElectronBuilderYAML {
   }
 
   private static func parseManifestDate(_ value: String) -> Date? {
-    let iso = ISO8601DateFormatter()
-    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = iso.date(from: value) {
-      return date
-    }
-    iso.formatOptions = [.withInternetDateTime]
-    return iso.date(from: value)
+    ISO8601Parsing.date(from: value)
   }
 }
 

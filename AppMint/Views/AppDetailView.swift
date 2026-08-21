@@ -42,7 +42,7 @@ struct AppDetailView: View {
         Text(application.name)
           .font(.title2.weight(.semibold))
 
-        Text(versionDescription)
+        Text(application.versionDescription)
           .foregroundStyle(.secondary)
 
         HStack(spacing: 6) {
@@ -280,13 +280,6 @@ struct AppDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-  }
-
-  private var versionDescription: String {
-    if let updateVersionSummary = application.updateVersionSummary {
-      return "版本 \(updateVersionSummary)"
-    }
-    return "版本 \(application.versionSummary)"
   }
 
   private var primaryActionHelp: String {

@@ -102,13 +102,7 @@ struct TauriUpdateManifest: Equatable, Sendable {
   }
 
   private static func parseDate(_ value: String) -> Date? {
-    let iso = ISO8601DateFormatter()
-    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = iso.date(from: value) {
-      return date
-    }
-    iso.formatOptions = [.withInternetDateTime]
-    return iso.date(from: value)
+    ISO8601Parsing.date(from: value)
   }
 }
 
@@ -125,18 +119,13 @@ struct TauriUpdateProvider: Sendable {
 
     do {
       let manifest = try await fetchManifest(from: endpoint)
-      application.latestVersion = manifest.version
-      application.releaseDate = manifest.publicationDate
-      application.releaseNotes = manifest.notes
-      application.releaseNotesURL = manifest.releaseNotesURL
-
-      let updateIsAvailable = VersionComparator.isNewer(
-        manifest.version,
-        than: application.currentVersion
+      application.applyRemoteRelease(
+        version: manifest.version,
+        releaseDate: manifest.publicationDate,
+        releaseNotes: manifest.notes,
+        releaseNotesURL: manifest.releaseNotesURL,
+        canInstall: manifest.selectedPlatform() != nil
       )
-      application.status = updateIsAvailable ? .updateAvailable : .upToDate
-      application.canAutomaticallyUpdate =
-        updateIsAvailable && manifest.selectedPlatform() != nil
     } catch is CancellationError {
       return application
     } catch {
@@ -172,12 +161,8 @@ struct TauriUpdateProvider: Sendable {
   }
 
   private func fetchManifest(from url: URL) async throws -> TauriUpdateManifest {
-    var request = URLRequest(url: url)
-    request.timeoutInterval = 15
-    request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
-    let (data, response) = try await URLSession.shared.data(for: request)
-    guard let httpResponse = response as? HTTPURLResponse,
-      (200..<300).contains(httpResponse.statusCode),
+    guard
+      let data = try await UpdateHTTP.successfulData(from: url),
       let manifest = TauriUpdateManifest.parse(data)
     else {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
