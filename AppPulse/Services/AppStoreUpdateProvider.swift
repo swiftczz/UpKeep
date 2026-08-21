@@ -50,6 +50,11 @@ struct AppStoreUpdateProvider: Sendable {
       application.releaseDate = result.releaseDate.flatMap(Self.parseISO8601Date)
       application.sourceURL = result.trackViewURL.flatMap(URL.init(string:))
       application.homepageURL = application.sourceURL
+      application.sourceIdentifier = result.trackID.map(String.init)
+      application.canAutomaticallyUpdate =
+        application.appStorePlatform == .mac
+        && MacAppStoreUpdateProvider.isAvailable
+        && MacAppStoreUpdateProvider.adamIdentifier(for: application) != nil
       application.status =
         VersionComparator.isNewer(result.version, than: application.currentVersion)
         ? .updateAvailable
@@ -108,6 +113,7 @@ struct AppStoreLookupResponse: Decodable, Sendable {
 
 struct AppStoreLookupResult: Decodable, Sendable {
   let bundleIdentifier: String
+  let trackID: UInt64?
   let version: String
   let releaseNotes: String?
   let releaseDate: String?
@@ -154,6 +160,7 @@ struct AppStoreLookupResult: Decodable, Sendable {
 
   enum CodingKeys: String, CodingKey {
     case bundleIdentifier = "bundleId"
+    case trackID = "trackId"
     case version
     case releaseNotes
     case releaseDate = "currentVersionReleaseDate"

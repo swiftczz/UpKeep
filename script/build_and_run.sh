@@ -11,10 +11,13 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ICON_SOURCE="$ROOT_DIR/Resources/AppIcon.icns"
+THIRD_PARTY_NOTICES_SOURCE="$ROOT_DIR/THIRD_PARTY_NOTICES.md"
+SPARKLE_LICENSE_SOURCE="$ROOT_DIR/.build/checkouts/Sparkle/LICENSE"
 STAGING_DIR=""
 
 cleanup() {
@@ -87,6 +90,10 @@ PLIST
 
 package_app_from_binary() {
   local build_binary="$1"
+  local build_dir
+  local sparkle_framework
+  build_dir="$(dirname "$build_binary")"
+  sparkle_framework="$build_dir/Sparkle.framework"
 
   case "$APP_BUNDLE" in
     "$DIST_DIR"/*.app) ;;
@@ -94,15 +101,36 @@ package_app_from_binary() {
   esac
 
   rm -rf "$APP_BUNDLE"
-  mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+  mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_RESOURCES"
   ditto "$build_binary" "$APP_BINARY"
   chmod +x "$APP_BINARY"
+
+  if ! otool -l "$APP_BINARY" | grep -Fq "@executable_path/../Frameworks"; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BINARY"
+  fi
+
+  if [[ ! -d "$sparkle_framework" ]]; then
+    echo "未找到 Sparkle.framework：$sparkle_framework" >&2
+    exit 1
+  fi
+  ditto "$sparkle_framework" "$APP_FRAMEWORKS/Sparkle.framework"
 
   if [[ -f "$ICON_SOURCE" ]]; then
     ditto "$ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
   fi
 
+  if [[ -f "$THIRD_PARTY_NOTICES_SOURCE" ]]; then
+    ditto "$THIRD_PARTY_NOTICES_SOURCE" "$APP_RESOURCES/THIRD_PARTY_NOTICES.md"
+  fi
+
+  if [[ ! -f "$SPARKLE_LICENSE_SOURCE" ]]; then
+    echo "未找到 Sparkle 许可文件：$SPARKLE_LICENSE_SOURCE" >&2
+    exit 1
+  fi
+  ditto "$SPARKLE_LICENSE_SOURCE" "$APP_RESOURCES/Sparkle-LICENSE.txt"
+
   write_info_plist
+  codesign --force --deep --sign - "$APP_BUNDLE"
 }
 
 sign_app() {
@@ -210,7 +238,14 @@ register_app() {
 
 open_app() {
   register_app
-  /usr/bin/open -n "$APP_BUNDLE"
+  /usr/bin/pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  for _ in {1..20}; do
+    if ! /usr/bin/pgrep -x "$APP_NAME" >/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  /usr/bin/open "$APP_BUNDLE"
 }
 
 usage() {

@@ -21,7 +21,10 @@ AppPulse 是一个面向 macOS 26 及以上系统的应用更新检查工具。�
 - 刷新时保持当前列表和选择稳定，扫描与检查结束后一次性提交最终分组，避免点击应用时列表跳动
 - 支持在更新列表中右键忽略应用更新，并在已安装列表中取消忽略；忽略状态会跨启动保留
 - 支持应用搜索、详情查看、检查更新和安全的更新入口
-- Homebrew Cask 可由 AppPulse 执行更新；其他来源交回原管理工具
+- 原生 Mac App Store 应用可复用 App Store 当前登录账号，由 AppPulse 直接下载并安装更新
+- Homebrew Cask 可由 AppPulse 执行更新
+- 带安全下载项的 Sparkle Appcast 可由 AppPulse 调起 Sparkle 官方流程完成验证、下载和安装
+- GitHub 等其他来源交回原管理工具
 
 ## 环境要求
 
@@ -29,6 +32,12 @@ AppPulse 是一个面向 macOS 26 及以上系统的应用更新检查工具。�
 - Xcode 26+
 - Swift 6.2+
 - Homebrew 为可选项；未安装时不启用 Homebrew 来源
+- 不需要安装 `mas`；App Store 更新逻辑已经集成到 AppPulse
+- Sparkle 更新使用项目内嵌的 Sparkle 2，不需要目标应用保持打开
+
+> App Store 直接更新使用 macOS 私有的 CommerceKit 与 StoreFoundation 框架，适合本地或
+> Developer ID 分发，不能用于提交 Mac App Store。相关移植代码遵循 mas-cli/mas 的 MIT
+> 许可，详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ## 使用 Swift Package Manager
 
@@ -78,6 +87,18 @@ APP_VERSION=0.1.0 ./script/build_and_run.sh --build-only x86_64    --sign --dmg
 - `APP_BUILD` 默认取当前仓库提交数，也可以通过环境变量明确指定。
 - 如果添加 `Resources/AppIcon.icns`，脚本会自动将其写入应用包。
 
+## 应用图标
+
+图标是一条玻璃质感的脉冲曲线，末端收成向上的箭头，对应「持续观察 + 有新版本」。
+
+`Resources/AppIcon-source.png` 是 1024×1024 的图稿，`Resources/AppIcon.png` 与 `AppIcon.icns` 由脚本生成：
+
+```sh
+python3 script/make_app_icon.py Resources/AppIcon-source.png Resources
+```
+
+脚本会识别图稿本体、按 macOS 规范重新裁成 1024 画布内 824 的连续曲率圆角（半径 185.4），补上投影留白，再导出全套尺寸并调用 `iconutil` 打包。换图稿时只需替换源文件后重跑一次。依赖 `pillow` 与 `numpy`。
+
 ## 目录结构
 
 ```text
@@ -97,8 +118,8 @@ AppPulse/
 
 ## 首版边界
 
-- App Store 应用只跳转至官方商店，不由 AppPulse 替换安装。
-- Sparkle 应用使用其官方 Feed 展示信息，更新仍由应用自己的更新器完成。
+- 原生 Mac App Store 应用支持直接更新；安装在 Mac 上的 iPhone/iPad 应用仍跳转至官方商店。
+- Sparkle 应用在 Appcast 含 HTTPS 安装包时支持直接更新；仅含说明、动态生成或需要鉴权的 Feed 仍打开应用处理。
 - GitHub 兜底识别只标注可确认的来源，不等同于 AppPulse 已能自动下载或安装 GitHub Releases。
 - Homebrew 通常不提供发行说明，因此详情可能只有版本与主页。
 - 动态或需要鉴权的更新源不会被强行解析。

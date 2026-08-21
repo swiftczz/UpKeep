@@ -32,6 +32,27 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertEqual(restoredLibrary.availableUpdates.map(\.id), [application.id])
   }
 
+  func testAvailableUpdatesAreSortedByReleaseDateDescending() throws {
+    let suiteName = "AppPulseTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let older = makeUpdateApplication(
+      name: "Older",
+      bundleIdentifier: "com.example.older",
+      releaseDate: Date(timeIntervalSince1970: 100)
+    )
+    let newer = makeUpdateApplication(
+      name: "Newer",
+      bundleIdentifier: "com.example.newer",
+      releaseDate: Date(timeIntervalSince1970: 200)
+    )
+    let library = AppLibrary(applications: [older, newer], userDefaults: defaults)
+
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Newer", "Older"])
+    XCTAssertEqual(library.selectedApplicationID, newer.id)
+  }
+
   func testIgnoredHomebrewUpdateIsExcludedFromUpdateAll() throws {
     let suiteName = "AppPulseTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -51,17 +72,21 @@ final class AppLibraryIgnoreTests: XCTestCase {
   }
 
   private func makeUpdateApplication(
+    name: String = "Example",
+    bundleIdentifier: String = "com.example.update",
     source: UpdateSource = .appStore,
-    canAutomaticallyUpdate: Bool = false
+    canAutomaticallyUpdate: Bool = false,
+    releaseDate: Date? = nil
   ) -> AppRecord {
     AppRecord(
-      name: "Example",
-      bundleIdentifier: "com.example.update",
-      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
+      name: name,
+      bundleIdentifier: bundleIdentifier,
+      applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
       source: source,
       status: .updateAvailable,
       latestVersion: "2.0",
+      releaseDate: releaseDate,
       canAutomaticallyUpdate: canAutomaticallyUpdate
     )
   }

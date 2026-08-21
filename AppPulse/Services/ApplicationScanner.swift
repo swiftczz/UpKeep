@@ -64,17 +64,21 @@ struct ApplicationScanner: ApplicationScanning {
     from applicationURL: URL,
     preferredLanguages: [String] = Locale.preferredLanguages
   ) -> AppRecord? {
-    guard let bundle = resolvedBundle(from: applicationURL),
-      let bundleIdentifier = bundle.bundleIdentifier,
+    guard let bundle = resolvedBundle(from: applicationURL) else {
+      return nil
+    }
+
+    let info = freshInfoDictionary(for: bundle)
+    guard let bundleIdentifier = info["CFBundleIdentifier"] as? String,
       !bundleIdentifier.isEmpty
     else {
       return nil
     }
 
-    let info = bundle.infoDictionary ?? [:]
     let name = resolvedName(
       for: bundle,
       applicationURL: applicationURL,
+      info: info,
       preferredLanguages: preferredLanguages
     )
     let currentVersion =
@@ -146,27 +150,13 @@ struct ApplicationScanner: ApplicationScanning {
   }
 
   static func sortedByModificationDate(_ applications: [AppRecord]) -> [AppRecord] {
-    applications.sorted { first, second in
-      switch (first.applicationModificationDate, second.applicationModificationDate) {
-      case (let firstDate?, let secondDate?) where firstDate != secondDate:
-        return firstDate > secondDate
-      case (_?, nil):
-        return true
-      case (nil, _?):
-        return false
-      default:
-        let nameComparison = first.name.localizedStandardCompare(second.name)
-        if nameComparison != .orderedSame {
-          return nameComparison == .orderedAscending
-        }
-        return first.id.localizedStandardCompare(second.id) == .orderedAscending
-      }
-    }
+    applications.sortedByDescendingDate(\.applicationModificationDate)
   }
 
   private static func resolvedName(
     for bundle: Bundle,
     applicationURL: URL,
+    info: [String: Any],
     preferredLanguages: [String]
   ) -> String {
     let localizedValues = ["CFBundleDisplayName", "CFBundleName"].compactMap {
@@ -180,13 +170,37 @@ struct ApplicationScanner: ApplicationScanning {
       bundle.object(forInfoDictionaryKey: $0) as? String
     }
     let rawValues = ["CFBundleDisplayName", "CFBundleName"].compactMap {
-      bundle.infoDictionary?[$0] as? String
+      info[$0] as? String
     }
 
     return (localizedValues + bundleValues + rawValues)
       .compactMap(\.nonBlankValue)
       .first
       ?? applicationURL.deletingPathExtension().lastPathComponent
+  }
+
+  private static func freshInfoDictionary(for bundle: Bundle) -> [String: Any] {
+    let candidateURLs = [
+      bundle.bundleURL.appendingPathComponent("Contents/Info.plist"),
+      bundle.bundleURL.appendingPathComponent("Info.plist"),
+    ]
+
+    for infoURL in candidateURLs {
+      guard
+        let data = try? Data(contentsOf: infoURL, options: .uncached),
+        let values = try? PropertyListSerialization.propertyList(
+          from: data,
+          options: [],
+          format: nil
+        ) as? [String: Any]
+      else {
+        continue
+      }
+
+      return values
+    }
+
+    return bundle.infoDictionary ?? [:]
   }
 
   private static func resolvedBundle(from applicationURL: URL) -> Bundle? {

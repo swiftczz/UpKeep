@@ -14,7 +14,7 @@ final class AppLibraryActionTests: XCTestCase {
     XCTAssertEqual(destination, application.applicationURL)
   }
 
-  func testAppStoreUpdatePrimaryActionReturnsNativeStoreURL() async throws {
+  func testAppStoreUpdateWithoutDirectSupportOpensApplication() async throws {
     let storeURL = try XCTUnwrap(URL(string: "https://apps.apple.com/app/id123456789"))
     let application = makeApplication(
       source: .appStore,
@@ -25,22 +25,86 @@ final class AppLibraryActionTests: XCTestCase {
 
     let destination = await library.performPrimaryAction(for: application.id)
 
+    XCTAssertEqual(destination, application.applicationURL)
+  }
+
+  func testAppStoreMenuActionReturnsNativeStoreURL() throws {
+    let storeURL = try XCTUnwrap(URL(string: "https://apps.apple.com/app/id123456789"))
+    let application = makeApplication(
+      source: .appStore,
+      status: .upToDate,
+      sourceURL: storeURL
+    )
+    let library = try makeLibrary(application: application)
+
+    let destination = library.appStoreURL(for: application.id)
+
     XCTAssertEqual(destination?.scheme, "macappstore")
     XCTAssertEqual(destination?.host, storeURL.host)
     XCTAssertEqual(destination?.path, storeURL.path)
   }
 
-  func testHomebrewUpdatePrimaryActionReturnsApplicationURL() async throws {
+  func testAppStoreAutomaticUpdateUsesCoordinator() async throws {
+    let application = makeApplication(
+      source: .appStore,
+      status: .updateAvailable,
+      sourceURL: URL(string: "https://apps.apple.com/app/id1518036000"),
+      sourceIdentifier: "1518036000",
+      canAutomaticallyUpdate: true
+    )
+    let coordinator = RecordingActionUpdateCoordinator()
+    let library = try makeLibrary(
+      application: application,
+      scanner: StaticActionScanner(applications: [application]),
+      coordinator: coordinator
+    )
+
+    let destination = await library.performPrimaryAction(for: application.id)
+    let updatedApplicationIDs = await coordinator.updatedApplicationIDs()
+
+    XCTAssertNil(destination)
+    XCTAssertEqual(updatedApplicationIDs, [application.id])
+  }
+
+  func testHomebrewAutomaticUpdateUsesCoordinator() async throws {
     let application = makeApplication(
       source: .homebrew,
       status: .updateAvailable,
       canAutomaticallyUpdate: true
     )
-    let library = try makeLibrary(application: application)
+    let coordinator = RecordingActionUpdateCoordinator()
+    let library = try makeLibrary(
+      application: application,
+      scanner: StaticActionScanner(applications: [application]),
+      coordinator: coordinator
+    )
 
     let destination = await library.performPrimaryAction(for: application.id)
+    let updatedApplicationIDs = await coordinator.updatedApplicationIDs()
 
-    XCTAssertEqual(destination, application.applicationURL)
+    XCTAssertNil(destination)
+    XCTAssertEqual(updatedApplicationIDs, [application.id])
+  }
+
+  func testSparkleAutomaticUpdateUsesCoordinator() async throws {
+    let application = makeApplication(
+      source: .sparkle,
+      status: .updateAvailable,
+      sourceURL: URL(string: "https://example.com/appcast.xml"),
+      canAutomaticallyUpdate: true
+    )
+    let coordinator = RecordingActionUpdateCoordinator()
+    let library = try makeLibrary(
+      application: application,
+      scanner: StaticActionScanner(applications: [application]),
+      coordinator: coordinator
+    )
+
+    let destination = await library.performPrimaryAction(for: application.id)
+    let updatedApplicationIDs = await coordinator.updatedApplicationIDs()
+
+    XCTAssertNil(destination)
+    XCTAssertEqual(updatedApplicationIDs, [application.id])
   }
 
   func testOpeningFailureIsPublishedAsAnAlert() throws {
@@ -52,19 +116,29 @@ final class AppLibraryActionTests: XCTestCase {
     XCTAssertEqual(library.alertMessage, "无法打开 Example.app。")
   }
 
-  private func makeLibrary(application: AppRecord) throws -> AppLibrary {
+  private func makeLibrary(
+    application: AppRecord,
+    scanner: any ApplicationScanning = EmptyActionScanner(),
+    coordinator: any UpdateCoordinating = UpdateCoordinator()
+  ) throws -> AppLibrary {
     let suiteName = "AppPulseTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     addTeardownBlock {
       defaults.removePersistentDomain(forName: suiteName)
     }
-    return AppLibrary(applications: [application], userDefaults: defaults)
+    return AppLibrary(
+      applications: [application],
+      scanner: scanner,
+      coordinator: coordinator,
+      userDefaults: defaults
+    )
   }
 
   private func makeApplication(
     source: UpdateSource,
     status: UpdateStatus,
     sourceURL: URL? = nil,
+    sourceIdentifier: String? = nil,
     canAutomaticallyUpdate: Bool = false
   ) -> AppRecord {
     AppRecord(
@@ -76,7 +150,34 @@ final class AppLibraryActionTests: XCTestCase {
       status: status,
       latestVersion: status == .updateAvailable ? "2.0" : nil,
       sourceURL: sourceURL,
+      sourceIdentifier: sourceIdentifier,
       canAutomaticallyUpdate: canAutomaticallyUpdate
     )
+  }
+}
+
+private struct EmptyActionScanner: ApplicationScanning {
+  func scan() async -> [AppRecord] { [] }
+}
+
+private struct StaticActionScanner: ApplicationScanning {
+  let applications: [AppRecord]
+
+  func scan() async -> [AppRecord] { applications }
+}
+
+private actor RecordingActionUpdateCoordinator: UpdateCoordinating {
+  private var updatedIDs: [AppRecord.ID] = []
+
+  func check(_ applications: [AppRecord]) async -> [AppRecord] {
+    applications
+  }
+
+  func update(_ application: AppRecord) async throws {
+    updatedIDs.append(application.id)
+  }
+
+  func updatedApplicationIDs() -> [AppRecord.ID] {
+    updatedIDs
   }
 }

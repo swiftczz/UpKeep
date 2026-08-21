@@ -36,6 +36,34 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(library.phase, .idle)
   }
 
+  func testRefreshRequestedDuringCheckRunsAfterCurrentRefresh() async throws {
+    let suiteName = "AppPulseTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let application = makeApplication(name: "Example", status: .checking)
+    let scanner = CountingApplicationScanner(applications: [application])
+    let coordinator = ControlledUpdateCoordinator()
+    let library = AppLibrary(
+      scanner: scanner,
+      coordinator: coordinator,
+      userDefaults: defaults
+    )
+
+    let initialRefresh = Task { await library.refresh() }
+    await coordinator.waitUntilCheckStarts()
+
+    await library.refresh()
+    await coordinator.releaseCheck()
+    await initialRefresh.value
+
+    let scanCount = await scanner.scanCount()
+    let checkCount = await coordinator.checkCount()
+    XCTAssertEqual(scanCount, 2)
+    XCTAssertEqual(checkCount, 2)
+    XCTAssertEqual(library.phase, .idle)
+  }
+
   private func makeApplication(name: String, status: UpdateStatus) -> AppRecord {
     AppRecord(
       name: name,
@@ -55,11 +83,31 @@ private struct StaticApplicationScanner: ApplicationScanning {
   }
 }
 
+private actor CountingApplicationScanner: ApplicationScanning {
+  let applications: [AppRecord]
+  private var count = 0
+
+  init(applications: [AppRecord]) {
+    self.applications = applications
+  }
+
+  func scan() async -> [AppRecord] {
+    count += 1
+    return applications
+  }
+
+  func scanCount() -> Int {
+    count
+  }
+}
+
 private actor ControlledUpdateCoordinator: UpdateCoordinating {
   private var checkStarted = false
   private var checkReleased = false
+  private var count = 0
 
   func check(_ applications: [AppRecord]) async -> [AppRecord] {
+    count += 1
     checkStarted = true
     while !checkReleased {
       await Task.yield()
@@ -82,5 +130,9 @@ private actor ControlledUpdateCoordinator: UpdateCoordinating {
 
   func releaseCheck() {
     checkReleased = true
+  }
+
+  func checkCount() -> Int {
+    count
   }
 }

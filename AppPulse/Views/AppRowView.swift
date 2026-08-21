@@ -4,50 +4,94 @@ struct AppRowView: View {
   let application: AppRecord
   let isUpdateIgnored: Bool
 
+  private var listDate: Date? {
+    if application.needsUpdate && !isUpdateIgnored {
+      return application.releaseDate
+    }
+    return application.applicationModificationDate
+  }
+
   var body: some View {
     HStack(spacing: 11) {
       AppIconView(applicationURL: application.applicationURL, size: 42)
 
       VStack(alignment: .leading, spacing: 2) {
-        Text(application.name)
-          .font(.headline)
-          .lineLimit(1)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+          Text(application.name)
+            .font(.headline)
+            .lineLimit(1)
 
-        if let latestVersion = application.latestVersion,
-          application.needsUpdate
-        {
-          Text("\(application.currentVersion) → \(latestVersion)")
+          Spacer(minLength: 8)
+
+          if let listDate {
+            Text(listDate.slashDateText)
+              .font(.caption)
+              .foregroundStyle(.tertiary)
+              .lineLimit(1)
+              .layoutPriority(1)
+              .help(dateHelp(for: listDate))
+              .accessibilityLabel(dateAccessibilityLabel(for: listDate))
+          }
+        }
+
+        HStack(alignment: .center, spacing: 8) {
+          versionLabel
             .foregroundStyle(.secondary)
             .lineLimit(1)
-        } else {
-          Text("版本 \(application.versionSummary)")
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+
+          Spacer(minLength: 8)
+
+          if isUpdateIgnored {
+            Image(systemName: "bell.slash")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .help("已忽略更新")
+          }
+
+          sourceAccessory
         }
       }
-
-      Spacer(minLength: 8)
-
-      if isUpdateIgnored {
-        Image(systemName: "bell.slash")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .help("已忽略更新")
-      }
-
-      if application.status == .checking {
-        ProgressView()
-          .controlSize(.small)
-      } else {
-        Image(systemName: application.sourceSystemImage)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .help(application.sourceTitle)
-          .accessibilityLabel(application.sourceTitle)
-      }
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
     .padding(.vertical, 5)
     .contentShape(.rect)
     .help(application.bundleIdentifier)
+  }
+
+  @ViewBuilder
+  private var versionLabel: some View {
+    if let latestVersion = application.latestVersion, application.needsUpdate {
+      Text("\(application.currentVersion) → \(latestVersion)")
+    } else {
+      Text("版本 \(application.versionSummary)")
+    }
+  }
+
+  @ViewBuilder
+  private var sourceAccessory: some View {
+    if application.status == .checking {
+      ProgressView()
+        .controlSize(.small)
+    } else {
+      Image(systemName: application.sourceSystemImage)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help(application.sourceTitle)
+        .accessibilityLabel(application.sourceTitle)
+    }
+  }
+
+  private var usesReleaseDate: Bool {
+    application.needsUpdate && !isUpdateIgnored
+  }
+
+  private func dateHelp(for date: Date) -> String {
+    let formattedDate = date.formatted(date: .long, time: .omitted)
+    return usesReleaseDate ? "发布日期 \(formattedDate)" : "本机更新日期 \(formattedDate)"
+  }
+
+  private func dateAccessibilityLabel(for date: Date) -> String {
+    let formattedDate = date.formatted(date: .long, time: .omitted)
+    return usesReleaseDate ? "发布于\(formattedDate)" : "更新于\(formattedDate)"
   }
 }

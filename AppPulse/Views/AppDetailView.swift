@@ -5,6 +5,9 @@ struct AppDetailView: View {
   let isUpdating: Bool
   let isUpdateIgnored: Bool
   let primaryAction: () -> Void
+  let openApplication: () -> Void
+  let showInFinder: () -> Void
+  let openAppStore: () -> Void
   let openReleaseNotes: () -> Void
 
   var body: some View {
@@ -53,31 +56,98 @@ struct AppDetailView: View {
       }
 
       Spacer(minLength: 24)
-      primaryButton
+      primaryActionMenu
     }
   }
 
-  @ViewBuilder
-  private var primaryButton: some View {
-    if application.needsUpdate {
+  private var primaryActionMenu: some View {
+    splitActionControl
+  }
+
+  private var splitActionControl: some View {
+    HStack(spacing: 0) {
       Button(action: primaryAction) {
-        if isUpdating {
-          ProgressView()
-            .controlSize(.small)
-        } else {
-          Label(primaryActionTitle, systemImage: "arrow.up.forward.app")
-        }
+        primaryActionLabel
+          .padding(.leading, 14)
+          .padding(.trailing, 12)
+          .padding(.vertical, 7)
+          .contentShape(.rect)
       }
-      .buttonStyle(.glassProminent)
-      .disabled(isUpdating)
-      .help(primaryActionHelp)
-      .accessibilityHint(primaryActionHelp)
-    } else {
-      Button(action: primaryAction) {
-        Label("打开", systemImage: "arrow.up.forward.app")
+      .buttonStyle(.plain)
+
+      Rectangle()
+        .fill(primaryActionForeground.opacity(0.3))
+        .frame(width: 1, height: 18)
+        .accessibilityHidden(true)
+
+      Menu {
+        secondaryActions
+      } label: {
+        Image(systemName: "chevron.down")
+          .symbolRenderingMode(.palette)
+          .foregroundStyle(primaryActionForeground)
+          .font(.system(size: 11, weight: .semibold))
+          .frame(width: 30)
+          .padding(.vertical, 6)
+          .contentShape(.rect)
       }
-      .buttonStyle(.glass)
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .help("更多操作")
+      .accessibilityLabel("更多操作")
     }
+    .glassEffect(primaryActionGlass, in: .rect(cornerRadius: 8))
+    .disabled(isUpdating)
+  }
+
+  private var primaryActionGlass: Glass {
+    var glass = Glass.regular.interactive(!isUpdating)
+    if usesUpdatePrimaryAction {
+      glass = glass.tint(.blue)
+    }
+    return glass
+  }
+
+  private var primaryActionForeground: Color {
+    usesUpdatePrimaryAction ? .white : .primary
+  }
+
+  @ViewBuilder
+  private var secondaryActions: some View {
+    if usesUpdatePrimaryAction {
+      Button("打开应用", systemImage: "arrow.up.forward.app", action: openApplication)
+    }
+
+    if application.applicationURL.isFileURL {
+      Button("在 Finder 中显示", systemImage: "folder", action: showInFinder)
+    }
+
+    if canOpenAppStore {
+      Button("在 App Store 中查看", systemImage: "apple.logo", action: openAppStore)
+    }
+
+    Divider()
+
+    Button("卸载应用", systemImage: "trash", role: .destructive) {}
+      .disabled(true)
+  }
+
+  private var primaryActionLabel: some View {
+    HStack(spacing: 6) {
+      if isUpdating {
+        ProgressView()
+          .controlSize(.small)
+          .tint(primaryActionForeground)
+          .accessibilityHidden(true)
+        Text("正在更新…")
+      } else {
+        Label(primaryActionTitle, systemImage: primaryActionSystemImage)
+      }
+    }
+    .foregroundStyle(primaryActionForeground)
+    .help(primaryActionHelp)
+    .accessibilityLabel(isUpdating ? "正在更新" : primaryActionTitle)
+    .accessibilityHint(primaryActionHelp)
   }
 
   private var applicationInformation: some View {
@@ -162,16 +232,38 @@ struct AppDetailView: View {
   }
 
   private var primaryActionHelp: String {
-    switch application.source {
-    case .appStore:
-      "在 \(application.sourceTitle) 中打开此应用的更新页面"
-    case .sparkle, .github, .selfManaged, .homebrew:
-      "打开应用并使用其更新器"
+    if usesUpdatePrimaryAction {
+      switch application.source {
+      case .appStore:
+        return "使用当前 App Store 账号下载并安装此更新"
+      case .homebrew:
+        return "使用 Homebrew 下载并安装此更新"
+      case .sparkle, .github, .selfManaged:
+        return "下载并安装此更新"
+      }
     }
+
+    return application.needsUpdate
+      ? "打开应用并使用其更新器"
+      : "打开 \(application.name)"
   }
 
   private var primaryActionTitle: String {
-    application.source == .appStore ? "打开 App Store" : "打开应用"
+    usesUpdatePrimaryAction ? "更新" : "打开应用"
+  }
+
+  private var primaryActionSystemImage: String {
+    usesUpdatePrimaryAction
+      ? "arrow.down.circle"
+      : "arrow.up.forward.app"
+  }
+
+  private var usesUpdatePrimaryAction: Bool {
+    application.needsUpdate && application.canAutomaticallyUpdate
+  }
+
+  private var canOpenAppStore: Bool {
+    application.source == .appStore && application.sourceURL != nil
   }
 
   private var releaseNotesPlaceholder: String {

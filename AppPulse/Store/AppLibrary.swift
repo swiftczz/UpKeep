@@ -16,6 +16,7 @@ final class AppLibrary {
   private let coordinator: any UpdateCoordinating
   @ObservationIgnored private let userDefaults: UserDefaults
   private var hasLoaded: Bool
+  private var refreshRequested = false
 
   private static let ignoredBundleIdentifiersKey = "ignoredUpdateBundleIdentifiers"
 
@@ -46,7 +47,7 @@ final class AppLibrary {
   }
 
   var availableUpdates: [AppRecord] {
-    applications.filter { $0.needsUpdate && !isUpdateIgnored($0) }
+    applications.availableUpdates(ignoredIDs: ignoredApplicationIDs)
   }
 
   var ignoredApplicationIDs: Set<AppRecord.ID> {
@@ -58,9 +59,7 @@ final class AppLibrary {
   }
 
   var automaticUpdates: [AppRecord] {
-    availableUpdates.filter {
-      $0.source == .homebrew && $0.canAutomaticallyUpdate
-    }
+    availableUpdates.filter(\.canAutomaticallyUpdate)
   }
 
   var isRefreshing: Bool {
@@ -99,8 +98,18 @@ final class AppLibrary {
   }
 
   func refresh() async {
-    guard phase == .idle else { return }
+    guard phase == .idle else {
+      refreshRequested = true
+      return
+    }
 
+    repeat {
+      refreshRequested = false
+      await performRefresh()
+    } while refreshRequested
+  }
+
+  private func performRefresh() async {
     let previousSelection = selectedApplicationID
     phase = .scanning
     alertMessage = nil
@@ -132,14 +141,24 @@ final class AppLibrary {
       return nil
     }
 
-    if application.needsUpdate,
-      application.source == .appStore,
-      let sourceURL = application.sourceURL
-    {
-      return Self.nativeAppStoreURL(from: sourceURL)
+    if application.needsUpdate, application.canAutomaticallyUpdate {
+      await update(application)
+      return nil
     }
 
     return application.applicationURL
+  }
+
+  func appStoreURL(for applicationID: AppRecord.ID) -> URL? {
+    guard
+      let application = applications.first(where: { $0.id == applicationID }),
+      application.source == .appStore,
+      let sourceURL = application.sourceURL
+    else {
+      return nil
+    }
+
+    return Self.nativeAppStoreURL(from: sourceURL)
   }
 
   func updateAll() async {
@@ -165,6 +184,18 @@ final class AppLibrary {
 
   func reportOpeningFailure(for url: URL) {
     alertMessage = "无法打开 \(url.lastPathComponent)。"
+  }
+
+  private func update(_ application: AppRecord) async {
+    updatingApplicationIDs.insert(application.id)
+    defer { updatingApplicationIDs.remove(application.id) }
+
+    do {
+      try await coordinator.update(application)
+      await refresh()
+    } catch {
+      alertMessage = error.localizedDescription
+    }
   }
 
   private func persistIgnoredBundleIdentifiers() {
@@ -208,9 +239,12 @@ final class AppLibrary {
     in applications: [AppRecord],
     ignoring ignoredBundleIdentifiers: Set<String>
   ) -> AppRecord.ID? {
-    applications.first {
-      $0.needsUpdate
-        && !ignoredBundleIdentifiers.contains(ignoreIdentifier(for: $0))
-    }?.id ?? applications.first?.id
+    let ignoredIDs = Set(
+      applications.lazy
+        .filter { ignoredBundleIdentifiers.contains(ignoreIdentifier(for: $0)) }
+        .map(\.id)
+    )
+    return applications.availableUpdates(ignoredIDs: ignoredIDs).first?.id
+      ?? applications.installedApplications(ignoredIDs: ignoredIDs).first?.id
   }
 }

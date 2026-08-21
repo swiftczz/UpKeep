@@ -53,6 +53,42 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.name, "欧路词典")
   }
 
+  func testReloadsVersionAfterApplicationIsUpdatedInPlace() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppPulseTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Updated.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let infoURL = contentsURL.appendingPathComponent("Info.plist")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: contentsURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.example.updated",
+        extraValues: ["CFBundleShortVersionString": "1.0"]
+      ),
+      to: infoURL
+    )
+
+    let original = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.example.updated",
+        extraValues: ["CFBundleShortVersionString": "2.0"]
+      ),
+      to: infoURL
+    )
+    let updated = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(original.currentVersion, "1.0")
+    XCTAssertEqual(updated.currentVersion, "2.0")
+  }
+
   func testSortsNewestApplicationBundleFirst() {
     let older = makeApplication(name: "Older", modifiedAt: Date(timeIntervalSince1970: 100))
     let newer = makeApplication(name: "Newer", modifiedAt: Date(timeIntervalSince1970: 200))
@@ -61,6 +97,54 @@ final class ApplicationScannerTests: XCTestCase {
     let sorted = ApplicationScanner.sortedByModificationDate([older, unknown, newer])
 
     XCTAssertEqual(sorted.map(\.name), ["Newer", "Older", "Unknown"])
+  }
+
+  func testAvailableUpdatesAreSortedByReleaseDateDescending() {
+    let older = makeApplication(
+      name: "Older",
+      status: .updateAvailable,
+      releaseDate: Date(timeIntervalSince1970: 100)
+    )
+    let newer = makeApplication(
+      name: "Newer",
+      status: .updateAvailable,
+      releaseDate: Date(timeIntervalSince1970: 200)
+    )
+    let missing = makeApplication(name: "Missing", status: .updateAvailable)
+    let installed = makeApplication(
+      name: "Installed",
+      modifiedAt: Date(timeIntervalSince1970: 500)
+    )
+
+    let available = [missing, installed, older, newer].availableUpdates(ignoredIDs: [])
+
+    XCTAssertEqual(available.map(\.name), ["Newer", "Older", "Missing"])
+  }
+
+  func testInstalledApplicationsAreSortedByModificationDateDescending() {
+    let older = makeApplication(name: "Older", modifiedAt: Date(timeIntervalSince1970: 100))
+    let newer = makeApplication(name: "Newer", modifiedAt: Date(timeIntervalSince1970: 200))
+    let ignored = makeApplication(
+      name: "Ignored",
+      modifiedAt: Date(timeIntervalSince1970: 150),
+      status: .updateAvailable,
+      releaseDate: Date(timeIntervalSince1970: 400)
+    )
+    let unknown = makeApplication(name: "Unknown", modifiedAt: nil)
+
+    let installed = [unknown, ignored, older, newer].installedApplications(
+      ignoredIDs: [ignored.id]
+    )
+
+    XCTAssertEqual(installed.map(\.name), ["Newer", "Ignored", "Older", "Unknown"])
+  }
+
+  func testSlashDateTextUsesYearMonthDay() {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    let date = calendar.date(from: DateComponents(year: 2021, month: 1, day: 1))
+
+    XCTAssertEqual(date?.slashDateText, "2021/01/01")
   }
 
   func testDetectsNativeMacAppStoreReceipt() throws {
@@ -247,14 +331,21 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.source, .selfManaged)
   }
 
-  private func makeApplication(name: String, modifiedAt: Date?) -> AppRecord {
+  private func makeApplication(
+    name: String,
+    modifiedAt: Date? = nil,
+    status: UpdateStatus = .upToDate,
+    releaseDate: Date? = nil
+  ) -> AppRecord {
     AppRecord(
       name: name,
       bundleIdentifier: "com.example.\(name.lowercased())",
       applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
       applicationModificationDate: modifiedAt,
-      status: .upToDate
+      status: status,
+      latestVersion: status == .updateAvailable ? "2.0" : nil,
+      releaseDate: releaseDate
     )
   }
 

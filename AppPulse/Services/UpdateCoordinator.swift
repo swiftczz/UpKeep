@@ -7,6 +7,7 @@ protocol UpdateCoordinating: Sendable {
 
 struct UpdateCoordinator: UpdateCoordinating, Sendable {
   private let appStore = AppStoreUpdateProvider()
+  private let macAppStore = MacAppStoreUpdateProvider()
   private let homebrew = HomebrewUpdateProvider()
   private let sparkle = SparkleUpdateProvider()
 
@@ -41,7 +42,11 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
     switch application.source {
     case .homebrew:
       try await homebrew.upgrade(application)
-    case .appStore, .sparkle, .github, .selfManaged:
+    case .appStore:
+      try await macAppStore.upgrade(application)
+    case .sparkle:
+      try await SparkleApplicationUpdater.upgrade(application)
+    case .github, .selfManaged:
       throw ProcessRunnerError.failed(
         status: 1,
         message: "此应用需要由 \(application.sourceTitle) 完成更新。"

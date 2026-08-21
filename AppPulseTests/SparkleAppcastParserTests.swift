@@ -34,7 +34,51 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertEqual(candidate.buildVersion, "240")
     XCTAssertEqual(candidate.minimumSystemVersion, "26.0")
     XCTAssertEqual(candidate.operatingSystem, "macos")
+    XCTAssertEqual(candidate.downloadURL?.absoluteString, "https://example.com/App.zip")
     XCTAssertEqual(candidate.releaseNotesURL?.absoluteString, "https://example.com/notes")
+    XCTAssertEqual(candidate.publicationDate, "Thu, 20 Aug 2026 12:00:00 +0000")
+  }
+
+  func testParsesUnixTimestampPublicationDate() throws {
+    let date = try XCTUnwrap(SparkleUpdateProvider.parsePublicationDate("1786372688"))
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+    let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+    XCTAssertEqual(components.year, 2026)
+    XCTAssertEqual(components.month, 8)
+    XCTAssertEqual(components.day, 10)
+    XCTAssertEqual(components.hour, 14)
+    XCTAssertEqual(components.minute, 38)
+  }
+
+  func testParsesJavaScriptStyleGMTOffsetPublicationDate() throws {
+    let date = try XCTUnwrap(
+      SparkleUpdateProvider.parsePublicationDate("Wed, 12 Aug 2026 22:08:10 GMT+0200")
+    )
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+    let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+    XCTAssertEqual(components.year, 2026)
+    XCTAssertEqual(components.month, 8)
+    XCTAssertEqual(components.day, 12)
+    XCTAssertEqual(components.hour, 20)
+    XCTAssertEqual(components.minute, 8)
+  }
+
+  func testParsesGMTPublicationDate() throws {
+    let date = try XCTUnwrap(
+      SparkleUpdateProvider.parsePublicationDate("Thu, 20 Aug 2026 12:00:00 GMT")
+    )
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+    let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
+    XCTAssertEqual(components.year, 2026)
+    XCTAssertEqual(components.month, 8)
+    XCTAssertEqual(components.day, 20)
+    XCTAssertEqual(components.hour, 12)
   }
 
   func testUsesCleanVersionTitleWhenShortVersionContainsBuildNumber() throws {
@@ -45,5 +89,18 @@ final class SparkleAppcastParserTests: XCTestCase {
     )
 
     XCTAssertEqual(candidate.displayVersion, "2.9.2")
+  }
+
+  func testOnlySecureDownloadPayloadEnablesDirectUpdate() throws {
+    let feedURL = try XCTUnwrap(URL(string: "https://example.com/releases/appcast.xml"))
+    let relativeCandidate = SparkleCandidate(downloadURL: URL(string: "App.zip"))
+    let insecureCandidate = SparkleCandidate(
+      downloadURL: URL(string: "http://example.com/App.zip")
+    )
+    let informationOnlyCandidate = SparkleCandidate()
+
+    XCTAssertTrue(relativeCandidate.hasSecureDownload(relativeTo: feedURL))
+    XCTAssertFalse(insecureCandidate.hasSecureDownload(relativeTo: feedURL))
+    XCTAssertFalse(informationOnlyCandidate.hasSecureDownload(relativeTo: feedURL))
   }
 }

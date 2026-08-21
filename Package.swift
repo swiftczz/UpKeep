@@ -10,10 +10,19 @@ let package = Package(
   products: [
     .executable(name: "AppPulse", targets: ["AppPulse"])
   ],
+  dependencies: [
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.5")
+  ],
   targets: [
     .executableTarget(
       name: "AppPulse",
-      path: "AppPulse"
+      dependencies: [
+        .product(name: "Sparkle", package: "Sparkle"),
+      ],
+      path: "AppPulse",
+      linkerSettings: [
+        .linkedFramework("Security"),
+      ]
     ),
     .testTarget(
       name: "AppPulseTests",

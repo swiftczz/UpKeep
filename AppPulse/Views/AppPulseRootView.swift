@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AppPulseRootView: View {
@@ -41,6 +42,16 @@ struct AppPulseRootView: View {
               }
             }
           },
+          openApplication: {
+            open(application.applicationURL)
+          },
+          showInFinder: {
+            NSWorkspace.shared.activateFileViewerSelecting([application.applicationURL])
+          },
+          openAppStore: {
+            guard let destination = library.appStoreURL(for: application.id) else { return }
+            open(destination)
+          },
           openReleaseNotes: {
             guard let releaseNotesURL = application.releaseNotesURL else { return }
             open(releaseNotesURL)
@@ -62,7 +73,7 @@ struct AppPulseRootView: View {
             }
           }
           .disabled(library.isRefreshing || !library.updatingApplicationIDs.isEmpty)
-          .help("通过 Homebrew 更新 \(library.automaticUpdates.count) 个应用")
+          .help("更新 \(library.automaticUpdates.count) 个可自动更新的应用")
         }
 
         Button {

@@ -173,6 +173,51 @@ enum UpdateStatus: Hashable, Sendable {
   }
 }
 
+extension Array where Element == AppRecord {
+  func availableUpdates(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
+    filter { $0.needsUpdate && !ignoredIDs.contains($0.id) }
+      .sortedByDescendingDate(\.releaseDate)
+  }
+
+  func installedApplications(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
+    filter { !$0.needsUpdate || ignoredIDs.contains($0.id) }
+      .sortedByDescendingDate(\.applicationModificationDate)
+  }
+
+  func sortedByDescendingDate(_ keyPath: KeyPath<AppRecord, Date?>) -> [AppRecord] {
+    sorted { first, second in
+      switch (first[keyPath: keyPath], second[keyPath: keyPath]) {
+      case (let firstDate?, let secondDate?) where firstDate != secondDate:
+        return firstDate > secondDate
+      case (_?, nil):
+        return true
+      case (nil, _?):
+        return false
+      default:
+        let nameComparison = first.name.localizedStandardCompare(second.name)
+        if nameComparison != .orderedSame {
+          return nameComparison == .orderedAscending
+        }
+        return first.id.localizedStandardCompare(second.id) == .orderedAscending
+      }
+    }
+  }
+}
+
+extension Date {
+  var slashDateText: String {
+    Self.slashDateFormatter.string(from: self)
+  }
+
+  private static let slashDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy/MM/dd"
+    return formatter
+  }()
+}
+
 enum LibraryPhase: Equatable, Sendable {
   case idle
   case scanning

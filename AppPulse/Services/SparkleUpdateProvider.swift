@@ -65,6 +65,8 @@ struct SparkleUpdateProvider: Sendable {
         updateIsAvailable
         ? .updateAvailable
         : .upToDate
+      application.canAutomaticallyUpdate =
+        updateIsAvailable && candidate.hasSecureDownload(relativeTo: feedURL)
     } catch is CancellationError {
       return application
     } catch {
@@ -109,20 +111,70 @@ struct SparkleUpdateProvider: Sendable {
       }
   }
 
-  private static func parsePublicationDate(_ value: String) -> Date? {
+  static func parsePublicationDate(_ value: String) -> Date? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    if let timestamp = Int64(trimmed) {
+      if timestamp >= 1_000_000_000_000 {
+        return Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000)
+      }
+      if timestamp >= 1_000_000_000 {
+        return Date(timeIntervalSince1970: TimeInterval(timestamp))
+      }
+    }
+
+    let rfc822Value = rfc822DateString(from: trimmed)
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
 
     for format in [
-      "EEE, dd MMM yyyy HH:mm:ss Z", "EEE, d MMM yyyy HH:mm:ss Z", "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+      "EEE, dd MMM yyyy HH:mm:ss Z",
+      "EEE, d MMM yyyy HH:mm:ss Z",
+      "EEE, dd MMM yyyy HH:mm:ss z",
+      "EEE, d MMM yyyy HH:mm:ss z",
+      "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+      "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+      "yyyy-MM-dd'T'HH:mm:ssZ",
+      "yyyy-MM-dd",
     ] {
       formatter.dateFormat = format
-      if let date = formatter.date(from: value) {
+      if let date = formatter.date(from: rfc822Value) ?? formatter.date(from: trimmed) {
         return date
       }
     }
 
-    return nil
+    let isoWithFractionalSeconds = ISO8601DateFormatter()
+    isoWithFractionalSeconds.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = isoWithFractionalSeconds.date(from: trimmed) {
+      return date
+    }
+
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime]
+    return iso.date(from: trimmed)
+  }
+
+  private static func rfc822DateString(from value: String) -> String {
+    let pattern = #"GMT([+-])(\d{2}):?(\d{2})\s*$"#
+    if let regex = try? NSRegularExpression(pattern: pattern),
+      let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+      let sign = Range(match.range(at: 1), in: value).map({ String(value[$0]) }),
+      let hours = Range(match.range(at: 2), in: value).map({ String(value[$0]) }),
+      let minutes = Range(match.range(at: 3), in: value).map({ String(value[$0]) }),
+      let overall = Range(match.range, in: value)
+    {
+      var result = value
+      result.replaceSubrange(overall, with: "\(sign)\(hours)\(minutes)")
+      return result
+    }
+
+    for suffix in [" GMT", " UTC", " UT"] where value.hasSuffix(suffix) {
+      return String(value.dropLast(suffix.count)) + " +0000"
+    }
+
+    return value
   }
 
   private static func fetchReleaseNotes(from url: URL) async -> String? {
@@ -187,6 +239,7 @@ struct SparkleCandidate: Hashable, Sendable {
   var summary: String?
   var publicationDate: String?
   var releaseNotesURL: URL?
+  var downloadURL: URL?
   var minimumSystemVersion: String?
   var operatingSystem: String?
   var architecture: String?
@@ -207,6 +260,12 @@ struct SparkleCandidate: Hashable, Sendable {
     }
 
     return shortVersion ?? buildVersion
+  }
+
+  func hasSecureDownload(relativeTo feedURL: URL) -> Bool {
+    guard let downloadURL else { return false }
+    let resolvedURL = URL(string: downloadURL.relativeString, relativeTo: feedURL)?.absoluteURL
+    return resolvedURL?.scheme?.lowercased() == "https"
   }
 }
 
@@ -253,6 +312,9 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
 
     if key == "enclosure" {
       guard var candidate = currentCandidate else { return }
+      candidate.downloadURL =
+        Self.attribute(named: "url", in: attributeDict)
+        .flatMap(URL.init(string:)) ?? candidate.downloadURL
       candidate.shortVersion =
         Self.attribute(
           named: "shortversionstring",

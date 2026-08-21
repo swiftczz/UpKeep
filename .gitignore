@@ -1,5 +1,32 @@
+# Swift Package Manager
 .build/
 .swiftpm/
+/Packages/
+
+# Xcode
 DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+
+# 打包产物
 dist/
+*.iconset/
+*.app
+*.dmg
+*.dSYM
+*.dSYM.zip
+
+# 系统文件
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# 本地工具与审计截图
+.codex-audit/
+.netrc
+*.swp
+*~

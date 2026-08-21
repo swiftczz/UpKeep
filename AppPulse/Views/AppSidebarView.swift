@@ -21,15 +21,11 @@ struct AppSidebarView: View {
   }
 
   private var availableUpdates: [AppRecord] {
-    filteredApplications.filter {
-      $0.needsUpdate && !ignoredApplicationIDs.contains($0.id)
-    }
+    filteredApplications.availableUpdates(ignoredIDs: ignoredApplicationIDs)
   }
 
   private var installedApplications: [AppRecord] {
-    filteredApplications.filter {
-      !$0.needsUpdate || ignoredApplicationIDs.contains($0.id)
-    }
+    filteredApplications.installedApplications(ignoredIDs: ignoredApplicationIDs)
   }
 
   var body: some View {

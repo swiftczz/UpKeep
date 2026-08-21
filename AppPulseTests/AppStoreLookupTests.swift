@@ -4,6 +4,10 @@ import XCTest
 @testable import AppPulse
 
 final class AppStoreLookupTests: XCTestCase {
+  func testIntegratedAppStoreUpdaterIsAvailable() {
+    XCTAssertTrue(MacAppStoreUpdateProvider.isAvailable)
+  }
+
   func testLookupURLRequestsDesktopSoftware() throws {
     let url = try XCTUnwrap(
       AppStoreUpdateProvider.lookupURL(
@@ -106,6 +110,7 @@ final class AppStoreLookupTests: XCTestCase {
         "results": [
           {
             "bundleId": "com.sequel-ace.sequel-ace",
+            "trackId": 1518036000,
             "version": "5.4.0",
             "currentVersionReleaseDate": "2026-08-15T16:06:07Z",
             "trackViewUrl": "https://apps.apple.com/cn/app/sequel-ace/id1518036000"
@@ -121,7 +126,24 @@ final class AppStoreLookupTests: XCTestCase {
     )
 
     XCTAssertEqual(result.version, "5.4.0")
+    XCTAssertEqual(result.trackID, 1_518_036_000)
     XCTAssertTrue(result.supports(.mac))
+  }
+
+  func testExtractsAdamIdentifierFromAppStoreURL() {
+    let application = AppRecord(
+      name: "Sequel Ace",
+      bundleIdentifier: "com.sequel-ace.sequel-ace",
+      applicationURL: URL(fileURLWithPath: "/Applications/Sequel Ace.app"),
+      currentVersion: "5.3.1",
+      source: .appStore,
+      appStorePlatform: .mac,
+      status: .updateAvailable,
+      latestVersion: "5.4.0",
+      sourceURL: URL(string: "https://apps.apple.com/cn/app/sequel-ace/id1518036000")
+    )
+
+    XCTAssertEqual(MacAppStoreUpdateProvider.adamIdentifier(for: application), 1_518_036_000)
   }
 
   func testSelectsIPhoneReleaseForWrappedApplication() throws {
