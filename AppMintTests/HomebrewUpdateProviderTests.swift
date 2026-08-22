@@ -23,6 +23,17 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertEqual(status, .selfManaged)
   }
 
+  func testMashedCaskVersionWithMatchingBuildIsNotAnUpdate() {
+    let status = HomebrewUpdateProvider.resolvedStatus(
+      currentVersion: "5.80.7",
+      remoteVersion: "5.80.7.66659",
+      brewReportsOutdated: true,
+      autoUpdates: true,
+      buildVersion: "66659"
+    )
+    XCTAssertEqual(status, .selfManaged)
+  }
+
   func testClaimsElectronCaskOnlyWhenBrewHasUpdate() {
     XCTAssertTrue(
       HomebrewUpdateProvider.shouldClaimInstalledCask(

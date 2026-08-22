@@ -27,6 +27,78 @@ enum SparkleApplicationUpdater {
   }
 }
 
+/// Host-app Sparkle skip keys; AppMint clears them for an explicit Update, then restores if install does not start.
+struct SparkleSkippedUpdateStore: Sendable {
+  static let keys = [
+    "SUSkippedVersion",
+    "SUSkippedMajorVersion",
+    "SUSkippedMajorSubreleaseVersion",
+  ]
+
+  let domain: String
+
+  init?(hostBundle: Bundle) {
+    guard let domain = Self.defaultsDomain(for: hostBundle) else {
+      return nil
+    }
+    self.domain = domain
+  }
+
+  init(domain: String) {
+    self.domain = domain
+  }
+
+  func snapshot() -> [String: Any] {
+    guard let defaults = UserDefaults(suiteName: domain) else {
+      return [:]
+    }
+    return Dictionary(
+      uniqueKeysWithValues: Self.keys.compactMap { key in
+        defaults.object(forKey: key).map { (key, $0) }
+      }
+    )
+  }
+
+  func clear() {
+    apply { defaults in
+      for key in Self.keys {
+        defaults.removeObject(forKey: key)
+      }
+    }
+  }
+
+  func restore(_ values: [String: Any]) {
+    apply { defaults in
+      for key in Self.keys {
+        defaults.removeObject(forKey: key)
+      }
+      for (key, value) in values where Self.keys.contains(key) {
+        defaults.set(value, forKey: key)
+      }
+    }
+  }
+
+  private func apply(_ body: (UserDefaults) -> Void) {
+    guard let defaults = UserDefaults(suiteName: domain) else {
+      return
+    }
+    body(defaults)
+    CFPreferencesAppSynchronize(domain as CFString)
+  }
+
+  static func defaultsDomain(for bundle: Bundle) -> String? {
+    if let custom = bundle.object(forInfoDictionaryKey: "SUDefaultsDomain") as? String {
+      let domain = custom.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !domain.isEmpty {
+        return domain
+      }
+    }
+
+    let identifier = bundle.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return identifier.isEmpty ? nil : identifier
+  }
+}
+
 @MainActor
 private final class SparkleUpdateSession: NSObject, SPUUpdaterDelegate {
   private struct VersionSnapshot: Equatable {
@@ -37,6 +109,8 @@ private final class SparkleUpdateSession: NSObject, SPUUpdaterDelegate {
   private let applicationURL: URL
   private let initialVersion: VersionSnapshot?
   private let progressHandler: @Sendable (UpdateProgress) -> Void
+  private let skippedUpdateStore: SparkleSkippedUpdateStore?
+  private let skippedUpdateSnapshot: [String: Any]
   private var userDriver: SparkleProgressUserDriver!
   private var updater: SPUUpdater!
   private var continuation: CheckedContinuation<Void, any Error>?
@@ -61,6 +135,9 @@ private final class SparkleUpdateSession: NSObject, SPUUpdaterDelegate {
     applicationURL = bundle.bundleURL
     initialVersion = Self.versionSnapshot(at: bundle.bundleURL)
     progressHandler = progress
+    skippedUpdateStore = SparkleSkippedUpdateStore(hostBundle: bundle)
+    skippedUpdateSnapshot = skippedUpdateStore?.snapshot() ?? [:]
+    skippedUpdateStore?.clear()
     super.init()
 
     userDriver = SparkleProgressUserDriver(onProgress: progress)
@@ -138,6 +215,10 @@ private final class SparkleUpdateSession: NSObject, SPUUpdaterDelegate {
   private func finish(throwing error: (any Error)? = nil) {
     guard let continuation else { return }
     self.continuation = nil
+
+    if error != nil || !installationStarted {
+      skippedUpdateStore?.restore(skippedUpdateSnapshot)
+    }
 
     if let error {
       continuation.resume(throwing: error)

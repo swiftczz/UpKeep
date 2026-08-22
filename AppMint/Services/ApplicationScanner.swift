@@ -198,15 +198,19 @@ struct ApplicationScanner: ApplicationScanning {
 
   static func latestModificationDate(of applicationURL: URL, bundle: Bundle) -> Date? {
     var urls = [
-      applicationURL,
-      bundle.bundleURL,
       bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true),
       bundle.bundleURL.appendingPathComponent("Contents/Info.plist"),
     ]
     if let executableURL = bundle.executableURL {
       urls.append(executableURL)
     }
-    return urls.compactMap(contentModificationDate(at:)).max()
+
+    if let newestInnerDate = urls.compactMap(contentModificationDate(at:)).max() {
+      return newestInnerDate
+    }
+
+    return contentModificationDate(at: applicationURL)
+      ?? contentModificationDate(at: bundle.bundleURL)
   }
 
   private static func contentModificationDate(at url: URL) -> Date? {

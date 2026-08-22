@@ -132,6 +132,124 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(scanner.scanCount, 1)
   }
 
+  func testMergeKeepsKnownUpdateWhenScanReturnsChecking() {
+    let previous = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
+    let scanned = makeApplication(name: "Example", status: .checking)
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertEqual(merged.first?.status, .updateAvailable)
+    XCTAssertEqual(merged.first?.latestVersion, "2.0")
+    XCTAssertEqual(merged.availableUpdates(ignoredIDs: []).map(\.name), ["Example"])
+  }
+
+  func testMergeDoesNotReuseHomebrewHomepageAsSparkleFeed() {
+    var previous = makeApplication(name: "Thunder", status: .updateAvailable, latestVersion: "5.80.7.66659")
+    previous.source = .homebrew
+    previous.sourceURL = URL(string: "https://www.xunlei.com/")
+
+    var scanned = makeApplication(name: "Thunder", status: .selfManaged)
+    scanned.source = .sparkle
+    scanned.sourceURL = nil
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertNil(merged.first?.sourceURL)
+    XCTAssertEqual(merged.first?.source, .sparkle)
+  }
+
+  func testMergeKeepsLastInstalledAtAcrossRescan() {
+    let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
+    var previous = makeApplication(name: "Example", status: .upToDate)
+    previous.lastInstalledAt = installedAt
+    let scanned = makeApplication(name: "Example", status: .checking)
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertEqual(merged.first?.lastInstalledAt, installedAt)
+  }
+
+  func testMergeKeepsLastInstalledAtForHomebrewUpdate() {
+    let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
+    var previous = makeApplication(name: "Cask", status: .upToDate)
+    previous.source = .homebrew
+    previous.lastInstalledAt = installedAt
+
+    var scanned = makeApplication(name: "Cask", status: .updateAvailable, latestVersion: "2.0")
+    scanned.source = .homebrew
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertEqual(merged.first?.lastInstalledAt, installedAt)
+    XCTAssertEqual(merged.first?.status, .updateAvailable)
+  }
+
+  func testCoalesceKeepsLastInstalledAt() {
+    let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
+    var existing = makeApplication(name: "Example", status: .upToDate)
+    existing.lastInstalledAt = installedAt
+    var incoming = makeApplication(name: "Example", status: .upToDate)
+    incoming.lastInstalledAt = nil
+
+    let coalesced = AppLibrary.coalesceCheckResult(incoming, over: existing)
+
+    XCTAssertEqual(coalesced.lastInstalledAt, installedAt)
+  }
+
+  func testFailedRecheckDoesNotDropKnownUpdate() {
+    let existing = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
+    var failed = existing
+    failed.status = .unavailable("更新源暂时无法访问。")
+
+    let coalesced = AppLibrary.coalesceCheckResult(failed, over: existing)
+
+    XCTAssertEqual(coalesced.status, .updateAvailable)
+    XCTAssertEqual(coalesced.latestVersion, "2.0")
+  }
+
+  func testSuccessfulUpToDateRecheckDropsKnownUpdate() {
+    let existing = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
+    var current = existing
+    current.status = .upToDate
+    current.latestVersion = "1.0"
+    current.canAutomaticallyUpdate = false
+
+    let coalesced = AppLibrary.coalesceCheckResult(current, over: existing)
+
+    XCTAssertEqual(coalesced.status, .upToDate)
+    XCTAssertTrue([coalesced].availableUpdates(ignoredIDs: []).isEmpty)
+  }
+
+  func testRefreshKeepsAvailableUpdateWhenRecheckFails() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let known = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
+    let scanned = makeApplication(name: "Example", status: .checking)
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      var failed = application
+      failed.status = .unavailable("更新源暂时无法访问。")
+      return failed
+    }
+
+    let library = AppLibrary(
+      applications: [known],
+      scanner: StubScanner(applications: [scanned]),
+      coordinator: coordinator,
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Example"])
+    await library.refresh()
+
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Example"])
+    XCTAssertEqual(library.applications.first?.status, .updateAvailable)
+    XCTAssertTrue(library.applications.installedApplications().isEmpty)
+  }
+
   private func makeApplication(
     name: String,
     status: UpdateStatus,

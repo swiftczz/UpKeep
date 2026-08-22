@@ -121,6 +121,22 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(available.map(\.name), ["Newer", "Older", "Missing"])
   }
 
+  func testCachedUpdateStaysInAvailableUpdatesWhileRechecking() {
+    var checking = makeApplication(name: "Checking", status: .checking)
+    checking.latestVersion = "2.0"
+    var unavailable = makeApplication(name: "Unavailable", status: .unavailable("timeout"))
+    unavailable.latestVersion = "2.0"
+    let current = makeApplication(name: "Current")
+
+    let applications = [checking, unavailable, current]
+
+    XCTAssertEqual(
+      applications.availableUpdates(ignoredIDs: []).map(\.name),
+      ["Checking", "Unavailable"]
+    )
+    XCTAssertEqual(applications.installedApplications().map(\.name), ["Current"])
+  }
+
   func testInstalledApplicationsAreSortedByModificationDateDescending() {
     let older = makeApplication(name: "Older", modifiedAt: Date(timeIntervalSince1970: 100))
     let newer = makeApplication(name: "Newer", modifiedAt: Date(timeIntervalSince1970: 200))
@@ -135,6 +151,18 @@ final class ApplicationScannerTests: XCTestCase {
     let installed = [unknown, ignored, older, newer].installedApplications()
 
     XCTAssertEqual(installed.map(\.name), ["Newer", "Older", "Unknown"])
+  }
+
+  func testInstalledApplicationsPreferLastInstalledAtOverPackageModificationDate() {
+    let olderPackage = Date(timeIntervalSince1970: 100)
+    let newerPackage = Date(timeIntervalSince1970: 200)
+    let installedNow = Date(timeIntervalSince1970: 300)
+
+    var grok = makeApplication(name: "Grok", modifiedAt: olderPackage)
+    grok.lastInstalledAt = installedNow
+    let other = makeApplication(name: "Other", modifiedAt: newerPackage)
+
+    XCTAssertEqual([other, grok].installedApplications().map(\.name), ["Grok", "Other"])
   }
 
   func testInstalledApplicationsOnTheSameDayAreSortedByTimeDescending() {
@@ -235,6 +263,61 @@ final class ApplicationScannerTests: XCTestCase {
 
     XCTAssertEqual(application.sidebarDate(isUpdateIgnored: false), releasedAt)
     XCTAssertTrue(application.sidebarDateIsReleaseDate)
+  }
+
+  func testSidebarDatePrefersLastInstalledAtForInstalledApplications() {
+    let modifiedAt = Date(timeIntervalSince1970: 100)
+    let installedAt = Date(timeIntervalSince1970: 200)
+    var application = makeApplication(name: "Kumone", modifiedAt: modifiedAt)
+    application.lastInstalledAt = installedAt
+
+    XCTAssertEqual(application.sidebarDate(isUpdateIgnored: false), installedAt)
+    XCTAssertFalse(application.sidebarDateIsReleaseDate)
+  }
+
+  func testSidebarDateDoesNotUseLastInstalledAtForAvailableUpdates() {
+    let modifiedAt = Date(timeIntervalSince1970: 100)
+    let releasedAt = Date(timeIntervalSince1970: 150)
+    let installedAt = Date(timeIntervalSince1970: 300)
+    var application = makeApplication(
+      name: "Update",
+      modifiedAt: modifiedAt,
+      status: .updateAvailable,
+      releaseDate: releasedAt
+    )
+    application.lastInstalledAt = installedAt
+
+    XCTAssertEqual(application.sidebarDate(isUpdateIgnored: false), releasedAt)
+    XCTAssertTrue(application.sidebarDateIsReleaseDate)
+  }
+
+  func testLastInstalledAtSurvivesJSONRoundTrip() throws {
+    var application = makeApplication(
+      name: "Grok",
+      modifiedAt: Date(timeIntervalSince1970: 100)
+    )
+    application.lastInstalledAt = Date(timeIntervalSince1970: 1_777_000_000)
+
+    let decoded = try JSONDecoder().decode(
+      AppRecord.self,
+      from: try JSONEncoder().encode(application)
+    )
+
+    XCTAssertEqual(decoded.lastInstalledAt, application.lastInstalledAt)
+  }
+
+  func testDecodesSnapshotWithoutLastInstalledAt() throws {
+    var application = makeApplication(name: "Legacy")
+    application.lastInstalledAt = Date(timeIntervalSince1970: 1)
+    var payload = try JSONSerialization.jsonObject(
+      with: try JSONEncoder().encode(application)
+    ) as! [String: Any]
+    payload.removeValue(forKey: "lastInstalledAt")
+    let data = try JSONSerialization.data(withJSONObject: payload)
+
+    let decoded = try JSONDecoder().decode(AppRecord.self, from: data)
+
+    XCTAssertNil(decoded.lastInstalledAt)
   }
 
   func testDetectsNativeMacAppStoreReceipt() throws {
@@ -753,6 +836,35 @@ final class ApplicationScannerTests: XCTestCase {
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
     let recorded = try XCTUnwrap(application.applicationModificationDate)
     XCTAssertEqual(recorded.timeIntervalSince1970, newer.timeIntervalSince1970, accuracy: 1)
+  }
+
+  func testIgnoresOuterBundleModificationDateWhenInnerFilesAreOlder() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Wrapper.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let infoURL = contentsURL.appendingPathComponent("Info.plist")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: contentsURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.wrapper"),
+      to: infoURL
+    )
+
+    let inner = Date(timeIntervalSince1970: 1_777_000_000)
+    let outer = Date(timeIntervalSince1970: 1_777_900_000)
+    try fileManager.setAttributes([.modificationDate: inner], ofItemAtPath: contentsURL.path)
+    try fileManager.setAttributes([.modificationDate: inner], ofItemAtPath: infoURL.path)
+    try fileManager.setAttributes([.modificationDate: outer], ofItemAtPath: applicationURL.path)
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    let recorded = try XCTUnwrap(application.applicationModificationDate)
+    XCTAssertEqual(recorded.timeIntervalSince1970, inner.timeIntervalSince1970, accuracy: 1)
   }
 
   private func makeApplication(

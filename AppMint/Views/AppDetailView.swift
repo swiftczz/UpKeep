@@ -141,7 +141,7 @@ struct AppDetailView: View {
   @ViewBuilder
   private var secondaryActions: some View {
     if usesUpdatePrimaryAction {
-      Button("打开应用", systemImage: "arrow.up.forward.app", action: openApplication)
+      Button("打开", systemImage: "arrow.up.forward.app", action: openApplication)
     }
 
     if application.applicationURL.isFileURL {
@@ -158,7 +158,7 @@ struct AppDetailView: View {
 
     Divider()
 
-    Button("卸载应用", systemImage: "trash", role: .destructive, action: uninstallApplication)
+    Button("卸载", systemImage: "trash", role: .destructive, action: uninstallApplication)
   }
 
   private var updateProgressControl: some View {
@@ -240,9 +240,19 @@ struct AppDetailView: View {
     }
   }
 
+  private var statusTitle: String {
+    if application.needsUpdate {
+      if case .checking = application.status {
+        return application.status.title
+      }
+      return UpdateStatus.updateAvailable.title
+    }
+    return application.status.title
+  }
+
   private var informationItems: [(label: String, value: String)] {
     var items: [(label: String, value: String)] = [
-      ("状态", isUpdateIgnored ? "已忽略更新" : application.status.title),
+      ("状态", isUpdateIgnored ? "已忽略更新" : statusTitle),
       ("当前版本", application.versionSummary),
       ("更新来源", application.sourceTitle),
       ("Bundle ID", application.bundleIdentifier),
@@ -317,7 +327,7 @@ struct AppDetailView: View {
   }
 
   private var primaryActionTitle: String {
-    usesUpdatePrimaryAction ? "更新" : "打开应用"
+    usesUpdatePrimaryAction ? "更新" : "打开"
   }
 
   private var primaryActionSystemImage: String {

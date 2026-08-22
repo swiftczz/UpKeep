@@ -22,6 +22,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var releaseNotesURL: URL?
   var sourceIdentifier: String?
   var canAutomaticallyUpdate: Bool
+  var lastInstalledAt: Date?
 
   init(
     name: String,
@@ -42,7 +43,8 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     homepageURL: URL? = nil,
     releaseNotesURL: URL? = nil,
     sourceIdentifier: String? = nil,
-    canAutomaticallyUpdate: Bool = false
+    canAutomaticallyUpdate: Bool = false,
+    lastInstalledAt: Date? = nil
   ) {
     self.id = applicationURL.standardizedFileURL.path
     self.name = name
@@ -64,6 +66,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.releaseNotesURL = releaseNotesURL
     self.sourceIdentifier = sourceIdentifier
     self.canAutomaticallyUpdate = canAutomaticallyUpdate
+    self.lastInstalledAt = lastInstalledAt
   }
 }
 
@@ -88,6 +91,7 @@ extension AppRecord: Codable {
     case releaseNotesURL
     case sourceIdentifier
     case canAutomaticallyUpdate
+    case lastInstalledAt
   }
 
   init(from decoder: Decoder) throws {
@@ -117,14 +121,22 @@ extension AppRecord: Codable {
       canAutomaticallyUpdate: try container.decodeIfPresent(
         Bool.self,
         forKey: .canAutomaticallyUpdate
-      ) ?? false
+      ) ?? false,
+      lastInstalledAt: try container.decodeIfPresent(Date.self, forKey: .lastInstalledAt)
     )
   }
 }
 
 extension AppRecord {
   var needsUpdate: Bool {
-    status == .updateAvailable
+    switch status {
+    case .updateAvailable:
+      return true
+    case .checking, .unavailable:
+      return hasNewerRelease(than: self)
+    case .upToDate, .selfManaged:
+      return false
+    }
   }
 
   var sourceTitle: String {
@@ -221,7 +233,7 @@ extension AppRecord {
     if needsUpdate && !isUpdateIgnored {
       return releaseDate ?? applicationModificationDate
     }
-    return applicationModificationDate
+    return lastInstalledAt ?? applicationModificationDate
   }
 
   var sidebarDateIsReleaseDate: Bool {
@@ -318,7 +330,7 @@ extension Array where Element == AppRecord {
 
   func installedApplications() -> [AppRecord] {
     filter { !$0.needsUpdate }
-      .sortedByDescendingDate(\.applicationModificationDate)
+      .sortedByDescendingDate { $0.lastInstalledAt ?? $0.applicationModificationDate }
   }
 
   func ignoredUpdates(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {

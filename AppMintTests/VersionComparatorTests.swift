@@ -27,4 +27,14 @@ final class VersionComparatorTests: XCTestCase {
     XCTAssertFalse(VersionComparator.isPrerelease("4.2.1"))
     XCTAssertFalse(VersionComparator.isPrerelease("2.19.0.2258 release"))
   }
+
+  func testHomebrewCaskVersionMatchingInstalledBuildIsNotNewer() {
+    XCTAssertFalse(
+      VersionComparator.isNewer("5.80.7.66659", than: "5.80.7", build: "66659")
+    )
+    XCTAssertTrue(VersionComparator.isNewer("5.80.7.66659", than: "5.80.7"))
+    XCTAssertTrue(
+      VersionComparator.isNewer("5.80.8.66660", than: "5.80.7", build: "66659")
+    )
+  }
 }

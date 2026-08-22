@@ -208,9 +208,10 @@ final class AppLibrary {
       selecting: selectedApplicationID
     )
 
+    let applicationsToCheck = applications
     let coordinator = coordinator
     await withTaskGroup(of: AppRecord.self) { group in
-      for application in enrichedApplications {
+      for application in applicationsToCheck {
         group.addTask {
           await coordinator.check(application)
         }
@@ -263,7 +264,7 @@ final class AppLibrary {
       else {
         continue
       }
-      updated[index] = application
+      updated[index] = Self.coalesceCheckResult(application, over: updated[index])
     }
     applications = updated
   }
@@ -279,7 +280,7 @@ final class AppLibrary {
     }
   }
 
-  private static func mergeKeepingCheckResults(
+  static func mergeKeepingCheckResults(
     _ incoming: [AppRecord],
     previous: [AppRecord]
   ) -> [AppRecord] {
@@ -289,14 +290,15 @@ final class AppLibrary {
         return current
       }
 
-      if current.source == .homebrew {
-        return current
+      if current.source == .homebrew, current.status == .updateAvailable {
+        return carryingMetadata(from: previous, onto: current)
       }
 
-      if current.currentVersion != previous.currentVersion
+      let versionChanged =
+        current.currentVersion != previous.currentVersion
         || current.buildVersion != previous.buildVersion
-      {
-        return current
+      if versionChanged {
+        return carryingPendingUpdate(from: previous, onto: current)
       }
 
       var merged = current
@@ -309,17 +311,63 @@ final class AppLibrary {
         merged.releaseNotesURL = previous.releaseNotesURL
         merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
       }
-      if merged.sourceURL == nil {
-        merged.sourceURL = previous.sourceURL
-      }
-      if merged.homepageURL == nil {
-        merged.homepageURL = previous.homepageURL
-      }
-      if merged.sourceIdentifier == nil {
-        merged.sourceIdentifier = previous.sourceIdentifier
-      }
-      return merged
+      return carryingMetadata(from: previous, onto: merged)
     }
+  }
+
+  static func coalesceCheckResult(_ incoming: AppRecord, over existing: AppRecord) -> AppRecord {
+    let result: AppRecord
+    if existing.status == .updateAvailable {
+      switch incoming.status {
+      case .checking, .unavailable:
+        result = carryingPendingUpdate(from: existing, onto: incoming)
+      default:
+        result = incoming
+      }
+    } else {
+      result = incoming
+    }
+
+    guard result.lastInstalledAt == nil else { return result }
+    var merged = result
+    merged.lastInstalledAt = existing.lastInstalledAt
+    return merged
+  }
+
+  private static func carryingPendingUpdate(
+    from previous: AppRecord,
+    onto current: AppRecord
+  ) -> AppRecord {
+    guard previous.status == .updateAvailable, previous.hasNewerRelease(than: current) else {
+      return carryingMetadata(from: previous, onto: current)
+    }
+
+    var merged = current
+    merged.status = .updateAvailable
+    merged.latestVersion = previous.latestVersion
+    merged.latestBuildVersion = previous.latestBuildVersion
+    merged.releaseNotes = previous.releaseNotes
+    merged.releaseDate = previous.releaseDate
+    merged.releaseNotesURL = previous.releaseNotesURL
+    merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
+    return carryingMetadata(from: previous, onto: merged)
+  }
+
+  private static func carryingMetadata(from previous: AppRecord, onto current: AppRecord) -> AppRecord {
+    var merged = current
+    if merged.sourceURL == nil, previous.source == merged.source {
+      merged.sourceURL = previous.sourceURL
+    }
+    if merged.homepageURL == nil {
+      merged.homepageURL = previous.homepageURL
+    }
+    if merged.sourceIdentifier == nil {
+      merged.sourceIdentifier = previous.sourceIdentifier
+    }
+    if merged.lastInstalledAt == nil {
+      merged.lastInstalledAt = previous.lastInstalledAt
+    }
+    return merged
   }
 
   func performPrimaryAction(for applicationID: AppRecord.ID) async -> URL? {
@@ -402,7 +450,7 @@ final class AppLibrary {
       finishUpdating(application, diskRecord: diskRecord)
       return diskRecord != nil
     } catch {
-      finishUpdating(application, diskRecord: nil)
+      clearUpdateProgress(for: application)
       throw error
     }
   }
@@ -410,7 +458,13 @@ final class AppLibrary {
   private func finishUpdating(_ application: AppRecord, diskRecord: AppRecord?) {
     if let diskRecord {
       applyInstalledDiskRecord(diskRecord, replacing: application)
+    } else {
+      rememberLocalInstall(of: application)
     }
+    clearUpdateProgress(for: application)
+  }
+
+  private func clearUpdateProgress(for application: AppRecord) {
     updateProgressByID[application.id] = nil
     updatingApplicationIDs.remove(application.id)
   }
@@ -485,6 +539,7 @@ final class AppLibrary {
     record.sourceIdentifier = application.sourceIdentifier
     record.latestVersion = application.latestVersion
     record.latestBuildVersion = application.latestBuildVersion
+    record.lastInstalledAt = .now
 
     if application.hasNewerRelease(than: disk) {
       record.status = .updateAvailable
@@ -495,6 +550,19 @@ final class AppLibrary {
     }
 
     applications[index] = record
+    persistSnapshot()
+  }
+
+  private func rememberLocalInstall(of application: AppRecord) {
+    guard FileManager.default.fileExists(atPath: application.applicationURL.path),
+      let index = applications.firstIndex(where: {
+        $0.id == application.id || $0.bundleIdentifier == application.bundleIdentifier
+      })
+    else {
+      return
+    }
+
+    applications[index].lastInstalledAt = .now
     persistSnapshot()
   }
 

@@ -44,7 +44,11 @@ struct HomebrewUpdateProvider: Sendable {
         let brewHasUpdate =
           outdatedItem != nil
           && remoteVersion != "latest"
-          && VersionComparator.isNewer(remoteVersion, than: application.currentVersion)
+          && VersionComparator.isNewer(
+            remoteVersion,
+            than: application.currentVersion,
+            build: application.buildVersion
+          )
 
         guard
           Self.shouldClaimInstalledCask(
@@ -67,7 +71,8 @@ struct HomebrewUpdateProvider: Sendable {
           currentVersion: application.currentVersion,
           remoteVersion: remoteVersion,
           brewReportsOutdated: outdatedItem != nil,
-          autoUpdates: cask.autoUpdates
+          autoUpdates: cask.autoUpdates,
+          buildVersion: application.buildVersion
         )
         application.canAutomaticallyUpdate = application.status == .updateAvailable
 
@@ -108,14 +113,15 @@ struct HomebrewUpdateProvider: Sendable {
     currentVersion: String,
     remoteVersion: String,
     brewReportsOutdated: Bool,
-    autoUpdates: Bool?
+    autoUpdates: Bool?,
+    buildVersion: String? = nil
   ) -> UpdateStatus {
     if remoteVersion == "latest" {
       return .selfManaged
     }
 
     if brewReportsOutdated,
-      VersionComparator.isNewer(remoteVersion, than: currentVersion)
+      VersionComparator.isNewer(remoteVersion, than: currentVersion, build: buildVersion)
     {
       return .updateAvailable
     }

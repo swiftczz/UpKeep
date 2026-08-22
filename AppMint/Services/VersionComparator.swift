@@ -2,6 +2,18 @@ import Foundation
 
 enum VersionComparator {
   static func isNewer(_ candidate: String, than installed: String) -> Bool {
+    isNewer(candidate, than: installed, build: nil)
+  }
+
+  static func isNewer(_ candidate: String, than installed: String, build: String?) -> Bool {
+    if let build = build?.nonBlankValue,
+      candidate == "\(installed).\(build)"
+        || candidate == "\(installed),\(build)"
+        || candidate == "\(installed)_\(build)"
+    {
+      return false
+    }
+
     if let candidateValue = ParsedVersion(candidate),
       let installedValue = ParsedVersion(installed)
     {

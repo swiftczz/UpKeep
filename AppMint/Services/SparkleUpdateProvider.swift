@@ -16,9 +16,20 @@ struct SparkleUpdateProvider: Sendable {
         application.status = .unavailable("Sparkle 更新源暂时无法访问。")
         return application
       }
+      guard !Self.looksLikeHTML(data) else {
+        application.status = .selfManaged
+        application.canAutomaticallyUpdate = false
+        application.latestVersion = nil
+        application.latestBuildVersion = nil
+        return application
+      }
 
       let parser = SparkleAppcastParser(data: data)
       let candidates = try parser.parse()
+      guard !candidates.isEmpty else {
+        application.status = .unavailable("更新源没有提供版本。")
+        return application
+      }
       let releasedCandidates = candidates.filter { !$0.isPrerelease }
       guard !releasedCandidates.isEmpty else {
         application.status = .upToDate
@@ -74,6 +85,17 @@ struct SparkleUpdateProvider: Sendable {
     }
 
     return application
+  }
+
+  private static func looksLikeHTML(_ data: Data) -> Bool {
+    guard
+      let prefix = String(data: data.prefix(256), encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    else {
+      return false
+    }
+    return prefix.hasPrefix("<!doctype html") || prefix.hasPrefix("<html")
   }
 
   func upgrade(
