@@ -7,6 +7,16 @@ enum TauriUpdaterDetector {
   private static let latestNeedle = Data("latest.json".utf8)
   private static let proxyNeedle = Data("update-proxy.json".utf8)
   private static let httpsNeedle = Data("https://".utf8)
+  private static let gpuiNeedle = Data("gpui::".utf8)
+  private static let tauriNeedles = [
+    Data("tauri_plugin_updater".utf8),
+    Data("tauri://localhost".utf8),
+    Data("__TAURI__".utf8),
+    Data("tauri.conf.json".utf8),
+  ]
+  private static let urlAllowed = CharacterSet(
+    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%"
+  )
   private static let chunkSize = 1024 * 1024
   private static let overlapSize = 512
   private static let maximumExecutableBytes = 400 * 1024 * 1024
@@ -60,6 +70,10 @@ enum TauriUpdaterDetector {
     defer { try? handle.close() }
 
     var previousTail = Data()
+    var foundURL: URL?
+    var sawTauri = false
+    var sawGPUI = false
+
     while true {
       let chunk = (try? handle.read(upToCount: chunkSize)) ?? Data()
       if chunk.isEmpty {
@@ -67,13 +81,25 @@ enum TauriUpdaterDetector {
       }
 
       let window = previousTail + chunk
-      if let url = firstUpdaterJSONURL(in: window) {
-        return url
+      if !sawTauri {
+        sawTauri = tauriNeedles.contains { window.range(of: $0) != nil }
+      }
+      if !sawGPUI, window.range(of: gpuiNeedle) != nil {
+        sawGPUI = true
+      }
+      if foundURL == nil {
+        foundURL = firstUpdaterJSONURL(in: window)
+      }
+      if foundURL != nil, sawTauri {
+        return foundURL
       }
       previousTail = Data(window.suffix(overlapSize))
     }
 
-    return nil
+    if sawGPUI, !sawTauri {
+      return nil
+    }
+    return foundURL
   }
 
   private static func endpointFromConfiguration(in bundleURL: URL) -> URL? {
@@ -156,9 +182,13 @@ enum TauriUpdaterDetector {
       guard window[search..<httpsEnd].elementsEqual(httpsNeedle) else {
         continue
       }
-      return validatedUpdaterJSONURL(
-        String(decoding: window[search..<needleRange.upperBound], as: UTF8.self)
-      )
+      let slice = Data(window[search..<needleRange.upperBound])
+      guard let rawValue = String(data: slice, encoding: .utf8) else {
+        continue
+      }
+      if let url = validatedUpdaterJSONURL(rawValue) {
+        return url
+      }
     }
 
     return nil
@@ -166,6 +196,9 @@ enum TauriUpdaterDetector {
 
   private static func validatedUpdaterJSONURL(_ rawValue: String) -> URL? {
     if rawValue.contains("%s") || rawValue.contains("%d") || rawValue.contains("{{") {
+      return nil
+    }
+    guard rawValue.unicodeScalars.allSatisfy({ urlAllowed.contains($0) }) else {
       return nil
     }
     guard let url = SecureUpdateURL.https(string: rawValue), isUpdaterJSON(url) else {

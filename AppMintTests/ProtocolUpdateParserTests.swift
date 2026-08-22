@@ -174,10 +174,51 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
   }
 
-  func testIgnoresLocalhostTauriJSONURL() {
-    XCTAssertTrue(
-      TauriUpdaterDetector.updaterJSONURLs(in: "https://localhost:3000/latest.json").isEmpty
+  func testIgnoresGPUIExecutableWithLatestJSON() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-gpui-\(UUID().uuidString)"
     )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      """
+      gpui::app https://assets.example.com/github/release/desktop/latest.json crates/auto_update
+      """.utf8
+    ).write(to: fileURL)
+
+    XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
+  }
+
+  func testStillDetectsTauriWhenGPUIStringsAreAlsoPresent() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-tauri-gpui-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      """
+      gpui::app tauri_plugin_updater https://example.com/updates/latest.json
+      """.utf8
+    ).write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://example.com/updates/latest.json"
+    )
+  }
+
+  func testIgnoresLatestJSONURLSplitByBinaryBytes() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-binary-url-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    var data = Data("https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
+    data.append(contentsOf: [0xC0, 0x0C])
+    data.append(contentsOf: "/latest.json".utf8)
+    try data.write(to: fileURL)
+
+    XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
   }
 
   func testVerifiesElectronBuilderSHA512() throws {
@@ -245,6 +286,104 @@ final class ProtocolUpdateParserTests: XCTestCase {
     XCTAssertTrue(payload.shouldOfferUpdate(against: "1.133.0"))
     XCTAssertTrue(payload.shouldOfferUpdate(against: "1.134.0"))
     XCTAssertFalse(payload.shouldOfferUpdate(against: "1.135.0"))
+  }
+
+  func testReconstructsStableReleaseJSONURLSplitByBinaryBytes() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-release-json-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    var data = Data("https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
+    data.append(contentsOf: [0xC0, 0x0C])
+    data.append(contentsOf: "/latest.json".utf8)
+    try data.write(to: fileURL)
+
+    XCTAssertEqual(
+      ReleaseJSONDetector.endpoint(inFile: fileURL)?.absoluteString,
+      "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
+    )
+  }
+
+  func testInsertsStableChannelWhenLatestJSONIsMissing() throws {
+    let url = try XCTUnwrap(
+      URL(string: "https://assets.lbkrs.com/github/release/longbridge-desktop/latest.json")
+    )
+    XCTAssertEqual(
+      ReleaseJSONDetector.stableChannelURL(from: url)?.absoluteString,
+      "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
+    )
+    XCTAssertNil(
+      ReleaseJSONDetector.stableChannelURL(
+        from: try XCTUnwrap(
+          URL(
+            string:
+              "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
+          )
+        )
+      )
+    )
+  }
+
+  func testIgnoresPrereleaseReleaseJSONChannel() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-release-json-beta-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data("https://example.com/updates/beta/latest.json".utf8).write(to: fileURL)
+    XCTAssertNil(ReleaseJSONDetector.endpoint(inFile: fileURL))
+  }
+
+  func testParsesReleaseJSONAssetsAndPrefersAppleSiliconDMG() throws {
+    let data = Data(
+      """
+      {
+        "version": "v0.19.1",
+        "published_at": "2026-08-20T07:46:53Z",
+        "release_notes": {
+          "en": "### Improvements",
+          "zh-CN": "### 优化"
+        },
+        "assets": [
+          {
+            "name": "app-v0.19.1-linux-x86_64.tar.gz",
+            "url": "https://example.com/app-v0.19.1-linux-x86_64.tar.gz",
+            "sha256": "aa"
+          },
+          {
+            "name": "app-v0.19.1-windows-x86_64.exe",
+            "url": "https://example.com/app-v0.19.1-windows-x86_64.exe",
+            "sha256": "bb"
+          },
+          {
+            "name": "app-v0.19.1-macos-x86_64.dmg",
+            "url": "https://example.com/app-v0.19.1-macos-x86_64.dmg",
+            "sha256": "cc"
+          },
+          {
+            "name": "app-v0.19.1-macos-aarch64.dmg",
+            "url": "https://example.com/app-v0.19.1-macos-aarch64.dmg",
+            "sha256": "dd"
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(ReleaseJSONManifest.parse(data, languageCode: "zh-Hans"))
+    XCTAssertEqual(manifest.version, "0.19.1")
+    XCTAssertEqual(manifest.notes, "### 优化")
+    XCTAssertEqual(manifest.publicationDate, ISO8601Parsing.date(from: "2026-08-20T07:46:53Z"))
+
+    let armPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .arm64))
+    XCTAssertEqual(armPackage.url.lastPathComponent, "app-v0.19.1-macos-aarch64.dmg")
+    XCTAssertEqual(armPackage.sha256, "dd")
+
+    let intelPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .x64))
+    XCTAssertEqual(intelPackage.url.lastPathComponent, "app-v0.19.1-macos-x86_64.dmg")
+
+    XCTAssertNil(ReleaseJSONManifest.parse(Data(#"{"version":"1.0","platforms":{}}"#.utf8)))
   }
 
   func testBuildsVSCodeUpdaterCheckURL() throws {

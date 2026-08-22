@@ -262,6 +262,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
   case electronBuilder
   case tauri
   case vscodeUpdater
+  case releaseJSON
   case selfManaged
 
   var title: String {
@@ -272,6 +273,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .electronBuilder: "electron-updater"
     case .tauri: "Tauri updater"
     case .vscodeUpdater: "VS Code updater"
+    case .releaseJSON: "JSON release"
     case .selfManaged: "未知"
     }
   }
@@ -284,6 +286,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .electronBuilder: "atom"
     case .tauri: "drop.fill"
     case .vscodeUpdater: "chevron.left.forwardslash.chevron.right"
+    case .releaseJSON: "doc.text"
     case .selfManaged: "app.dashed"
     }
   }

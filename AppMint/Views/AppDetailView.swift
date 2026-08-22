@@ -306,7 +306,7 @@ struct AppDetailView: View {
         return "使用当前 App Store 账号下载并安装此更新"
       case .homebrew:
         return "使用 Homebrew 下载并安装此更新"
-      case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .selfManaged:
+      case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .selfManaged:
         return "下载并安装此更新"
       }
     }

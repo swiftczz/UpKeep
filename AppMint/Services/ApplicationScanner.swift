@@ -106,6 +106,7 @@ struct ApplicationScanner: ApplicationScanning {
     var electronMetadata: ElectronBuilderMetadata? = nil
     var tauriEndpoint: URL? = nil
     var vscodeMetadata: VSCodeUpdaterMetadata? = nil
+    var releaseJSONEndpoint: URL? = nil
 
     if hasAppStoreReceipt {
       source = .appStore
@@ -137,6 +138,11 @@ struct ApplicationScanner: ApplicationScanning {
       appStorePlatform = nil
       status = .checking
       tauriEndpoint = detectedTauri
+    } else if let detectedReleaseJSON = ReleaseJSONDetector.detect(bundleURL: bundle.bundleURL) {
+      source = .releaseJSON
+      appStorePlatform = nil
+      status = .checking
+      releaseJSONEndpoint = detectedReleaseJSON
     } else {
       source = .selfManaged
       appStorePlatform = nil
@@ -160,6 +166,7 @@ struct ApplicationScanner: ApplicationScanning {
         case .electronBuilder: electronMetadata?.feedURL
         case .tauri: tauriEndpoint
         case .vscodeUpdater: vscodeMetadata?.updateURL
+        case .releaseJSON: releaseJSONEndpoint
         default: nil
         }
       }(),
@@ -176,6 +183,8 @@ struct ApplicationScanner: ApplicationScanning {
           vscodeMetadata.map {
             VSCodeUpdaterDetector.sourceIdentifier(quality: $0.quality, commit: $0.commit)
           }
+        case .releaseJSON:
+          releaseJSONEndpoint?.absoluteString
         default:
           nil
         }

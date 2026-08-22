@@ -532,6 +532,70 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.sourceTitle, "Tauri updater")
   }
 
+  func testDoesNotTreatGPUIAppAsTauriUpdater() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Longbridge.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.longbridge.app.desktop"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      gpui::app https://assets.lbkrs.com/github/release/longbridge-desktop/latest.json
+      """.utf8
+    ).write(to: macOSURL.appendingPathComponent("Example"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertNotEqual(application.source, .tauri)
+    XCTAssertEqual(application.source, .releaseJSON)
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://assets.lbkrs.com/github/release/longbridge-desktop/latest.json"
+    )
+    XCTAssertEqual(application.sourceTitle, "JSON release")
+  }
+
+  func testDetectsReleaseJSONFromSplitLatestJSONURL() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Longbridge.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.longbridge.app.desktop"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    var executable = Data("gpui::app ".utf8)
+    executable.append(contentsOf: "https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
+    executable.append(contentsOf: [0xC0, 0x0C])
+    executable.append(contentsOf: "/latest.json".utf8)
+    try executable.write(to: macOSURL.appendingPathComponent("Example"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .releaseJSON)
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
+    )
+  }
+
   func testDetectsVSCodeUpdaterProductJSON() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory

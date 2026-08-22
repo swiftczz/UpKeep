@@ -137,7 +137,7 @@ struct HomebrewUpdateProvider: Sendable {
     }
 
     switch source {
-    case .appStore, .electronBuilder, .tauri, .vscodeUpdater:
+    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON:
       return false
     case .sparkle:
       return !hasCheckableFeed
