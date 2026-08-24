@@ -37,4 +37,13 @@ final class VersionComparatorTests: XCTestCase {
       VersionComparator.isNewer("5.80.8.66660", than: "5.80.7", build: "66659")
     )
   }
+
+  func testCaskVersionEqualToBundleVersionIsNotNewerThanShortVersion() {
+    XCTAssertFalse(
+      VersionComparator.isNewer("1.38.1", than: "1.38", build: "1.38.1")
+    )
+    XCTAssertTrue(
+      VersionComparator.isNewer("1.38.2", than: "1.38", build: "1.38.1")
+    )
+  }
 }

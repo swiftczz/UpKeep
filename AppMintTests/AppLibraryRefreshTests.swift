@@ -184,6 +184,37 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(merged.first?.status, .updateAvailable)
   }
 
+  func testMergeDoesNotCopyStatusAcrossSources() {
+    var previous = makeApplication(name: "Cursor", status: .selfManaged)
+    previous.source = .homebrew
+
+    var scanned = makeApplication(name: "Cursor", status: .checking)
+    scanned.source = .vscodeUpdater
+    scanned.sourceURL = URL(string: "https://api2.cursor.sh/updates")
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertEqual(merged.first?.source, .vscodeUpdater)
+    XCTAssertEqual(merged.first?.status, .checking)
+  }
+
+  func testMergeCopiesReleaseNotesOntoHomebrewUpdate() {
+    var previous = makeApplication(name: "Notes", status: .updateAvailable, latestVersion: "2.0")
+    previous.source = .sparkle
+    previous.releaseNotes = "Sparkle notes"
+    previous.releaseNotesURL = URL(string: "https://example.com/notes")
+
+    var current = makeApplication(name: "Notes", status: .updateAvailable, latestVersion: "2.0")
+    current.source = .homebrew
+    current.releaseNotes = nil
+
+    let merged = AppLibrary.mergeKeepingCheckResults([current], previous: [previous])
+
+    XCTAssertEqual(merged.first?.source, .homebrew)
+    XCTAssertEqual(merged.first?.releaseNotes, "Sparkle notes")
+    XCTAssertEqual(merged.first?.releaseNotesURL?.absoluteString, "https://example.com/notes")
+  }
+
   func testCoalesceKeepsLastInstalledAt() {
     let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
     var existing = makeApplication(name: "Example", status: .upToDate)

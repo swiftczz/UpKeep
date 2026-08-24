@@ -6,124 +6,87 @@ final class HomebrewUpdateProviderTests: XCTestCase {
   func testOutdatedAutoUpdatesCaskIsUpdateAvailable() {
     let status = HomebrewUpdateProvider.resolvedStatus(
       currentVersion: "1.34493.0",
-      remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78",
-      brewReportsOutdated: true,
-      autoUpdates: true
+      remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78"
     )
     XCTAssertEqual(status, .updateAvailable)
   }
 
-  func testCurrentAutoUpdatesCaskIsSelfManaged() {
+  func testCurrentAutoUpdatesCaskIsUpToDate() {
     let status = HomebrewUpdateProvider.resolvedStatus(
       currentVersion: "1.34493.1",
-      remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78",
-      brewReportsOutdated: false,
-      autoUpdates: true
+      remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78"
     )
-    XCTAssertEqual(status, .selfManaged)
+    XCTAssertEqual(status, .upToDate)
   }
 
   func testMashedCaskVersionWithMatchingBuildIsNotAnUpdate() {
     let status = HomebrewUpdateProvider.resolvedStatus(
       currentVersion: "5.80.7",
       remoteVersion: "5.80.7.66659",
-      brewReportsOutdated: true,
-      autoUpdates: true,
       buildVersion: "66659"
+    )
+    XCTAssertEqual(status, .upToDate)
+  }
+
+  func testCaskVersionMatchingBundleVersionIsUpToDate() {
+    let status = HomebrewUpdateProvider.resolvedStatus(
+      currentVersion: "1.38",
+      remoteVersion: "1.38.1",
+      buildVersion: "1.38.1"
+    )
+    XCTAssertEqual(status, .upToDate)
+  }
+
+  func testUnversionedLatestCaskStaysSelfManaged() {
+    let status = HomebrewUpdateProvider.resolvedStatus(
+      currentVersion: "1.0",
+      remoteVersion: "latest"
     )
     XCTAssertEqual(status, .selfManaged)
   }
 
-  func testClaimsElectronCaskOnlyWhenBrewHasUpdate() {
-    XCTAssertTrue(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .electronBuilder,
-        hasCheckableFeed: true,
-        brewHasUpdate: true
-      )
-    )
-    XCTAssertFalse(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .electronBuilder,
-        hasCheckableFeed: true,
-        brewHasUpdate: false
-      )
-    )
-    XCTAssertFalse(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .vscodeUpdater,
-        hasCheckableFeed: true,
-        brewHasUpdate: false
-      )
-    )
-    XCTAssertTrue(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .vscodeUpdater,
-        hasCheckableFeed: true,
-        brewHasUpdate: true
-      )
-    )
-    XCTAssertFalse(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .releaseJSON,
-        hasCheckableFeed: true,
-        brewHasUpdate: false
-      )
-    )
-    XCTAssertTrue(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .releaseJSON,
-        hasCheckableFeed: true,
-        brewHasUpdate: true
-      )
-    )
+  func testPrefersHomebrewWhenBrewHasUpdate() {
+    XCTAssertTrue(claim(.electronBuilder, .updateAvailable, feed: true, brew: true))
+    XCTAssertTrue(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: true))
+    XCTAssertTrue(claim(.sparkle, .updateAvailable, feed: true, brew: true))
+    XCTAssertTrue(claim(.tauri, .upToDate, feed: true, brew: true))
+    XCTAssertTrue(claim(.releaseJSON, .checking, feed: true, brew: true))
   }
 
-  func testClaimsTauriAndSparkleCasksWhenBrewHasUpdate() {
-    XCTAssertTrue(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .tauri,
-        hasCheckableFeed: true,
-        brewHasUpdate: true
-      )
-    )
-    XCTAssertFalse(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .tauri,
-        hasCheckableFeed: true,
-        brewHasUpdate: false
-      )
-    )
-    XCTAssertTrue(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .sparkle,
-        hasCheckableFeed: true,
-        brewHasUpdate: true
-      )
-    )
-    XCTAssertFalse(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .sparkle,
-        hasCheckableFeed: true,
-        brewHasUpdate: false
-      )
-    )
+  func testKeepsWorkingFirstPartyProtocolWhenBrewHasNoUpdate() {
+    XCTAssertFalse(claim(.electronBuilder, .checking, feed: true, brew: false))
+    XCTAssertFalse(claim(.electronBuilder, .updateAvailable, feed: true, brew: false))
+    XCTAssertFalse(claim(.vscodeUpdater, .checking, feed: true, brew: false))
+    XCTAssertFalse(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: false))
+    XCTAssertFalse(claim(.sparkle, .upToDate, feed: true, brew: false))
+    XCTAssertFalse(claim(.tauri, .checking, feed: true, brew: false))
+    XCTAssertFalse(claim(.releaseJSON, .updateAvailable, feed: true, brew: false))
   }
 
-  func testStillClaimsSparkleWithoutFeedAndSelfManagedCasks() {
-    XCTAssertTrue(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .sparkle,
-        hasCheckableFeed: false,
-        brewHasUpdate: false
-      )
-    )
-    XCTAssertTrue(
-      HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: .selfManaged,
-        hasCheckableFeed: false,
-        brewHasUpdate: false
-      )
+  func testFallsBackToHomebrewWhenFirstPartyCheckFails() {
+    XCTAssertTrue(claim(.vscodeUpdater, .selfManaged, feed: true, brew: false))
+    XCTAssertTrue(claim(.electronBuilder, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))
+    XCTAssertTrue(claim(.sparkle, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))
+    XCTAssertTrue(claim(.tauri, .selfManaged, feed: true, brew: false))
+  }
+
+  func testClaimsCasksWithNoFirstPartyProtocol() {
+    XCTAssertTrue(claim(.sparkle, .selfManaged, feed: false, brew: false))
+    XCTAssertTrue(claim(.selfManaged, .selfManaged, feed: false, brew: false))
+    XCTAssertTrue(claim(.homebrew, .selfManaged, feed: false, brew: false))
+  }
+
+  private func claim(
+    _ source: UpdateSource,
+    _ status: UpdateStatus,
+    feed: Bool,
+    brew: Bool
+  ) -> Bool {
+    HomebrewUpdateProvider.shouldClaimInstalledCask(
+      source: source,
+      status: status,
+      hasCheckableFeed: feed,
+      brewHasUpdate: brew
     )
   }
 

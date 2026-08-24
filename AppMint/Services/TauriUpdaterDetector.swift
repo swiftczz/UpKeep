@@ -6,6 +6,7 @@ enum TauriUpdaterDetector {
   )
   private static let latestNeedle = Data("latest.json".utf8)
   private static let proxyNeedle = Data("update-proxy.json".utf8)
+  private static let catalogNeedle = Data("versions.json".utf8)
   private static let httpsNeedle = Data("https://".utf8)
   private static let gpuiNeedle = Data("gpui::".utf8)
   private static let tauriNeedles = [
@@ -70,7 +71,8 @@ enum TauriUpdaterDetector {
     defer { try? handle.close() }
 
     var previousTail = Data()
-    var foundURL: URL?
+    var foundURLs: [URL] = []
+    var seen = Set<String>()
     var sawTauri = false
     var sawGPUI = false
 
@@ -87,11 +89,11 @@ enum TauriUpdaterDetector {
       if !sawGPUI, window.range(of: gpuiNeedle) != nil {
         sawGPUI = true
       }
-      if foundURL == nil {
-        foundURL = firstUpdaterJSONURL(in: window)
+      for url in updaterJSONURLs(in: window) where seen.insert(url.absoluteString).inserted {
+        foundURLs.append(url)
       }
-      if foundURL != nil, sawTauri {
-        return foundURL
+      if sawTauri, foundURLs.contains(where: isDirectManifestURL) {
+        break
       }
       previousTail = Data(window.suffix(overlapSize))
     }
@@ -99,7 +101,7 @@ enum TauriUpdaterDetector {
     if sawGPUI, !sawTauri {
       return nil
     }
-    return foundURL
+    return preferredUpdaterJSONURL(foundURLs)
   }
 
   private static func endpointFromConfiguration(in bundleURL: URL) -> URL? {
@@ -151,17 +153,40 @@ enum TauriUpdaterDetector {
     return nil
   }
 
-  private static func firstUpdaterJSONURL(in window: Data) -> URL? {
-    for needle in [latestNeedle, proxyNeedle] {
+  private static func updaterJSONURLs(in window: Data) -> [URL] {
+    var urls: [URL] = []
+    for needle in [latestNeedle, proxyNeedle, catalogNeedle] {
       var searchStart = window.startIndex
       while let range = window[searchStart...].range(of: needle) {
         if let url = url(endingAt: range, in: window) {
-          return url
+          urls.append(url)
         }
         searchStart = range.upperBound
       }
     }
-    return nil
+    return urls
+  }
+
+  private static func preferredUpdaterJSONURL(_ urls: [URL]) -> URL? {
+    if let url = urls.first(where: { $0.lastPathComponent.lowercased() == "latest.json" }) {
+      return url
+    }
+    if let url = urls.first(where: { $0.lastPathComponent.lowercased() == "update-proxy.json" }) {
+      return url
+    }
+
+    let catalogs = urls.filter { $0.lastPathComponent.lowercased() == "versions.json" }
+    return catalogs.max { lhs, rhs in
+      if lhs.pathComponents.count != rhs.pathComponents.count {
+        return lhs.pathComponents.count < rhs.pathComponents.count
+      }
+      return lhs.absoluteString.count < rhs.absoluteString.count
+    }
+  }
+
+  private static func isDirectManifestURL(_ url: URL) -> Bool {
+    let name = url.lastPathComponent.lowercased()
+    return name == "latest.json" || name == "update-proxy.json"
   }
 
   private static func url(
@@ -217,7 +242,7 @@ enum TauriUpdaterDetector {
 
   private static func isUpdaterJSON(_ url: URL) -> Bool {
     let name = url.lastPathComponent.lowercased()
-    return name == "latest.json" || name == "update-proxy.json"
+    return name == "latest.json" || name == "update-proxy.json" || name == "versions.json"
   }
 
   private static func stringValues(in json: Any, keys: Set<String>) -> [String] {

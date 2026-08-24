@@ -809,6 +809,20 @@ final class ApplicationScannerTests: XCTestCase {
     )
   }
 
+  func testDetectsInstalledReasonixStudioUpdaterWhenPresent() throws {
+    let applicationURL = URL(fileURLWithPath: "/Applications/ReasonixStudio.app")
+    guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+      throw XCTSkip("ReasonixStudio.app is not installed on this machine")
+    }
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .tauri)
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://dl.reasonix.io/studio/versions.json"
+    )
+  }
+
   func testUsesNewestInnerFileModificationDate() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory

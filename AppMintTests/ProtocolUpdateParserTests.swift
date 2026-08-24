@@ -138,6 +138,72 @@ final class ProtocolUpdateParserTests: XCTestCase {
     XCTAssertEqual(platform.sha256, "bbb")
   }
 
+  func testParsesVersionsCatalogAndPrefersNewestStableManifest() throws {
+    let data = Data(
+      """
+      {
+        "schemaVersion": 1,
+        "versions": [
+          {
+            "version": "v2.2.0",
+            "manifest": "https://dl.reasonix.io/studio-v2.2.0/latest.json"
+          },
+          {
+            "version": "v2.4.0",
+            "manifest": "https://dl.reasonix.io/studio-v2.4.0/latest.json"
+          },
+          {
+            "version": "v2.5.0-beta.1",
+            "manifest": "https://dl.reasonix.io/studio-v2.5.0-beta.1/latest.json"
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let catalog = try XCTUnwrap(TauriUpdateCatalog.parse(data))
+    XCTAssertEqual(
+      catalog.latestManifestURL?.absoluteString,
+      "https://dl.reasonix.io/studio-v2.4.0/latest.json"
+    )
+  }
+
+  func testFindsVersionsJSONURLInExecutable() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-versions-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      "https://dl.reasonix.io/versions.jsonhttps://dl.reasonix.io/studio/versions.json"
+        .utf8
+    ).write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://dl.reasonix.io/studio/versions.json"
+    )
+  }
+
+  func testPrefersLatestJSONOverVersionsJSON() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-latest-over-versions-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      """
+      https://dl.reasonix.io/studio/versions.json
+      https://dl.reasonix.io/latest/latest.json
+      """.utf8
+    ).write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://dl.reasonix.io/latest/latest.json"
+    )
+  }
+
   func testFindsUpdaterJSONURLAfterFirstMegabyte() throws {
     let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
       "AppMint-updater-\(UUID().uuidString)"

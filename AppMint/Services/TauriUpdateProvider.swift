@@ -161,12 +161,71 @@ struct TauriUpdateProvider: Sendable {
   }
 
   private func fetchManifest(from url: URL) async throws -> TauriUpdateManifest {
+    guard let data = try await UpdateHTTP.successfulData(from: url) else {
+      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
+    }
+    if let manifest = TauriUpdateManifest.parse(data) {
+      return manifest
+    }
+
     guard
-      let data = try await UpdateHTTP.successfulData(from: url),
-      let manifest = TauriUpdateManifest.parse(data)
+      let catalogURL = TauriUpdateCatalog.parse(data)?.latestManifestURL,
+      catalogURL != url,
+      let catalogData = try await UpdateHTTP.successfulData(from: catalogURL),
+      let manifest = TauriUpdateManifest.parse(catalogData)
     else {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
     }
     return manifest
+  }
+}
+
+struct TauriUpdateCatalog: Equatable, Sendable {
+  struct Release: Equatable, Sendable {
+    var version: String
+    var manifestURL: URL
+  }
+
+  var releases: [Release]
+
+  var latestManifestURL: URL? {
+    let stable = releases.filter { !VersionComparator.isPrerelease($0.version) }
+    let pool = stable.isEmpty ? releases : stable
+    return pool.max { lhs, rhs in
+      if VersionComparator.isNewer(rhs.version, than: lhs.version) {
+        return true
+      }
+      if VersionComparator.isNewer(lhs.version, than: rhs.version) {
+        return false
+      }
+      return lhs.version < rhs.version
+    }?.manifestURL
+  }
+
+  static func parse(_ data: Data) -> TauriUpdateCatalog? {
+    guard
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let rawReleases = json["versions"] as? [[String: Any]]
+    else {
+      return nil
+    }
+
+    let releases = rawReleases.compactMap { raw -> Release? in
+      let version = (raw["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let manifest = (raw["manifest"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard
+        let version, !version.isEmpty,
+        let manifest,
+        let manifestURL = SecureUpdateURL.https(string: manifest)
+      else {
+        return nil
+      }
+      return Release(version: version, manifestURL: manifestURL)
+    }
+
+    guard !releases.isEmpty else {
+      return nil
+    }
+    return TauriUpdateCatalog(releases: releases)
   }
 }

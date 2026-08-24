@@ -6,12 +6,17 @@ enum VersionComparator {
   }
 
   static func isNewer(_ candidate: String, than installed: String, build: String?) -> Bool {
-    if let build = build?.nonBlankValue,
-      candidate == "\(installed).\(build)"
+    if let build = build?.nonBlankValue {
+      if matchesInstalledBuild(candidate, build: build) {
+        return false
+      }
+
+      if candidate == "\(installed).\(build)"
         || candidate == "\(installed),\(build)"
         || candidate == "\(installed)_\(build)"
-    {
-      return false
+      {
+        return false
+      }
     }
 
     if let candidateValue = ParsedVersion(candidate),
@@ -31,6 +36,22 @@ enum VersionComparator {
   static func isPrerelease(_ rawValue: String) -> Bool {
     guard let parsed = ParsedVersion(rawValue) else { return false }
     return parsed.prereleaseRank < 3
+  }
+
+  /// Homebrew often publishes `CFBundleVersion` (e.g. ImHex 1.38.1) while the
+  /// app's marketing string is shorter (1.38). That is the same installed copy.
+  private static func matchesInstalledBuild(_ candidate: String, build: String) -> Bool {
+    if candidate == build {
+      return true
+    }
+
+    guard let candidateValue = ParsedVersion(candidate),
+      let buildValue = ParsedVersion(build)
+    else {
+      return false
+    }
+
+    return !(candidateValue > buildValue) && !(buildValue > candidateValue)
   }
 }
 

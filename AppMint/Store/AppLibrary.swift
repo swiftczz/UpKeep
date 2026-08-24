@@ -223,6 +223,12 @@ final class AppLibrary {
     }
     flushPendingChecked()
 
+    let claimedApplications = await coordinator.enrich(applications)
+    publish(
+      Self.mergeKeepingCheckResults(claimedApplications, previous: applications),
+      selecting: selectedApplicationID
+    )
+
     lastCheckedAt = .now
     phase = .idle
     persistSnapshot()
@@ -302,7 +308,7 @@ final class AppLibrary {
       }
 
       var merged = current
-      if previous.status != .checking {
+      if previous.source == current.source, previous.status != .checking {
         merged.status = previous.status
         merged.latestVersion = previous.latestVersion
         merged.latestBuildVersion = previous.latestBuildVersion
@@ -361,8 +367,20 @@ final class AppLibrary {
     if merged.homepageURL == nil {
       merged.homepageURL = previous.homepageURL
     }
-    if merged.sourceIdentifier == nil {
+    if merged.sourceIdentifier == nil, previous.source == merged.source {
       merged.sourceIdentifier = previous.sourceIdentifier
+    }
+    if merged.releaseNotes == nil {
+      merged.releaseNotes = previous.releaseNotes
+    }
+    if merged.releaseDate == nil {
+      merged.releaseDate = previous.releaseDate
+    }
+    if merged.releaseNotesURL == nil {
+      merged.releaseNotesURL = previous.releaseNotesURL
+    }
+    if merged.latestBuildVersion == nil {
+      merged.latestBuildVersion = previous.latestBuildVersion
     }
     if merged.lastInstalledAt == nil {
       merged.lastInstalledAt = previous.lastInstalledAt

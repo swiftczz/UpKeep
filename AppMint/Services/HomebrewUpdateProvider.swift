@@ -1,88 +1,13 @@
 import Foundation
 
 struct HomebrewUpdateProvider: Sendable {
+  private let cache = SnapshotCache()
+
   func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
-    guard let brewURL = HomebrewCLI.executableURL else {
+    guard let snapshot = await loadSnapshot() else {
       return applications
     }
-
-    do {
-      async let infoOutput = ProcessRunner.run(
-        executableURL: brewURL,
-        arguments: ["info", "--json=v2", "--installed", "--cask"]
-      )
-      async let outdatedOutput = ProcessRunner.run(
-        executableURL: brewURL,
-        arguments: ["outdated", "--cask", "--json=v2"]
-      )
-
-      let info = try JSONDecoder().decode(BrewInfoResponse.self, from: await infoOutput.data)
-      let outdated = try JSONDecoder().decode(
-        BrewOutdatedResponse.self, from: await outdatedOutput.data)
-      let outdatedByToken = Dictionary(
-        uniqueKeysWithValues: outdated.casks.compactMap { item in
-          item.token.map { ($0, item) }
-        })
-
-      var caskByTargetPath: [String: BrewCask] = [:]
-      for cask in info.casks {
-        for artifact in cask.artifacts where artifact.isApplication {
-          guard let target = artifact.target else { continue }
-          caskByTargetPath[URL(fileURLWithPath: target).standardizedFileURL.path] = cask
-        }
-      }
-
-      return applications.map { application in
-        guard application.source != .appStore,
-          let cask = caskByTargetPath[application.applicationURL.standardizedFileURL.path]
-        else {
-          return application
-        }
-
-        let outdatedItem = outdatedByToken[cask.token]
-        let remoteVersion = outdatedItem?.currentVersion ?? cask.version
-        let brewHasUpdate =
-          outdatedItem != nil
-          && remoteVersion != "latest"
-          && VersionComparator.isNewer(
-            remoteVersion,
-            than: application.currentVersion,
-            build: application.buildVersion
-          )
-
-        guard
-          Self.shouldClaimInstalledCask(
-            source: application.source,
-            hasCheckableFeed: application.sourceURL != nil,
-            brewHasUpdate: brewHasUpdate
-          )
-        else {
-          return application
-        }
-
-        var application = application
-        application.source = .homebrew
-        application.sourceIdentifier = cask.token
-        application.homepageURL = cask.homepage.flatMap(URL.init(string:))
-        application.sourceURL = application.homepageURL
-        application.latestVersion = remoteVersion == "latest" ? nil : remoteVersion
-        application.releaseNotes = nil
-        application.status = Self.resolvedStatus(
-          currentVersion: application.currentVersion,
-          remoteVersion: remoteVersion,
-          brewReportsOutdated: outdatedItem != nil,
-          autoUpdates: cask.autoUpdates,
-          buildVersion: application.buildVersion
-        )
-        application.canAutomaticallyUpdate = application.status == .updateAvailable
-
-        return application
-      }
-    } catch is CancellationError {
-      return applications
-    } catch {
-      return applications
-    }
+    return applications.map { snapshot.applying(to: $0) }
   }
 
   func upgrade(
@@ -112,44 +37,190 @@ struct HomebrewUpdateProvider: Sendable {
   static func resolvedStatus(
     currentVersion: String,
     remoteVersion: String,
-    brewReportsOutdated: Bool,
-    autoUpdates: Bool?,
     buildVersion: String? = nil
   ) -> UpdateStatus {
     if remoteVersion == "latest" {
       return .selfManaged
     }
 
-    if brewReportsOutdated,
-      VersionComparator.isNewer(remoteVersion, than: currentVersion, build: buildVersion)
-    {
+    if VersionComparator.isNewer(remoteVersion, than: currentVersion, build: buildVersion) {
       return .updateAvailable
-    }
-
-    if autoUpdates == true {
-      return .selfManaged
     }
 
     return .upToDate
   }
 
+  /// Prefer Homebrew when brew itself has an update. Otherwise keep a working
+  /// first-party protocol, and only fall back to Homebrew if that check failed
+  /// or the app has no other protocol.
   static func shouldClaimInstalledCask(
     source: UpdateSource,
+    status: UpdateStatus,
     hasCheckableFeed: Bool,
     brewHasUpdate: Bool
   ) -> Bool {
+    if source == .appStore {
+      return false
+    }
     if brewHasUpdate {
       return true
     }
 
-    switch source {
-    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON:
-      return false
-    case .sparkle:
-      return !hasCheckableFeed
-    case .homebrew, .selfManaged:
+    switch status {
+    case .checking:
+      switch source {
+      case .sparkle:
+        return !hasCheckableFeed
+      case .homebrew, .selfManaged:
+        return true
+      case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON:
+        return false
+      }
+    case .unavailable, .selfManaged:
       return true
+    case .updateAvailable, .upToDate:
+      return false
     }
+  }
+
+  private func loadSnapshot() async -> Snapshot? {
+    if let snapshot = cache.snapshot() {
+      return snapshot
+    }
+    guard let brewURL = HomebrewCLI.executableURL else {
+      return nil
+    }
+
+    do {
+      async let infoOutput = ProcessRunner.run(
+        executableURL: brewURL,
+        arguments: ["info", "--json=v2", "--installed", "--cask"]
+      )
+      async let outdatedOutput = ProcessRunner.run(
+        executableURL: brewURL,
+        arguments: ["outdated", "--cask", "--json=v2"]
+      )
+
+      let snapshot = Snapshot(
+        info: try JSONDecoder().decode(BrewInfoResponse.self, from: await infoOutput.data),
+        outdated: try JSONDecoder().decode(
+          BrewOutdatedResponse.self,
+          from: await outdatedOutput.data
+        )
+      )
+      cache.store(snapshot)
+      return snapshot
+    } catch is CancellationError {
+      return nil
+    } catch {
+      return nil
+    }
+  }
+}
+
+private struct Snapshot {
+  var info: BrewInfoResponse
+  var outdated: BrewOutdatedResponse
+
+  func applying(to application: AppRecord) -> AppRecord {
+    guard application.source != .appStore,
+      let cask = cask(for: application)
+    else {
+      return application
+    }
+
+    let outdatedItem = outdatedItem(for: cask.token)
+    let remoteVersion = outdatedItem?.currentVersion ?? cask.version
+    let brewHasUpdate =
+      outdatedItem != nil
+      && remoteVersion != "latest"
+      && VersionComparator.isNewer(
+        remoteVersion,
+        than: application.currentVersion,
+        build: application.buildVersion
+      )
+
+    guard
+      HomebrewUpdateProvider.shouldClaimInstalledCask(
+        source: application.source,
+        status: application.status,
+        hasCheckableFeed: application.sourceURL != nil,
+        brewHasUpdate: brewHasUpdate
+      )
+    else {
+      return application
+    }
+
+    return claiming(cask, remoteVersion: remoteVersion, onto: application)
+  }
+
+  private func claiming(
+    _ cask: BrewCask,
+    remoteVersion: String,
+    onto application: AppRecord
+  ) -> AppRecord {
+    var application = application
+    application.source = .homebrew
+    application.sourceIdentifier = cask.token
+    if application.homepageURL == nil {
+      application.homepageURL = cask.homepage.flatMap(URL.init(string:))
+    }
+    application.sourceURL = application.homepageURL ?? cask.homepage.flatMap(URL.init(string:))
+    application.status = HomebrewUpdateProvider.resolvedStatus(
+      currentVersion: application.currentVersion,
+      remoteVersion: remoteVersion,
+      buildVersion: application.buildVersion
+    )
+    switch application.status {
+    case .updateAvailable:
+      application.latestVersion = remoteVersion
+    case .upToDate:
+      application.latestVersion = application.currentVersion
+    case .selfManaged, .checking, .unavailable:
+      application.latestVersion = remoteVersion == "latest" ? nil : remoteVersion
+    }
+    application.canAutomaticallyUpdate = application.status == .updateAvailable
+    return application
+  }
+
+  private func cask(for application: AppRecord) -> BrewCask? {
+    let path = application.applicationURL.standardizedFileURL.path
+    for cask in info.casks {
+      for artifact in cask.artifacts where artifact.isApplication {
+        guard let target = artifact.target else { continue }
+        if URL(fileURLWithPath: target).standardizedFileURL.path == path {
+          return cask
+        }
+      }
+    }
+    return nil
+  }
+
+  private func outdatedItem(for token: String) -> BrewOutdatedCask? {
+    outdated.casks.first { $0.token == token }
+  }
+}
+
+private final class SnapshotCache: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Snapshot?
+  private var storedAt: Date?
+  private let timeToLive: TimeInterval = 20
+
+  func snapshot() -> Snapshot? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let stored, let storedAt, Date().timeIntervalSince(storedAt) < timeToLive else {
+      return nil
+    }
+    return stored
+  }
+
+  func store(_ snapshot: Snapshot) {
+    lock.lock()
+    stored = snapshot
+    storedAt = Date()
+    lock.unlock()
   }
 }
 
