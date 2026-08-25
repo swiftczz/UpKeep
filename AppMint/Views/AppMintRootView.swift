@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct AppMintRootView: View {
@@ -59,7 +58,9 @@ struct AppMintRootView: View {
             isUpdating: library.updatingApplicationIDs.contains(application.id),
             updateProgress: library.updateProgressByID[application.id],
             isUpdateIgnored: library.isUpdateIgnored(application),
-            isApplicationRunning: { library.isRunning(application) },
+            requiresRelaunchConfirmation: {
+              library.requiresRelaunchConfirmation(for: application)
+            },
             primaryAction: {
               Task {
                 if let destination = await library.performPrimaryAction(for: application.id) {
@@ -71,7 +72,7 @@ struct AppMintRootView: View {
               open(application.applicationURL)
             },
             showInFinder: {
-              NSWorkspace.shared.activateFileViewerSelecting([application.applicationURL])
+              reveal(application.applicationURL)
             },
             openAppStore: {
               guard let destination = library.appStoreURL(for: application.id) else { return }
@@ -260,6 +261,12 @@ struct AppMintRootView: View {
     }
 
     openURL(url)
+  }
+
+  private func reveal(_ url: URL) {
+    Task {
+      try? await applicationLauncher.reveal(url)
+    }
   }
 }
 

@@ -5,7 +5,7 @@ struct AppDetailView: View {
   let isUpdating: Bool
   let updateProgress: UpdateProgress?
   let isUpdateIgnored: Bool
-  let isApplicationRunning: () -> Bool
+  let requiresRelaunchConfirmation: () -> Bool
   let primaryAction: () -> Void
   let openApplication: () -> Void
   let showInFinder: () -> Void
@@ -81,13 +81,9 @@ struct AppDetailView: View {
       if isUpdating {
         updateProgressControl
       } else {
-        primaryActionMenu
+        splitActionControl
       }
     }
-  }
-
-  private var primaryActionMenu: some View {
-    splitActionControl
   }
 
   private var splitActionControl: some View {
@@ -123,11 +119,10 @@ struct AppDetailView: View {
       .accessibilityLabel("更多操作")
     }
     .glassEffect(primaryActionGlass, in: .rect(cornerRadius: 8))
-    .disabled(isUpdating)
   }
 
   private var primaryActionGlass: Glass {
-    var glass = Glass.regular.interactive(!isUpdating)
+    var glass = Glass.regular.interactive()
     if usesUpdatePrimaryAction {
       glass = glass.tint(.blue)
     }
@@ -199,19 +194,11 @@ struct AppDetailView: View {
 
   private var primaryActionLabel: some View {
     HStack(spacing: 6) {
-      if isUpdating {
-        ProgressView()
-          .controlSize(.small)
-          .tint(primaryActionForeground)
-          .accessibilityHidden(true)
-        Text("正在更新…")
-      } else {
-        Label(primaryActionTitle, systemImage: primaryActionSystemImage)
-      }
+      Label(primaryActionTitle, systemImage: primaryActionSystemImage)
     }
     .foregroundStyle(primaryActionForeground)
     .help(primaryActionHelp)
-    .accessibilityLabel(isUpdating ? "正在更新" : primaryActionTitle)
+    .accessibilityLabel(primaryActionTitle)
     .accessibilityHint(primaryActionHelp)
   }
 
@@ -341,7 +328,7 @@ struct AppDetailView: View {
   }
 
   private func handlePrimaryAction() {
-    if usesUpdatePrimaryAction, isApplicationRunning() {
+    if requiresRelaunchConfirmation() {
       ApplicationProcess.activateHost()
       isConfirmingRelaunch = true
       return

@@ -119,17 +119,36 @@ struct HomebrewUpdateProvider: Sendable {
 }
 
 private struct Snapshot {
-  var info: BrewInfoResponse
-  var outdated: BrewOutdatedResponse
+  private var caskByTargetPath: [String: BrewCask]
+  private var outdatedByToken: [String: BrewOutdatedCask]
+
+  init(info: BrewInfoResponse, outdated: BrewOutdatedResponse) {
+    var caskByTargetPath: [String: BrewCask] = [:]
+    for cask in info.casks {
+      for artifact in cask.artifacts where artifact.isApplication {
+        guard let target = artifact.target else { continue }
+        let path = URL(fileURLWithPath: target).standardizedFileURL.path
+        caskByTargetPath[path] = cask
+      }
+    }
+    self.caskByTargetPath = caskByTargetPath
+
+    var outdatedByToken: [String: BrewOutdatedCask] = [:]
+    for item in outdated.casks {
+      guard let token = item.token else { continue }
+      outdatedByToken[token] = item
+    }
+    self.outdatedByToken = outdatedByToken
+  }
 
   func applying(to application: AppRecord) -> AppRecord {
     guard application.source != .appStore,
-      let cask = cask(for: application)
+      let cask = caskByTargetPath[application.applicationURL.standardizedFileURL.path]
     else {
       return application
     }
 
-    let outdatedItem = outdatedItem(for: cask.token)
+    let outdatedItem = outdatedByToken[cask.token]
     let remoteVersion = outdatedItem?.currentVersion ?? cask.version
     let brewHasUpdate =
       outdatedItem != nil
@@ -181,23 +200,6 @@ private struct Snapshot {
     }
     application.canAutomaticallyUpdate = application.status == .updateAvailable
     return application
-  }
-
-  private func cask(for application: AppRecord) -> BrewCask? {
-    let path = application.applicationURL.standardizedFileURL.path
-    for cask in info.casks {
-      for artifact in cask.artifacts where artifact.isApplication {
-        guard let target = artifact.target else { continue }
-        if URL(fileURLWithPath: target).standardizedFileURL.path == path {
-          return cask
-        }
-      }
-    }
-    return nil
-  }
-
-  private func outdatedItem(for token: String) -> BrewOutdatedCask? {
-    outdated.casks.first { $0.token == token }
   }
 }
 
@@ -315,14 +317,12 @@ private struct BrewInfoResponse: Decodable, Sendable {
 private struct BrewCask: Decodable, Sendable {
   let token: String
   let version: String
-  let autoUpdates: Bool?
   let homepage: String?
   let artifacts: [BrewArtifact]
 
   enum CodingKeys: String, CodingKey {
     case token
     case version
-    case autoUpdates = "auto_updates"
     case homepage
     case artifacts
   }

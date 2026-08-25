@@ -133,20 +133,23 @@ struct ApplicationScanner: ApplicationScanning {
       if buildVersion == nil || buildVersion == currentVersion {
         buildVersion = String(detectedVSCode.commit.prefix(7))
       }
-    } else if let detectedTauri = TauriUpdaterDetector.detect(bundleURL: bundle.bundleURL) {
-      source = .tauri
-      appStorePlatform = nil
-      status = .checking
-      tauriEndpoint = detectedTauri
-    } else if let detectedReleaseJSON = ReleaseJSONDetector.detect(bundleURL: bundle.bundleURL) {
-      source = .releaseJSON
-      appStorePlatform = nil
-      status = .checking
-      releaseJSONEndpoint = detectedReleaseJSON
     } else {
-      source = .selfManaged
-      appStorePlatform = nil
-      status = .selfManaged
+      let detection = ExecutableUpdaterDetector.detect(bundleURL: bundle.bundleURL)
+      if let detectedTauri = detection.tauriEndpoint {
+        source = .tauri
+        appStorePlatform = nil
+        status = .checking
+        tauriEndpoint = detectedTauri
+      } else if let detectedReleaseJSON = detection.releaseJSONEndpoint {
+        source = .releaseJSON
+        appStorePlatform = nil
+        status = .checking
+        releaseJSONEndpoint = detectedReleaseJSON
+      } else {
+        source = .selfManaged
+        appStorePlatform = nil
+        status = .selfManaged
+      }
     }
 
     return AppRecord(

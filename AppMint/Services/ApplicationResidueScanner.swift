@@ -52,14 +52,11 @@ struct ApplicationResidueScanner: @unchecked Sendable {
       guard found[standardized] == nil, fileManager.fileExists(atPath: standardized.path) else {
         return
       }
-      var isDirectory: ObjCBool = false
-      fileManager.fileExists(atPath: standardized.path, isDirectory: &isDirectory)
       found[standardized] = ApplicationResidueItem(
         url: standardized,
         displayName: displayName(for: standardized),
         category: category,
-        byteCount: allocatedSize(of: standardized),
-        isDirectory: isDirectory.boolValue
+        byteCount: allocatedSize(of: standardized)
       )
     }
 

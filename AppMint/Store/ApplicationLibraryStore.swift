@@ -31,38 +31,14 @@ struct ApplicationLibraryStore: Sendable {
     )
   }
 
-  static func memory() -> ApplicationLibraryStore {
-    let box = SnapshotBox()
-    return ApplicationLibraryStore(
-      load: { box.snapshot },
-      save: { box.snapshot = $0 }
-    )
-  }
-
   private static func snapshotURL(fileManager: FileManager) -> URL {
     let support =
       fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
       ?? fileManager.temporaryDirectory
-    return support
+
+    return
+      support
       .appendingPathComponent("AppMint", isDirectory: true)
       .appendingPathComponent("library-snapshot.json")
-  }
-}
-
-private final class SnapshotBox: @unchecked Sendable {
-  private let lock = NSLock()
-  private var storage: ApplicationLibrarySnapshot?
-
-  var snapshot: ApplicationLibrarySnapshot? {
-    get {
-      lock.lock()
-      defer { lock.unlock() }
-      return storage
-    }
-    set {
-      lock.lock()
-      storage = newValue
-      lock.unlock()
-    }
   }
 }

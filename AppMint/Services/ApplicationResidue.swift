@@ -39,7 +39,6 @@ struct ApplicationResidueItem: Identifiable, Hashable, Sendable {
   let displayName: String
   let category: Category
   let byteCount: Int64
-  let isDirectory: Bool
 
   var formattedSize: String {
     byteCount.formatted(.byteCount(style: .file))
@@ -55,10 +54,6 @@ struct ApplicationResidueIdentity: Equatable, Sendable {
 
   var bundleLastComponent: String {
     bundleIdentifier.split(separator: ".").last.map(String.init) ?? bundleIdentifier
-  }
-
-  var lookupIdentifiers: [String] {
-    Array(Set([bundleIdentifier, bundleIdentifier.lowercased()]))
   }
 
   static func make(

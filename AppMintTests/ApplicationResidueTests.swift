@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 
@@ -209,8 +210,12 @@ final class ApplicationResidueTests: XCTestCase {
     XCTAssertEqual(items.filter { $0.category == .caches }.count, 2)
     XCTAssertEqual(items.filter { $0.category == .preferences }.count, 2)
     XCTAssertEqual(items.filter { $0.category == .applicationSupport }.count, 1)
-    XCTAssertTrue(items.contains { $0.category == .caches && $0.displayName == "com.sequel-ace.sequel-ace" })
-    XCTAssertTrue(items.contains { $0.category == .preferences && $0.displayName.hasSuffix(".plist") })
+    XCTAssertTrue(
+      items.contains { $0.category == .caches && $0.displayName == "com.sequel-ace.sequel-ace" }
+    )
+    XCTAssertTrue(
+      items.contains { $0.category == .preferences && $0.displayName.hasSuffix(".plist") }
+    )
   }
 
   func testUninstallerMovesSelectedFilesToTrash() async throws {
@@ -235,15 +240,13 @@ final class ApplicationResidueTests: XCTestCase {
         url: applicationURL,
         displayName: "Demo",
         category: .application,
-        byteCount: 4,
-        isDirectory: true
+        byteCount: 4
       ),
       ApplicationResidueItem(
         url: residueURL,
         displayName: residueURL.lastPathComponent,
         category: .applicationSupport,
-        byteCount: 4,
-        isDirectory: false
+        byteCount: 4
       ),
     ]
     let process = ApplicationProcessClient(
@@ -262,6 +265,266 @@ final class ApplicationResidueTests: XCTestCase {
     XCTAssertTrue(result.didRemoveApplication)
     XCTAssertFalse(fileManager.fileExists(atPath: applicationURL.path))
     XCTAssertFalse(fileManager.fileExists(atPath: residueURL.path))
+  }
+
+  func testUninstallerUsesFinderFallbackAndVerifiesEveryPathWasRemoved() async throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintFinderTrash-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = directory.appendingPathComponent("Demo.app", isDirectory: true)
+    let residueURL = directory.appendingPathComponent("com.example.demo.plist")
+    defer { try? fileManager.removeItem(at: directory) }
+
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+    try Data("residue".utf8).write(to: residueURL)
+
+    let application = AppRecord(
+      name: "Demo",
+      bundleIdentifier: "com.example.demo",
+      applicationURL: applicationURL,
+      currentVersion: "1.0"
+    )
+    let items = [
+      ApplicationResidueItem(
+        url: applicationURL,
+        displayName: "Demo",
+        category: .application,
+        byteCount: 0
+      ),
+      ApplicationResidueItem(
+        url: residueURL,
+        displayName: residueURL.lastPathComponent,
+        category: .preferences,
+        byteCount: 7
+      ),
+    ]
+    let process = ApplicationProcessClient(
+      isRunning: { _ in false },
+      quit: { _ in },
+      launch: { _ in }
+    )
+    let trashClient = ApplicationUninstaller.TrashClient(
+      moveDirectly: { _ in
+        throw CocoaError(.fileWriteNoPermission)
+      },
+      moveUsingFinder: { urls in
+        for url in urls {
+          try fileManager.removeItem(at: url)
+        }
+      }
+    )
+
+    let result = try await ApplicationUninstaller.uninstall(
+      application,
+      items: items,
+      fileManager: fileManager,
+      process: process,
+      trashClient: trashClient
+    )
+
+    XCTAssertTrue(result.didRemoveApplication)
+    XCTAssertFalse(fileManager.fileExists(atPath: applicationURL.path))
+    XCTAssertFalse(fileManager.fileExists(atPath: residueURL.path))
+  }
+
+  func testUninstallerReportsFinderItemsThatStillExist() async throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintFinderVerify-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = directory.appendingPathComponent("Demo.app", isDirectory: true)
+    defer { try? fileManager.removeItem(at: directory) }
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+
+    let application = AppRecord(
+      name: "Demo",
+      bundleIdentifier: "com.example.demo",
+      applicationURL: applicationURL,
+      currentVersion: "1.0"
+    )
+    let item = ApplicationResidueItem(
+      url: applicationURL,
+      displayName: "Demo",
+      category: .application,
+      byteCount: 0
+    )
+    let process = ApplicationProcessClient(
+      isRunning: { _ in false },
+      quit: { _ in },
+      launch: { _ in }
+    )
+    let trashClient = ApplicationUninstaller.TrashClient(
+      moveDirectly: { _ in
+        throw CocoaError(.fileWriteNoPermission)
+      },
+      moveUsingFinder: { _ in }
+    )
+
+    do {
+      _ = try await ApplicationUninstaller.uninstall(
+        application,
+        items: [item],
+        fileManager: fileManager,
+        process: process,
+        trashClient: trashClient
+      )
+      XCTFail("Expected the verified path to remain")
+    } catch let error as ApplicationUninstallerError {
+      XCTAssertTrue(error.localizedDescription.contains("Demo"))
+    }
+  }
+
+  func testProtectedContainerAccessResolvesOnlyContainerChildren() {
+    let home = URL(fileURLWithPath: "/Users/demo", isDirectory: true)
+    let container = URL(
+      fileURLWithPath: "/Users/demo/Library/Containers/com.example.demo",
+      isDirectory: true
+    )
+    let child = container.appendingPathComponent("Data/Library", isDirectory: true)
+    let groupContainer = URL(
+      fileURLWithPath: "/Users/demo/Library/Group Containers/TEAM.example.demo",
+      isDirectory: true
+    )
+
+    XCTAssertEqual(
+      ApplicationContainerAccess.protectedContainerRoot(
+        containing: child,
+        homeDirectory: home
+      ),
+      container
+    )
+    XCTAssertEqual(
+      ApplicationContainerAccess.protectedContainerRoot(
+        containing: groupContainer,
+        homeDirectory: home
+      ),
+      groupContainer
+    )
+    XCTAssertNil(
+      ApplicationContainerAccess.protectedContainerRoot(
+        containing: URL(fileURLWithPath: "/Users/demo/Library/Containers"),
+        homeDirectory: home
+      )
+    )
+    XCTAssertNil(
+      ApplicationContainerAccess.protectedContainerRoot(
+        containing: URL(fileURLWithPath: "/Users/demo/Library/Application Support/demo"),
+        homeDirectory: home
+      )
+    )
+  }
+
+  func testUninstallerDoesNotIgnoreAFallbackCompletionError() async throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTrashCompletion-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = directory.appendingPathComponent("Demo.app", isDirectory: true)
+    defer { try? fileManager.removeItem(at: directory) }
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+
+    let application = AppRecord(
+      name: "Demo",
+      bundleIdentifier: "com.example.demo",
+      applicationURL: applicationURL,
+      currentVersion: "1.0"
+    )
+    let item = ApplicationResidueItem(
+      url: applicationURL,
+      displayName: "Demo",
+      category: .application,
+      byteCount: 0
+    )
+    let process = ApplicationProcessClient(
+      isRunning: { _ in false },
+      quit: { _ in },
+      launch: { _ in }
+    )
+    let trashClient = ApplicationUninstaller.TrashClient(
+      moveDirectly: { _ in throw CocoaError(.fileWriteNoPermission) },
+      moveUsingFinder: { urls in
+        try fileManager.removeItem(at: urls[0])
+        throw FinderTrashError.failed("暂存目录未能进入废纸篓")
+      }
+    )
+
+    do {
+      _ = try await ApplicationUninstaller.uninstall(
+        application,
+        items: [item],
+        fileManager: fileManager,
+        process: process,
+        trashClient: trashClient
+      )
+      XCTFail("Expected the fallback completion error")
+    } catch {
+      XCTAssertTrue(error.localizedDescription.contains("暂存目录未能进入废纸篓"))
+    }
+  }
+
+  func testPrivilegedTrashOnlyAcceptsSpecificCleanupChildren() {
+    let home = URL(fileURLWithPath: "/Users/demo", isDirectory: true)
+
+    XCTAssertTrue(
+      PrivilegedTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/Applications/UPDF.app"),
+        homeDirectory: home
+      )
+    )
+    XCTAssertTrue(
+      PrivilegedTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/Users/demo/Library/Containers/com.example.app"),
+        homeDirectory: home
+      )
+    )
+    XCTAssertTrue(
+      PrivilegedTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/var/db/receipts/com.example.app.bom"),
+        homeDirectory: home
+      )
+    )
+
+    XCTAssertFalse(
+      PrivilegedTrash.isAllowedTarget(URL(fileURLWithPath: "/"), homeDirectory: home)
+    )
+    XCTAssertFalse(
+      PrivilegedTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/Applications"),
+        homeDirectory: home
+      )
+    )
+    XCTAssertFalse(
+      PrivilegedTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/var/db/receipts"),
+        homeDirectory: home
+      )
+    )
+    XCTAssertFalse(
+      PrivilegedTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"),
+        homeDirectory: home
+      )
+    )
+  }
+
+  @MainActor
+  func testTrashAppleScriptsCompile() throws {
+    for source in [FinderTrash.finderScriptSource, PrivilegedTrash.privilegedScriptSource] {
+      let script = try XCTUnwrap(NSAppleScript(source: source))
+      var errorInfo: NSDictionary?
+      XCTAssertTrue(script.compileAndReturnError(&errorInfo), "\(errorInfo ?? [:])")
+    }
+  }
+
+  @MainActor
+  func testTrashAppleScriptDoesNotBlockMainActor() async throws {
+    let clock = ContinuousClock()
+    let startedAt = clock.now
+    let scriptTask = Task {
+      try await FinderTrash.execute("delay 0.25", arguments: [])
+    }
+
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertLessThan(startedAt.duration(to: clock.now), .milliseconds(180))
+    try await scriptTask.value
   }
 
   private func createDirectory(_ url: URL) throws {

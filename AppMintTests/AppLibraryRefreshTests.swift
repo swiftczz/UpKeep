@@ -3,6 +3,34 @@ import XCTest
 
 @testable import AppMint
 
+extension ApplicationLibraryStore {
+  static func memory() -> ApplicationLibraryStore {
+    let box = TestSnapshotBox()
+    return ApplicationLibraryStore(
+      load: { box.snapshot },
+      save: { box.snapshot = $0 }
+    )
+  }
+}
+
+private final class TestSnapshotBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: ApplicationLibrarySnapshot?
+
+  var snapshot: ApplicationLibrarySnapshot? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return storage
+    }
+    set {
+      lock.lock()
+      storage = newValue
+      lock.unlock()
+    }
+  }
+}
+
 @MainActor
 final class AppLibraryRefreshTests: XCTestCase {
   func testRestoresCachedApplicationsImmediately() throws {
@@ -28,7 +56,10 @@ final class AppLibraryRefreshTests: XCTestCase {
       sourceURL: URL(string: "https://example.com/appcast.xml")
     )
     store.save(
-      ApplicationLibrarySnapshot(lastCheckedAt: Date(timeIntervalSince1970: 1), applications: [cached])
+      ApplicationLibrarySnapshot(
+        lastCheckedAt: Date(timeIntervalSince1970: 1),
+        applications: [cached]
+      )
     )
 
     let library = AppLibrary(
@@ -144,7 +175,11 @@ final class AppLibraryRefreshTests: XCTestCase {
   }
 
   func testMergeDoesNotReuseHomebrewHomepageAsSparkleFeed() {
-    var previous = makeApplication(name: "Thunder", status: .updateAvailable, latestVersion: "5.80.7.66659")
+    var previous = makeApplication(
+      name: "Thunder",
+      status: .updateAvailable,
+      latestVersion: "5.80.7.66659"
+    )
     previous.source = .homebrew
     previous.sourceURL = URL(string: "https://www.xunlei.com/")
 

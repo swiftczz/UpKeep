@@ -3,7 +3,7 @@ import Foundation
 enum ApplicationUninstallerError: LocalizedError {
   case nothingSelected
   case applicationStillRunning(String)
-  case failed(removedCount: Int, messages: [String])
+  case failed(removedCount: Int, itemNames: [String], reason: String)
 
   var errorDescription: String? {
     switch self {
@@ -11,8 +11,11 @@ enum ApplicationUninstallerError: LocalizedError {
       return "请选择要移除的文件。"
     case .applicationStillRunning(let name):
       return "请先退出 \(name) 后再卸载。"
-    case .failed(let removedCount, let messages):
-      let detail = messages.prefix(4).joined(separator: "\n")
+    case .failed(let removedCount, let itemNames, let reason):
+      let visibleNames = itemNames.prefix(5).joined(separator: "、")
+      let remainingCount = itemNames.count - min(itemNames.count, 5)
+      let suffix = remainingCount > 0 ? "，另有 \(remainingCount) 项" : ""
+      let detail = "未移除：\(visibleNames)\(suffix)\n\(reason)"
       if removedCount == 0 {
         return "无法移除选中的文件。\n\(detail)"
       }
@@ -22,8 +25,23 @@ enum ApplicationUninstallerError: LocalizedError {
 }
 
 enum ApplicationUninstaller {
+  struct TrashClient: @unchecked Sendable {
+    var moveDirectly: (URL) throws -> Void
+    var moveUsingFinder: ([URL]) async throws -> Void
+
+    static func live(fileManager: FileManager) -> TrashClient {
+      TrashClient(
+        moveDirectly: { url in
+          try fileManager.trashItem(at: url, resultingItemURL: nil)
+        },
+        moveUsingFinder: { urls in
+          try await FinderTrash.moveToTrash(urls)
+        }
+      )
+    }
+  }
+
   struct Result: Sendable {
-    let removedURLs: [URL]
     let didRemoveApplication: Bool
   }
 
@@ -32,7 +50,8 @@ enum ApplicationUninstaller {
     items: [ApplicationResidueItem],
     fileManager: FileManager = .default,
     process: ApplicationProcessClient = .live,
-    brewExecutableURL: URL? = nil
+    brewExecutableURL: URL? = nil,
+    trashClient: TrashClient? = nil
   ) async throws -> Result {
     guard !items.isEmpty else {
       throw ApplicationUninstallerError.nothingSelected
@@ -49,6 +68,10 @@ enum ApplicationUninstaller {
       }
     }
 
+    try await ApplicationContainerAccess.requestRemovalAccess(
+      to: items.map(\.url)
+    )
+
     if removingApplication,
       application.source == .homebrew,
       let token = application.sourceIdentifier
@@ -56,33 +79,63 @@ enum ApplicationUninstaller {
       try? await uninstallHomebrewCask(token: token, brewExecutableURL: brewExecutableURL)
     }
 
-    var removed: [URL] = []
-    var failures: [String] = []
+    let trashClient = trashClient ?? .live(fileManager: fileManager)
+    var removedCount = 0
+    var finderCandidates: [(item: ApplicationResidueItem, directError: Error)] = []
 
     for item in items {
       let url = item.url.standardizedFileURL
       guard fileManager.fileExists(atPath: url.path) else {
-        removed.append(url)
+        removedCount += 1
         continue
       }
 
       do {
-        try fileManager.trashItem(at: url, resultingItemURL: nil)
-        removed.append(url)
+        try trashClient.moveDirectly(url)
+        if fileManager.fileExists(atPath: url.path) {
+          finderCandidates.append(
+            (item, CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path]))
+          )
+        } else {
+          removedCount += 1
+        }
       } catch {
-        failures.append("\(item.displayName)：\(error.localizedDescription)")
+        finderCandidates.append((item, error))
       }
+    }
+
+    var finderError: Error?
+    if !finderCandidates.isEmpty {
+      do {
+        try await trashClient.moveUsingFinder(finderCandidates.map { $0.item.url })
+      } catch {
+        finderError = error
+      }
+    }
+
+    var failures: [(item: ApplicationResidueItem, directError: Error)] = []
+    for candidate in finderCandidates {
+      let url = candidate.item.url.standardizedFileURL
+      if fileManager.fileExists(atPath: url.path) {
+        failures.append(candidate)
+      } else {
+        removedCount += 1
+      }
+    }
+
+    if failures.isEmpty, let finderError {
+      throw finderError
     }
 
     if !failures.isEmpty {
       throw ApplicationUninstallerError.failed(
-        removedCount: removed.count,
-        messages: failures
+        removedCount: removedCount,
+        itemNames: failures.map { $0.item.displayName },
+        reason: (finderError ?? failures[0].directError).localizedDescription
       )
     }
 
     return Result(
-      removedURLs: removed,
       didRemoveApplication: removingApplication
         && !fileManager.fileExists(atPath: application.applicationURL.path)
     )

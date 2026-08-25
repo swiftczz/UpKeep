@@ -79,6 +79,8 @@ $icon_entry
   <string>$MIN_SYSTEM_VERSION</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>用于将你确认卸载的应用和关联文件移到废纸篓。</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>
@@ -86,6 +88,32 @@ $icon_entry
 PLIST
 
   plutil -lint "$INFO_PLIST" >/dev/null
+}
+
+development_signing_identity() {
+  if [[ -n "${DEVELOPMENT_SIGN_IDENTITY:-}" ]]; then
+    echo "$DEVELOPMENT_SIGN_IDENTITY"
+    return
+  fi
+
+  /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
+    | /usr/bin/awk -F'"' '/"Apple Development:/{print $2; exit}'
+}
+
+sign_development_app() {
+  local identity
+  identity="$(development_signing_identity)"
+
+  if [[ -n "$identity" && "$identity" != "-" ]]; then
+    echo "==> 使用稳定的本地开发签名：$identity"
+    codesign --force --deep --sign "$identity" "$APP_BUNDLE"
+    return
+  fi
+
+  echo "==> 未找到 Apple Development 证书，使用带固定要求的 Ad-hoc 签名"
+  codesign --force --deep --sign - \
+    --requirements "=designated => identifier \"$BUNDLE_ID\"" \
+    "$APP_BUNDLE"
 }
 
 package_app_from_binary() {
@@ -130,17 +158,22 @@ package_app_from_binary() {
   ditto "$SPARKLE_LICENSE_SOURCE" "$APP_RESOURCES/Sparkle-LICENSE.txt"
 
   write_info_plist
-  codesign --force --deep --sign - "$APP_BUNDLE"
+  sign_development_app
 }
 
 sign_app() {
-  local identity="${SIGN_IDENTITY:--}"
+  local identity="${SIGN_IDENTITY:-}"
+  if [[ -z "$identity" ]]; then
+    identity="$(development_signing_identity)"
+  fi
 
-  if [[ "$identity" == "-" ]]; then
-    echo "==> 使用 Ad-hoc 签名"
-    codesign --force --deep --sign - "$APP_BUNDLE"
+  if [[ -z "$identity" || "$identity" == "-" ]]; then
+    echo "==> 使用带固定要求的 Ad-hoc 签名"
+    codesign --force --deep --sign - \
+      --requirements "=designated => identifier \"$BUNDLE_ID\"" \
+      "$APP_BUNDLE"
   else
-    echo "==> 使用 Developer ID 签名：$identity"
+    echo "==> 使用代码签名：$identity"
     codesign --force --deep --options runtime --timestamp --sign "$identity" "$APP_BUNDLE"
   fi
 

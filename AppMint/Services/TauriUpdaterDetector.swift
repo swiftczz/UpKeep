@@ -1,9 +1,116 @@
 import Foundation
 
+struct ExecutableUpdaterDetection: Sendable {
+  var tauriEndpoint: URL?
+  var releaseJSONEndpoint: URL?
+}
+
+enum ExecutableUpdaterDetector {
+  private static let chunkSize = 1024 * 1024
+  private static let overlapSize = 512
+  private static let maximumExecutableBytes = 400 * 1024 * 1024
+
+  static func detect(bundleURL: URL) -> ExecutableUpdaterDetection {
+    if let endpoint = TauriUpdaterDetector.endpointFromConfiguration(in: bundleURL) {
+      return ExecutableUpdaterDetection(tauriEndpoint: endpoint, releaseJSONEndpoint: nil)
+    }
+    guard !TauriUpdaterDetector.hasElectronFramework(in: bundleURL) else {
+      return ExecutableUpdaterDetection(tauriEndpoint: nil, releaseJSONEndpoint: nil)
+    }
+
+    let suppressReleaseJSON = ReleaseJSONDetector.hasTauriConfiguration(in: bundleURL)
+    var releaseJSONEndpoint: URL?
+    for fileURL in executableFiles(in: bundleURL) {
+      let detection = detect(fileURL: fileURL)
+      if let tauriEndpoint = detection.tauriEndpoint {
+        return ExecutableUpdaterDetection(
+          tauriEndpoint: tauriEndpoint,
+          releaseJSONEndpoint: nil
+        )
+      }
+      if releaseJSONEndpoint == nil, !suppressReleaseJSON {
+        releaseJSONEndpoint = detection.releaseJSONEndpoint
+      }
+    }
+    return ExecutableUpdaterDetection(
+      tauriEndpoint: nil,
+      releaseJSONEndpoint: releaseJSONEndpoint
+    )
+  }
+
+  static func detect(fileURL: URL) -> ExecutableUpdaterDetection {
+    guard
+      let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+      values.isRegularFile == true,
+      let fileSize = values.fileSize,
+      fileSize > 0,
+      fileSize <= maximumExecutableBytes,
+      let handle = try? FileHandle(forReadingFrom: fileURL)
+    else {
+      return ExecutableUpdaterDetection(tauriEndpoint: nil, releaseJSONEndpoint: nil)
+    }
+    defer { try? handle.close() }
+
+    var previousTail = Data()
+    var foundURLs: [URL] = []
+    var seen = Set<String>()
+    var sawTauri = false
+    var sawGPUI = false
+    var releaseJSONEndpoint: URL?
+
+    while true {
+      let chunk = (try? handle.read(upToCount: chunkSize)) ?? Data()
+      if chunk.isEmpty {
+        break
+      }
+
+      let window = previousTail + chunk
+      let evidence = TauriUpdaterDetector.evidence(in: window)
+      sawTauri = sawTauri || evidence.sawTauri
+      sawGPUI = sawGPUI || evidence.sawGPUI
+      for url in TauriUpdaterDetector.updaterJSONURLs(in: window)
+      where seen.insert(url.absoluteString).inserted {
+        foundURLs.append(url)
+      }
+      if releaseJSONEndpoint == nil {
+        releaseJSONEndpoint = ReleaseJSONDetector.firstEndpoint(in: window)
+      }
+      if sawTauri, foundURLs.contains(where: TauriUpdaterDetector.isDirectManifestURL) {
+        break
+      }
+      previousTail = Data(window.suffix(overlapSize))
+    }
+
+    let tauriEndpoint =
+      sawGPUI && !sawTauri
+      ? nil
+      : TauriUpdaterDetector.preferredUpdaterJSONURL(foundURLs)
+    return ExecutableUpdaterDetection(
+      tauriEndpoint: tauriEndpoint,
+      releaseJSONEndpoint: releaseJSONEndpoint
+    )
+  }
+
+  private static func executableFiles(in bundleURL: URL) -> [URL] {
+    let macosURL = bundleURL.appendingPathComponent("Contents/MacOS", isDirectory: true)
+    let preferredName = Bundle(url: bundleURL)?.executableURL?.lastPathComponent
+    var files =
+      (try? FileManager.default.contentsOfDirectory(
+        at: macosURL,
+        includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+        options: [.skipsHiddenFiles]
+      )) ?? []
+
+    if let preferredName,
+      let preferredIndex = files.firstIndex(where: { $0.lastPathComponent == preferredName })
+    {
+      files.swapAt(0, preferredIndex)
+    }
+    return files
+  }
+}
+
 enum TauriUpdaterDetector {
-  private static let endpointPattern = try! NSRegularExpression(
-    pattern: #"https://[A-Za-z0-9._~:/?#@!$&'()*+,;=%\-]+"#
-  )
   private static let latestNeedle = Data("latest.json".utf8)
   private static let proxyNeedle = Data("update-proxy.json".utf8)
   private static let catalogNeedle = Data("versions.json".utf8)
@@ -16,95 +123,19 @@ enum TauriUpdaterDetector {
     Data("tauri.conf.json".utf8),
   ]
   private static let urlAllowed = CharacterSet(
-    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%"
+    charactersIn:
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%"
   )
-  private static let chunkSize = 1024 * 1024
-  private static let overlapSize = 512
-  private static let maximumExecutableBytes = 400 * 1024 * 1024
 
   static func detect(bundleURL: URL) -> URL? {
-    if let endpoint = endpointFromConfiguration(in: bundleURL) {
-      return endpoint
-    }
-    if hasElectronFramework(in: bundleURL) {
-      return nil
-    }
-    return endpointFromExecutable(in: bundleURL)
-  }
-
-  static func updaterJSONURLs(in text: String) -> [URL] {
-    let range = NSRange(text.startIndex..., in: text)
-    let matches = endpointPattern.matches(in: text, range: range)
-    var urls: [URL] = []
-    var seen = Set<String>()
-
-    for match in matches {
-      guard let matchRange = Range(match.range, in: text) else {
-        continue
-      }
-      var candidate = String(text[matchRange])
-      if let jsonRange = candidate.range(of: ".json", options: [.backwards, .caseInsensitive]) {
-        candidate = String(candidate[..<jsonRange.upperBound])
-      }
-      guard let url = validatedUpdaterJSONURL(candidate) else {
-        continue
-      }
-      if seen.insert(url.absoluteString).inserted {
-        urls.append(url)
-      }
-    }
-
-    return urls
+    ExecutableUpdaterDetector.detect(bundleURL: bundleURL).tauriEndpoint
   }
 
   static func updaterJSONURL(inFile fileURL: URL) -> URL? {
-    guard
-      let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
-      values.isRegularFile == true,
-      let fileSize = values.fileSize,
-      fileSize > 0,
-      fileSize <= maximumExecutableBytes,
-      let handle = try? FileHandle(forReadingFrom: fileURL)
-    else {
-      return nil
-    }
-    defer { try? handle.close() }
-
-    var previousTail = Data()
-    var foundURLs: [URL] = []
-    var seen = Set<String>()
-    var sawTauri = false
-    var sawGPUI = false
-
-    while true {
-      let chunk = (try? handle.read(upToCount: chunkSize)) ?? Data()
-      if chunk.isEmpty {
-        break
-      }
-
-      let window = previousTail + chunk
-      if !sawTauri {
-        sawTauri = tauriNeedles.contains { window.range(of: $0) != nil }
-      }
-      if !sawGPUI, window.range(of: gpuiNeedle) != nil {
-        sawGPUI = true
-      }
-      for url in updaterJSONURLs(in: window) where seen.insert(url.absoluteString).inserted {
-        foundURLs.append(url)
-      }
-      if sawTauri, foundURLs.contains(where: isDirectManifestURL) {
-        break
-      }
-      previousTail = Data(window.suffix(overlapSize))
-    }
-
-    if sawGPUI, !sawTauri {
-      return nil
-    }
-    return preferredUpdaterJSONURL(foundURLs)
+    ExecutableUpdaterDetector.detect(fileURL: fileURL).tauriEndpoint
   }
 
-  private static func endpointFromConfiguration(in bundleURL: URL) -> URL? {
+  fileprivate static func endpointFromConfiguration(in bundleURL: URL) -> URL? {
     let candidateURLs = [
       bundleURL.appendingPathComponent("Contents/Resources/tauri.conf.json"),
       bundleURL.appendingPathComponent("Contents/Resources/tauri.conf.json5"),
@@ -128,32 +159,7 @@ enum TauriUpdaterDetector {
     return nil
   }
 
-  private static func endpointFromExecutable(in bundleURL: URL) -> URL? {
-    let macosURL = bundleURL.appendingPathComponent("Contents/MacOS", isDirectory: true)
-    let preferredName = Bundle(url: bundleURL)?.executableURL?.lastPathComponent
-    let listed =
-      (try? FileManager.default.contentsOfDirectory(
-        at: macosURL,
-        includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-        options: [.skipsHiddenFiles]
-      )) ?? []
-
-    var files = listed
-    if let preferredName,
-      let preferredIndex = files.firstIndex(where: { $0.lastPathComponent == preferredName })
-    {
-      files.swapAt(0, preferredIndex)
-    }
-
-    for fileURL in files {
-      if let endpoint = updaterJSONURL(inFile: fileURL) {
-        return endpoint
-      }
-    }
-    return nil
-  }
-
-  private static func updaterJSONURLs(in window: Data) -> [URL] {
+  fileprivate static func updaterJSONURLs(in window: Data) -> [URL] {
     var urls: [URL] = []
     for needle in [latestNeedle, proxyNeedle, catalogNeedle] {
       var searchStart = window.startIndex
@@ -167,7 +173,7 @@ enum TauriUpdaterDetector {
     return urls
   }
 
-  private static func preferredUpdaterJSONURL(_ urls: [URL]) -> URL? {
+  fileprivate static func preferredUpdaterJSONURL(_ urls: [URL]) -> URL? {
     if let url = urls.first(where: { $0.lastPathComponent.lowercased() == "latest.json" }) {
       return url
     }
@@ -184,7 +190,7 @@ enum TauriUpdaterDetector {
     }
   }
 
-  private static func isDirectManifestURL(_ url: URL) -> Bool {
+  fileprivate static func isDirectManifestURL(_ url: URL) -> Bool {
     let name = url.lastPathComponent.lowercased()
     return name == "latest.json" || name == "update-proxy.json"
   }
@@ -232,7 +238,7 @@ enum TauriUpdaterDetector {
     return url
   }
 
-  private static func hasElectronFramework(in bundleURL: URL) -> Bool {
+  fileprivate static func hasElectronFramework(in bundleURL: URL) -> Bool {
     FileManager.default.fileExists(
       atPath: bundleURL.appendingPathComponent(
         "Contents/Frameworks/Electron Framework.framework"
@@ -243,6 +249,13 @@ enum TauriUpdaterDetector {
   private static func isUpdaterJSON(_ url: URL) -> Bool {
     let name = url.lastPathComponent.lowercased()
     return name == "latest.json" || name == "update-proxy.json" || name == "versions.json"
+  }
+
+  fileprivate static func evidence(in data: Data) -> (sawTauri: Bool, sawGPUI: Bool) {
+    (
+      sawTauri: tauriNeedles.contains { data.range(of: $0) != nil },
+      sawGPUI: data.range(of: gpuiNeedle) != nil
+    )
   }
 
   private static func stringValues(in json: Any, keys: Set<String>) -> [String] {

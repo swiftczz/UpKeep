@@ -4,51 +4,19 @@ enum ReleaseJSONDetector {
   private static let latestNeedle = Data("latest.json".utf8)
   private static let httpsNeedle = Data("https://".utf8)
   private static let urlAllowed = CharacterSet(
-    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%"
+    charactersIn:
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%"
   )
   private static let skippedPathComponents: Set<String> = [
     "alpha", "beta", "canary", "dev", "nightly", "preview", "rc",
   ]
-  private static let chunkSize = 1024 * 1024
-  private static let overlapSize = 512
-  private static let maximumExecutableBytes = 400 * 1024 * 1024
 
   static func detect(bundleURL: URL) -> URL? {
-    if hasElectronFramework(in: bundleURL) || hasTauriConfiguration(in: bundleURL) {
-      return nil
-    }
-    return endpointFromExecutable(in: bundleURL)
+    ExecutableUpdaterDetector.detect(bundleURL: bundleURL).releaseJSONEndpoint
   }
 
   static func endpoint(inFile fileURL: URL) -> URL? {
-    guard
-      let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
-      values.isRegularFile == true,
-      let fileSize = values.fileSize,
-      fileSize > 0,
-      fileSize <= maximumExecutableBytes,
-      let handle = try? FileHandle(forReadingFrom: fileURL)
-    else {
-      return nil
-    }
-    defer { try? handle.close() }
-
-    var previousTail = Data()
-
-    while true {
-      let chunk = (try? handle.read(upToCount: chunkSize)) ?? Data()
-      if chunk.isEmpty {
-        break
-      }
-
-      let window = previousTail + chunk
-      if let endpoint = firstEndpoint(in: window) {
-        return endpoint
-      }
-      previousTail = Data(window.suffix(overlapSize))
-    }
-
-    return nil
+    ExecutableUpdaterDetector.detect(fileURL: fileURL).releaseJSONEndpoint
   }
 
   static func stableChannelURL(from url: URL) -> URL? {
@@ -68,36 +36,12 @@ enum ReleaseJSONDetector {
     guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
       return nil
     }
-    components.percentEncodedPath = "/" + pathComponents.map(encodePathComponent).joined(separator: "/")
+    components.percentEncodedPath =
+      "/" + pathComponents.map(encodePathComponent).joined(separator: "/")
     return components.url.flatMap(SecureUpdateURL.https)
   }
 
-  private static func endpointFromExecutable(in bundleURL: URL) -> URL? {
-    let macosURL = bundleURL.appendingPathComponent("Contents/MacOS", isDirectory: true)
-    let preferredName = Bundle(url: bundleURL)?.executableURL?.lastPathComponent
-    let listed =
-      (try? FileManager.default.contentsOfDirectory(
-        at: macosURL,
-        includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-        options: [.skipsHiddenFiles]
-      )) ?? []
-
-    var files = listed
-    if let preferredName,
-      let preferredIndex = files.firstIndex(where: { $0.lastPathComponent == preferredName })
-    {
-      files.swapAt(0, preferredIndex)
-    }
-
-    for fileURL in files {
-      if let endpoint = endpoint(inFile: fileURL) {
-        return endpoint
-      }
-    }
-    return nil
-  }
-
-  private static func firstEndpoint(in window: Data) -> URL? {
+  static func firstEndpoint(in window: Data) -> URL? {
     var searchStart = window.startIndex
     while let range = window[searchStart...].range(of: latestNeedle) {
       if let url = url(endingAt: range, in: window) {
@@ -180,15 +124,7 @@ enum ReleaseJSONDetector {
     return url
   }
 
-  private static func hasElectronFramework(in bundleURL: URL) -> Bool {
-    FileManager.default.fileExists(
-      atPath: bundleURL.appendingPathComponent(
-        "Contents/Frameworks/Electron Framework.framework"
-      ).path
-    )
-  }
-
-  private static func hasTauriConfiguration(in bundleURL: URL) -> Bool {
+  static func hasTauriConfiguration(in bundleURL: URL) -> Bool {
     [
       bundleURL.appendingPathComponent("Contents/Resources/tauri.conf.json"),
       bundleURL.appendingPathComponent("Contents/Resources/tauri.conf.json5"),

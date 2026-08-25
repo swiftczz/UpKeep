@@ -205,7 +205,7 @@ enum ElectronBuilderYAML {
 
       if trimmed.hasPrefix("- ") {
         commitFile()
-        currentFile = ElectronBuilderManifest.File(url: "", sha512: nil, size: nil)
+        currentFile = ElectronBuilderManifest.File(url: "", sha512: nil)
         let remainder = String(trimmed.dropFirst(2))
         applyFileField(remainder, to: &currentFile)
         continue
@@ -219,7 +219,7 @@ enum ElectronBuilderYAML {
       let rawValue = components.count == 2 ? String(components[1]) : ""
       let value = rawValue.yamlScalar
 
-      if currentFile != nil && indent >= 2 && ["url", "sha512", "size"].contains(key) {
+      if currentFile != nil && indent >= 2 && ["url", "sha512"].contains(key) {
         applyFileField(trimmed, to: &currentFile)
         continue
       }
@@ -280,8 +280,6 @@ enum ElectronBuilderYAML {
       file?.url = value
     case "sha512":
       file?.sha512 = value.nonBlankYAMLValue
-    case "size":
-      file?.size = Int(value)
     default:
       break
     }
@@ -293,7 +291,9 @@ enum ElectronBuilderYAML {
       .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
       .map { $0.prefix(while: { $0 == " " || $0 == "\t" }).count }
       .min() ?? 0
-    return lines
+
+    return
+      lines
       .map { line in
         if line.count >= indent {
           return String(line.dropFirst(indent))
@@ -313,7 +313,6 @@ struct ElectronBuilderManifest: Equatable, Sendable {
   struct File: Equatable, Sendable {
     var url: String
     var sha512: String?
-    var size: Int?
   }
 
   struct Package: Equatable, Sendable {

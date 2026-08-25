@@ -1,9 +1,12 @@
 import SwiftUI
 
 struct UninstallApplicationView: View {
+  @Environment(\.openURL) private var openURL
+
   let application: AppRecord
   var scanner: ApplicationResidueScanner = .live
   var homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+  var applicationLauncher: ApplicationLauncher = .live
   var onCancel: () -> Void
   var onUninstalled: () -> Void
   var onFailed: (String) -> Void
@@ -13,6 +16,7 @@ struct UninstallApplicationView: View {
   @State private var isScanning = true
   @State private var isUninstalling = false
   @State private var isConfirming = false
+  @State private var containerAccessMessage: String?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -61,6 +65,24 @@ struct UninstallApplicationView: View {
       Button("取消", role: .cancel) {}
     } message: {
       Text(confirmationMessage)
+    }
+    .alert(
+      "需要访问应用数据",
+      isPresented: Binding(
+        get: { containerAccessMessage != nil },
+        set: { if !$0 { containerAccessMessage = nil } }
+      )
+    ) {
+      Button("重新添加完整磁盘访问") {
+        if let url = URL(
+          string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+        ) {
+          openURL(url)
+        }
+      }
+      Button("取消", role: .cancel) {}
+    } message: {
+      Text(containerAccessMessage ?? "macOS 尚未允许 AppMint 访问该应用的数据。")
     }
     .disabled(isUninstalling)
   }
@@ -174,6 +196,14 @@ struct UninstallApplicationView: View {
 
       Spacer()
 
+      if isUninstalling {
+        ProgressView()
+          .controlSize(.small)
+        Text("正在等待系统完成移除…")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
+
       Button("返回详情", action: onCancel)
         .keyboardShortcut(.cancelAction)
 
@@ -236,22 +266,18 @@ struct UninstallApplicationView: View {
         await scan()
       }
     } catch {
-      let applicationRemoved = !FileManager.default.fileExists(
-        atPath: application.applicationURL.path
-      )
-      if applicationRemoved {
-        onUninstalled()
+      if let accessError = error as? ApplicationContainerAccessError {
+        containerAccessMessage = accessError.localizedDescription
+        return
       }
+      await scan()
       onFailed(error.localizedDescription)
     }
   }
 
   private func reveal(_ url: URL) {
     Task {
-      try? await ProcessRunner.run(
-        executableURL: URL(fileURLWithPath: "/usr/bin/open"),
-        arguments: ["-R", url.path]
-      )
+      try? await applicationLauncher.reveal(url)
     }
   }
 }

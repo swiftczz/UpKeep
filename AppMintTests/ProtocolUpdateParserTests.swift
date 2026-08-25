@@ -230,13 +230,19 @@ final class ProtocolUpdateParserTests: XCTestCase {
     XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
   }
 
-  func testExtractsTauriJSONURLFromConcatenatedBinaryText() {
-    let urls = TauriUpdaterDetector.updaterJSONURLs(
-      in: "icon.icohttps://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.jsontrailing"
+  func testExtractsTauriJSONURLFromConcatenatedBinaryText() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AppMint-concatenated-url-\(UUID().uuidString)"
     )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    try Data(
+      "icon.icohttps://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.jsontrailing"
+        .utf8
+    ).write(to: fileURL)
+
     XCTAssertEqual(
-      urls.map(\.absoluteString),
-      ["https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"]
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
     )
   }
 

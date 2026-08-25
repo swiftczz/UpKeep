@@ -3,7 +3,6 @@ import Foundation
 struct TauriUpdateManifest: Equatable, Sendable {
   struct Platform: Equatable, Sendable {
     let url: URL
-    let signature: String?
     let sha256: String?
     let sha512: String?
   }
@@ -73,7 +72,6 @@ struct TauriUpdateManifest: Equatable, Sendable {
       }
       platforms[key] = Platform(
         url: url,
-        signature: dictionary["signature"] as? String,
         sha256: (dictionary["sha256"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
         sha512: (dictionary["sha512"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
       )
@@ -92,7 +90,9 @@ struct TauriUpdateManifest: Equatable, Sendable {
         return notes?.isEmpty == true ? nil : notes
       }(),
       publicationDate: (json["pub_date"] as? String).flatMap(parseDate),
-      releaseNotesURL: (json["release_notes_url"] as? String).flatMap(SecureUpdateURL.https(string:)),
+      releaseNotesURL: (json["release_notes_url"] as? String).flatMap(
+        SecureUpdateURL.https(string:)
+      ),
       platforms: platforms
     )
   }

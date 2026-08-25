@@ -60,12 +60,11 @@ enum ApplicationPackageInstaller {
 
     if expectedSHA512 != nil || expectedSHA256 != nil {
       progress(.indeterminate("正在校验…"))
-      if let expectedSHA512 {
-        try verifySHA512(of: downloadedURL, expected: expectedSHA512)
-      }
-      if let expectedSHA256 {
-        try verifySHA256(of: downloadedURL, expected: expectedSHA256)
-      }
+      try verifyChecksums(
+        of: downloadedURL,
+        expectedSHA512: expectedSHA512,
+        expectedSHA256: expectedSHA256
+      )
     }
 
     progress(.indeterminate("正在解压…"))
@@ -87,7 +86,7 @@ enum ApplicationPackageInstaller {
       backupItemName: nil,
       options: .usingNewMetadataOnly
     )
-    try? await ProcessRunner.run(
+    _ = try? await ProcessRunner.run(
       executableURL: URL(fileURLWithPath: "/usr/bin/xattr"),
       arguments: ["-dr", "com.apple.quarantine", application.applicationURL.path]
     )
@@ -95,6 +94,29 @@ enum ApplicationPackageInstaller {
 
   static func verifySHA512(of fileURL: URL, expected: String) throws {
     let data = try Data(contentsOf: fileURL)
+    try verifySHA512(data, expected: expected)
+  }
+
+  static func verifySHA256(of fileURL: URL, expected: String) throws {
+    let data = try Data(contentsOf: fileURL)
+    try verifySHA256(data, expected: expected)
+  }
+
+  private static func verifyChecksums(
+    of fileURL: URL,
+    expectedSHA512: String?,
+    expectedSHA256: String?
+  ) throws {
+    let data = try Data(contentsOf: fileURL)
+    if let expectedSHA512 {
+      try verifySHA512(data, expected: expectedSHA512)
+    }
+    if let expectedSHA256 {
+      try verifySHA256(data, expected: expectedSHA256)
+    }
+  }
+
+  private static func verifySHA512(_ data: Data, expected: String) throws {
     let digest = Data(SHA512.hash(data: data)).base64EncodedString()
     let normalizedExpected = expected.filter { !$0.isWhitespace }
     guard digest == normalizedExpected else {
@@ -102,8 +124,7 @@ enum ApplicationPackageInstaller {
     }
   }
 
-  static func verifySHA256(of fileURL: URL, expected: String) throws {
-    let data = try Data(contentsOf: fileURL)
+  private static func verifySHA256(_ data: Data, expected: String) throws {
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     let normalizedExpected = expected.filter { !$0.isWhitespace }.lowercased()
     guard digest == normalizedExpected else {
@@ -254,35 +275,6 @@ enum ApplicationPackageInstaller {
       executableURL: URL(fileURLWithPath: executable),
       arguments: arguments
     )
-  }
-}
-
-extension ProcessRunner {
-  @discardableResult
-  static func blockingRun(
-    executableURL: URL,
-    arguments: [String]
-  ) throws -> ProcessOutput {
-    let process = Process()
-    let outputPipe = Pipe()
-    let errorPipe = Pipe()
-    process.executableURL = executableURL
-    process.arguments = arguments
-    process.standardOutput = outputPipe
-    process.standardError = errorPipe
-    try process.run()
-    process.waitUntilExit()
-
-    let output = ProcessOutput(
-      data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
-      errorData: errorPipe.fileHandleForReading.readDataToEndOfFile(),
-      terminationStatus: process.terminationStatus
-    )
-    guard output.terminationStatus == 0 else {
-      let message = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-      throw ProcessRunnerError.failed(status: output.terminationStatus, message: message)
-    }
-    return output
   }
 }
 

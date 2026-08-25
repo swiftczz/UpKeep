@@ -54,7 +54,10 @@ enum ProcessRunner {
     }.value
 
     guard output.terminationStatus == 0 else {
-      throw ProcessRunnerError.failed(status: output.terminationStatus, message: output.combinedText)
+      throw ProcessRunnerError.failed(
+        status: output.terminationStatus,
+        message: output.combinedText
+      )
     }
 
     return output
@@ -111,11 +114,6 @@ enum ProcessRunner {
 
     try process.run()
 
-    if onOutput == nil {
-      collectedOutput.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-      collectedError.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
-    }
-
     process.waitUntilExit()
     outputPipe.fileHandleForReading.readabilityHandler = nil
     errorPipe.fileHandleForReading.readabilityHandler = nil
@@ -160,10 +158,6 @@ enum ProcessRunner {
     try? slaveError.close()
     terminal.closeSlave()
 
-    if onOutput == nil {
-      collectedOutput.append(terminal.master.readDataToEndOfFile())
-    }
-
     process.waitUntilExit()
     terminal.master.readabilityHandler = nil
     drain(terminal.master, into: collectedOutput, onOutput: onOutput)
@@ -181,7 +175,6 @@ enum ProcessRunner {
     buffer: DataBuffer,
     onOutput: (@Sendable (String) -> Void)?
   ) {
-    guard onOutput != nil else { return }
     handle.readabilityHandler = { handle in
       let data = handle.availableData
       guard !data.isEmpty else { return }
@@ -199,6 +192,28 @@ enum ProcessRunner {
     guard !remaining.isEmpty else { return }
     buffer.append(remaining)
     onOutput?(String(decoding: remaining, as: UTF8.self))
+  }
+}
+
+extension ProcessRunner {
+  @discardableResult
+  static func blockingRun(
+    executableURL: URL,
+    arguments: [String]
+  ) throws -> ProcessOutput {
+    let output = try runSynchronously(
+      executableURL: executableURL,
+      arguments: arguments,
+      captureTTY: false,
+      onOutput: nil
+    )
+    guard output.terminationStatus == 0 else {
+      throw ProcessRunnerError.failed(
+        status: output.terminationStatus,
+        message: output.combinedText
+      )
+    }
+    return output
   }
 }
 
