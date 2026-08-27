@@ -182,6 +182,7 @@ final class AppLibraryRefreshTests: XCTestCase {
     )
     previous.source = .homebrew
     previous.sourceURL = URL(string: "https://www.xunlei.com/")
+    previous.canAutomaticallyUpdate = true
 
     var scanned = makeApplication(name: "Thunder", status: .selfManaged)
     scanned.source = .sparkle
@@ -191,6 +192,10 @@ final class AppLibraryRefreshTests: XCTestCase {
 
     XCTAssertNil(merged.first?.sourceURL)
     XCTAssertEqual(merged.first?.source, .sparkle)
+    XCTAssertEqual(merged.first?.status, .updateAvailable)
+    XCTAssertEqual(merged.first?.latestVersion, "5.80.7.66659")
+    XCTAssertEqual(merged.availableUpdates(ignoredIDs: []).map(\.name), ["Thunder"])
+    XCTAssertEqual(merged.first?.canAutomaticallyUpdate, false)
   }
 
   func testMergeKeepsLastInstalledAtAcrossRescan() {
@@ -273,6 +278,19 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(coalesced.latestVersion, "2.0")
   }
 
+  func testSelfManagedRecheckDoesNotDropKnownUpdate() {
+    let existing = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
+    var unchecked = existing
+    unchecked.status = .selfManaged
+    unchecked.latestVersion = nil
+    unchecked.canAutomaticallyUpdate = false
+
+    let coalesced = AppLibrary.coalesceCheckResult(unchecked, over: existing)
+
+    XCTAssertEqual(coalesced.status, .updateAvailable)
+    XCTAssertEqual(coalesced.latestVersion, "2.0")
+  }
+
   func testSuccessfulUpToDateRecheckDropsKnownUpdate() {
     let existing = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
     var current = existing
@@ -314,6 +332,119 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(library.availableUpdates.map(\.name), ["Example"])
     XCTAssertEqual(library.applications.first?.status, .updateAvailable)
     XCTAssertTrue(library.applications.installedApplications().isEmpty)
+  }
+
+  func testRefreshKeepsAvailableUpdateWhenRecheckBecomesSelfManaged() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let known = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
+    let scanned = makeApplication(name: "Example", status: .checking)
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      var unchecked = application
+      unchecked.status = .selfManaged
+      unchecked.latestVersion = nil
+      unchecked.canAutomaticallyUpdate = false
+      return unchecked
+    }
+
+    let library = AppLibrary(
+      applications: [known],
+      scanner: StubScanner(applications: [scanned]),
+      coordinator: coordinator,
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Example"])
+    await library.refresh()
+
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Example"])
+    XCTAssertEqual(library.applications.first?.status, .updateAvailable)
+  }
+
+  func testRefreshesMissingReleaseNotesForSelectedUpdate() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    var dbx = makeApplication(
+      name: "DBX",
+      status: .updateAvailable,
+      latestVersion: "0.5.95"
+    )
+    dbx.source = .tauri
+    dbx.sourceURL = URL(
+      string: "https://example.com/releases/latest/latest.json"
+    )
+    let other = makeApplication(
+      name: "Other",
+      status: .updateAvailable,
+      latestVersion: "2.0"
+    )
+    let dbxID = dbx.id
+
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      var checked = application
+      if checked.id == dbxID {
+        checked.releaseNotes = "### 修复\n\n- DBX 更新说明"
+      }
+      return checked
+    }
+
+    let library = AppLibrary(
+      applications: [dbx, other],
+      coordinator: coordinator,
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    await library.refreshReleaseMetadataIfNeeded(for: dbxID)
+
+    XCTAssertEqual(
+      library.applications.first(where: { $0.id == dbxID })?.releaseNotes,
+      "### 修复\n\n- DBX 更新说明"
+    )
+    XCTAssertNil(library.applications.first(where: { $0.id == other.id })?.releaseNotes)
+  }
+
+  func testRefreshesMissingReleaseNotesForUpToDateApplication() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    var reasonix = makeApplication(name: "Reasonix Studio", status: .upToDate)
+    reasonix.source = .tauri
+    reasonix.latestVersion = reasonix.currentVersion
+    reasonix.sourceURL = URL(string: "https://example.com/studio/versions.json")
+    reasonix.releaseNotesURL = URL(
+      string: "https://github.com/example/reasonix/releases/tag/studio-v2.7.0"
+    )
+    let reasonixID = reasonix.id
+
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      var checked = application
+      if checked.id == reasonixID {
+        checked.releaseNotes = "已安装版本的发行说明"
+      }
+      return checked
+    }
+
+    let library = AppLibrary(
+      applications: [reasonix],
+      coordinator: coordinator,
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    await library.refreshReleaseMetadataIfNeeded(for: reasonixID)
+
+    XCTAssertEqual(library.applications.first?.releaseNotes, "已安装版本的发行说明")
+    XCTAssertEqual(library.applications.first?.status, .upToDate)
   }
 
   private func makeApplication(

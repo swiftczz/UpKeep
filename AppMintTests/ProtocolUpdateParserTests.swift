@@ -138,6 +138,23 @@ final class ProtocolUpdateParserTests: XCTestCase {
     XCTAssertEqual(platform.sha256, "bbb")
   }
 
+  func testBuildsGitHubReleaseAPIURLAndParsesReleaseBody() throws {
+    let releaseURL = try XCTUnwrap(
+      URL(string: "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.7.0")
+    )
+
+    XCTAssertEqual(
+      TauriReleaseNotes.githubReleaseAPIURL(from: releaseURL)?.absoluteString,
+      "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/studio-v2.7.0"
+    )
+    XCTAssertEqual(
+      TauriReleaseNotes.parseGitHubRelease(
+        Data("{\"body\":\"## 新增\\n\\n- 运行图\"}".utf8)
+      ),
+      "## 新增\n\n- 运行图"
+    )
+  }
+
   func testParsesVersionsCatalogAndPrefersNewestStableManifest() throws {
     let data = Data(
       """

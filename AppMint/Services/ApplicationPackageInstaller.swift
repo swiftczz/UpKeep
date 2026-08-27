@@ -8,8 +8,8 @@ enum ApplicationPackageInstallerError: LocalizedError {
   case unsupportedPackage
   case missingApplication
   case bundleIdentifierMismatch
+  case invalidSignature
   case teamIdentifierMismatch
-  case applicationStillRunning(String)
 
   var errorDescription: String? {
     switch self {
@@ -25,10 +25,10 @@ enum ApplicationPackageInstallerError: LocalizedError {
       return "更新包中没有找到可安装的应用。"
     case .bundleIdentifierMismatch:
       return "更新包中的应用与当前安装的应用不一致。"
+    case .invalidSignature:
+      return "更新包的代码签名无效。"
     case .teamIdentifierMismatch:
       return "更新包的开发者签名与当前应用不一致。"
-    case .applicationStillRunning(let name):
-      return "请先退出 \(name) 后再更新。"
     }
   }
 }
@@ -39,6 +39,7 @@ enum ApplicationPackageInstaller {
     replacing application: AppRecord,
     expectedSHA512: String?,
     expectedSHA256: String? = nil,
+    requiresTeamIdentifier: Bool = false,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
     guard SecureUpdateURL.https(packageURL) != nil else {
@@ -75,7 +76,8 @@ enum ApplicationPackageInstaller {
 
     try verifyIdentity(
       of: extractedApplicationURL,
-      matching: application
+      matching: application,
+      requiresTeamIdentifier: requiresTeamIdentifier
     )
 
     try await ApplicationProcess.quit(application)
@@ -168,17 +170,48 @@ enum ApplicationPackageInstaller {
     return 0
   }
 
+  static func downloadRequest(for url: URL) -> URLRequest {
+    var request = URLRequest(
+      url: url,
+      cachePolicy: .reloadIgnoringLocalCacheData
+    )
+    request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
+    request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
+    request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+    return request
+  }
+
+  static func downloadSessionConfiguration() -> URLSessionConfiguration {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    configuration.urlCache = nil
+    return configuration
+  }
+
   private static func download(
     from url: URL,
     to destinationURL: URL,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws -> URL {
-    let downloadedURL = try await FileDownloadTask.download(from: url, progress: progress)
-    if FileManager.default.fileExists(atPath: destinationURL.path) {
-      try FileManager.default.removeItem(at: destinationURL)
+    var lastError: (any Error)?
+    for attempt in 0..<3 {
+      do {
+        let downloadedURL = try await FileDownloadTask.download(from: url, progress: progress)
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+          try FileManager.default.removeItem(at: destinationURL)
+        }
+        try FileManager.default.moveItem(at: downloadedURL, to: destinationURL)
+        return destinationURL
+      } catch let error as CancellationError {
+        throw error
+      } catch {
+        lastError = error
+        if attempt < 2 {
+          try? await Task.sleep(for: .milliseconds(350 * (attempt + 1)))
+        }
+      }
     }
-    try FileManager.default.moveItem(at: downloadedURL, to: destinationURL)
-    return destinationURL
+    throw lastError ?? ApplicationPackageInstallerError.downloadFailed
   }
 
   private static func extractApplication(from packageURL: URL, into directory: URL) throws -> URL {
@@ -255,7 +288,11 @@ enum ApplicationPackageInstaller {
     return nil
   }
 
-  private static func verifyIdentity(of candidateURL: URL, matching application: AppRecord) throws {
+  private static func verifyIdentity(
+    of candidateURL: URL,
+    matching application: AppRecord,
+    requiresTeamIdentifier: Bool
+  ) throws {
     guard let bundle = Bundle(url: candidateURL),
       let bundleIdentifier = bundle.bundleIdentifier,
       bundleIdentifier == application.bundleIdentifier
@@ -265,6 +302,12 @@ enum ApplicationPackageInstaller {
 
     let installedTeam = ApplicationCodeSigning.teamIdentifier(at: application.applicationURL)
     let candidateTeam = ApplicationCodeSigning.teamIdentifier(at: candidateURL)
+    if requiresTeamIdentifier && !ApplicationCodeSigning.signatureIsValid(at: candidateURL) {
+      throw ApplicationPackageInstallerError.invalidSignature
+    }
+    if requiresTeamIdentifier && (installedTeam == nil || candidateTeam != installedTeam) {
+      throw ApplicationPackageInstallerError.teamIdentifierMismatch
+    }
     if let installedTeam, let candidateTeam, installedTeam != candidateTeam {
       throw ApplicationPackageInstallerError.teamIdentifierMismatch
     }
@@ -304,12 +347,12 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
 
   private func start(_ url: URL) {
     let session = URLSession(
-      configuration: .ephemeral,
+      configuration: ApplicationPackageInstaller.downloadSessionConfiguration(),
       delegate: self,
       delegateQueue: nil
     )
     self.session = session
-    session.downloadTask(with: url).resume()
+    session.downloadTask(with: ApplicationPackageInstaller.downloadRequest(for: url)).resume()
   }
 
   func urlSession(

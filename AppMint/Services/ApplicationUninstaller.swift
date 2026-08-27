@@ -10,7 +10,7 @@ enum ApplicationUninstallerError: LocalizedError {
     case .nothingSelected:
       return "请选择要移除的文件。"
     case .applicationStillRunning(let name):
-      return "请先退出 \(name) 后再卸载。"
+      return "\(name) 仍有后台进程未能结束。请稍后重试，或在“活动监视器”中结束相关进程后再卸载。"
     case .failed(let removedCount, let itemNames, let reason):
       let visibleNames = itemNames.prefix(5).joined(separator: "、")
       let remainingCount = itemNames.count - min(itemNames.count, 5)
@@ -61,8 +61,12 @@ enum ApplicationUninstaller {
       $0.url.standardizedFileURL == application.applicationURL.standardizedFileURL
     }
 
-    if removingApplication, process.isRunning(application) {
-      try await process.quit(application)
+    if process.isRunning(application) {
+      do {
+        try await process.quit(application)
+      } catch is ApplicationProcessError {
+        throw ApplicationUninstallerError.applicationStillRunning(application.name)
+      }
       if process.isRunning(application) {
         throw ApplicationUninstallerError.applicationStillRunning(application.name)
       }

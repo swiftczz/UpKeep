@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct ApplicationResidueScanner: @unchecked Sendable {
@@ -10,6 +11,7 @@ struct ApplicationResidueScanner: @unchecked Sendable {
   var teamIdentifier: @Sendable (URL) -> String?
   var bundleName: @Sendable (URL) -> String?
   var updaterCacheDirName: @Sendable (URL) -> String?
+  var systemManagedDarwinItem: @Sendable (URL) -> Bool = Self.isSystemManagedDarwinItem(_:)
 
   static var live: ApplicationResidueScanner {
     let fileManager = FileManager.default
@@ -173,7 +175,13 @@ struct ApplicationResidueScanner: @unchecked Sendable {
     for directory in darwinDirectories {
       let category: ApplicationResidueItem.Category =
         directory.lastPathComponent == "C" ? .caches : .other
-      addMatches(in: directory, identity: identity, category: category, into: add)
+      addMatches(
+        in: directory,
+        identity: identity,
+        category: category,
+        skipsSystemManagedItems: true,
+        into: add
+      )
     }
 
     if let token = identity.homebrewToken {
@@ -200,6 +208,7 @@ struct ApplicationResidueScanner: @unchecked Sendable {
     in directory: URL,
     identity: ApplicationResidueIdentity,
     category: ApplicationResidueItem.Category,
+    skipsSystemManagedItems: Bool = false,
     into add: (URL, ApplicationResidueItem.Category) -> Void
   ) {
     let children =
@@ -210,8 +219,37 @@ struct ApplicationResidueScanner: @unchecked Sendable {
       )) ?? []
 
     for child in children where identity.matches(url: child) {
+      if skipsSystemManagedItems, systemManagedDarwinItem(child) {
+        continue
+      }
       add(child, category)
     }
+  }
+
+  static func isSystemManagedDarwinItem(_ url: URL) -> Bool {
+    hasExtendedAttribute("com.apple.rootless", at: url) || hasSystemNoUnlinkFlag(at: url)
+  }
+
+  private static func hasExtendedAttribute(_ name: String, at url: URL) -> Bool {
+    url.withUnsafeFileSystemRepresentation { path in
+      guard let path else { return false }
+      return getxattr(path, name, nil, 0, 0, 0) >= 0
+    }
+  }
+
+  private static func hasSystemNoUnlinkFlag(at url: URL) -> Bool {
+    var info = stat()
+    let status = url.withUnsafeFileSystemRepresentation { path in
+      guard let path else { return Int32(-1) }
+      return lstat(path, &info)
+    }
+    guard status == 0 else { return false }
+
+    let protectedFlags =
+      UInt32(SF_NOUNLINK)
+      | UInt32(SF_RESTRICTED)
+      | UInt32(SF_IMMUTABLE)
+    return info.st_flags & protectedFlags != 0
   }
 
   private func displayName(for url: URL) -> String {

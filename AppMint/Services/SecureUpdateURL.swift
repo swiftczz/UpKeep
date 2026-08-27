@@ -30,10 +30,29 @@ enum SecureUpdateURL {
 }
 
 enum UpdateHTTP {
-  static func response(from url: URL) async throws -> (statusCode: Int, data: Data)? {
-    var request = URLRequest(url: url)
-    request.timeoutInterval = 15
-    request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
+  static func response(
+    from url: URL,
+    attempts: Int = 1
+  ) async throws -> (statusCode: Int, data: Data)? {
+    var lastError: (any Error)?
+    let totalAttempts = max(attempts, 1)
+    for attempt in 0..<totalAttempts {
+      do {
+        return try await singleResponse(from: url)
+      } catch let error as CancellationError {
+        throw error
+      } catch {
+        lastError = error
+        if attempt < totalAttempts - 1 {
+          try? await Task.sleep(for: .milliseconds(350 * (attempt + 1)))
+        }
+      }
+    }
+    throw lastError ?? URLError(.cannotLoadFromNetwork)
+  }
+
+  private static func singleResponse(from url: URL) async throws -> (statusCode: Int, data: Data)? {
+    let request = request(for: url)
     let (data, response) = try await URLSession.shared.data(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
       return nil
@@ -41,14 +60,25 @@ enum UpdateHTTP {
     return (httpResponse.statusCode, data)
   }
 
-  static func successfulData(from url: URL) async throws -> Data? {
-    guard let result = try await response(from: url),
+  static func successfulData(from url: URL, attempts: Int = 1) async throws -> Data? {
+    guard let result = try await response(from: url, attempts: attempts),
       (200..<300).contains(result.statusCode),
       result.statusCode != 204
     else {
       return nil
     }
     return result.data
+  }
+
+  static func request(for url: URL) -> URLRequest {
+    var request = URLRequest(
+      url: url,
+      cachePolicy: .reloadIgnoringLocalCacheData,
+      timeoutInterval: 15
+    )
+    request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
+    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+    return request
   }
 }
 

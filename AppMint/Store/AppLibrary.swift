@@ -162,6 +162,41 @@ final class AppLibrary {
     await refresh()
   }
 
+  func refreshReleaseMetadataIfNeeded(for applicationID: AppRecord.ID) async {
+    guard phase == .idle,
+      !updatingApplicationIDs.contains(applicationID),
+      let existingIndex = applications.firstIndex(where: { $0.id == applicationID })
+    else {
+      return
+    }
+
+    let application = applications[existingIndex]
+    guard application.releaseNotes == nil else {
+      return
+    }
+    switch application.source {
+    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON:
+      break
+    case .sparkle where application.sourceURL != nil:
+      break
+    case .homebrew, .selfManaged, .sparkle:
+      return
+    }
+
+    let checked = await coordinator.check(application)
+    guard !updatingApplicationIDs.contains(applicationID),
+      let currentIndex = applications.firstIndex(where: { $0.id == applicationID })
+    else {
+      return
+    }
+
+    applications[currentIndex] = Self.coalesceCheckResult(
+      checked,
+      over: applications[currentIndex]
+    )
+    persistSnapshot()
+  }
+
   func refresh() async {
     guard updatingApplicationIDs.isEmpty else { return }
     guard phase == .idle else {
@@ -308,6 +343,15 @@ final class AppLibrary {
       }
 
       var merged = current
+      if previous.status == .updateAvailable {
+        switch current.status {
+        case .checking, .selfManaged, .unavailable:
+          return carryingPendingUpdate(from: previous, onto: current)
+        case .updateAvailable, .upToDate:
+          break
+        }
+      }
+
       if previous.source == current.source, previous.status != .checking {
         merged.status = previous.status
         merged.latestVersion = previous.latestVersion
@@ -325,7 +369,7 @@ final class AppLibrary {
     let result: AppRecord
     if existing.status == .updateAvailable {
       switch incoming.status {
-      case .checking, .unavailable:
+      case .checking, .selfManaged, .unavailable:
         result = carryingPendingUpdate(from: existing, onto: incoming)
       default:
         result = incoming
@@ -355,11 +399,17 @@ final class AppLibrary {
     merged.releaseNotes = previous.releaseNotes
     merged.releaseDate = previous.releaseDate
     merged.releaseNotesURL = previous.releaseNotesURL
-    merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
+    merged.canAutomaticallyUpdate =
+      previous.source == current.source
+      ? previous.canAutomaticallyUpdate
+      : current.canAutomaticallyUpdate
     return carryingMetadata(from: previous, onto: merged)
   }
 
-  private static func carryingMetadata(from previous: AppRecord, onto current: AppRecord) -> AppRecord {
+  private static func carryingMetadata(
+    from previous: AppRecord,
+    onto current: AppRecord
+  ) -> AppRecord {
     var merged = current
     if merged.sourceURL == nil, previous.source == merged.source {
       merged.sourceURL = previous.sourceURL
@@ -437,13 +487,25 @@ final class AppLibrary {
   }
 
   private func update(_ application: AppRecord) async {
+    let selectionToRestore = selectedApplicationID == application.id ? application.id : nil
+    var failureMessage: String?
+
     do {
       _ = try await performVisibleUpdate(application)
     } catch {
-      alertMessage = error.localizedDescription
+      failureMessage = error.localizedDescription
     }
 
     await refreshIfNoUpdatesInFlight()
+
+    if let selectionToRestore,
+      applications.contains(where: { $0.id == selectionToRestore })
+    {
+      selectedApplicationID = selectionToRestore
+    }
+    if let failureMessage {
+      alertMessage = failureMessage
+    }
   }
 
   private func refreshIfNoUpdatesInFlight() async {

@@ -2,6 +2,17 @@ import AppKit
 import Darwin
 import Foundation
 
+enum ApplicationProcessError: LocalizedError {
+  case couldNotTerminate(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .couldNotTerminate(let name):
+      return "未能完全结束 \(name) 的后台进程。"
+    }
+  }
+}
+
 enum ApplicationProcess {
   static func isRunning(_ application: AppRecord) -> Bool {
     !processIDs(inside: application.applicationURL).isEmpty
@@ -18,21 +29,47 @@ enum ApplicationProcess {
       return
     }
 
-    await MainActor.run {
+    let applicationRoot = application.applicationURL.resolvingSymlinksInPath()
+    let helperPIDs = await MainActor.run {
+      var helperPIDs: [pid_t] = []
       for pid in pids {
-        NSRunningApplication(processIdentifier: pid)?.terminate()
+        guard let runningApplication = NSRunningApplication(processIdentifier: pid) else {
+          helperPIDs.append(pid)
+          continue
+        }
+        if runningApplication.bundleURL?.resolvingSymlinksInPath() == applicationRoot {
+          runningApplication.terminate()
+        } else {
+          helperPIDs.append(pid)
+        }
       }
+      return helperPIDs
+    }
+    sendSignal(SIGTERM, to: helperPIDs, inside: application.applicationURL)
+
+    if try await waitUntilStopped(application.applicationURL, timeout: 5) {
+      return
     }
 
-    let deadline = Date().addingTimeInterval(12)
-    while Date() < deadline {
-      if processIDs(inside: application.applicationURL).isEmpty {
-        return
-      }
-      try await Task.sleep(for: .milliseconds(250))
+    sendSignal(
+      SIGTERM,
+      to: processIDs(inside: application.applicationURL),
+      inside: application.applicationURL
+    )
+    if try await waitUntilStopped(application.applicationURL, timeout: 3) {
+      return
     }
 
-    throw ApplicationPackageInstallerError.applicationStillRunning(application.name)
+    sendSignal(
+      SIGKILL,
+      to: processIDs(inside: application.applicationURL),
+      inside: application.applicationURL
+    )
+    if try await waitUntilStopped(application.applicationURL, timeout: 2) {
+      return
+    }
+
+    throw ApplicationProcessError.couldNotTerminate(application.name)
   }
 
   static func processIDs(inside applicationURL: URL) -> [pid_t] {
@@ -45,6 +82,34 @@ enum ApplicationProcess {
       let path = processPath(pid)
       return path == root || path.hasPrefix(root + "/")
     }
+  }
+
+  private static func sendSignal(
+    _ signal: Int32,
+    to pids: [pid_t],
+    inside applicationURL: URL
+  ) {
+    let root = applicationURL.resolvingSymlinksInPath().path
+    guard !root.isEmpty else { return }
+
+    for pid in pids where pid != getpid() {
+      let path = processPath(pid)
+      guard path == root || path.hasPrefix(root + "/") else { continue }
+      _ = Darwin.kill(pid, signal)
+    }
+  }
+
+  private static func waitUntilStopped(_ applicationURL: URL, timeout: TimeInterval) async throws
+    -> Bool
+  {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if processIDs(inside: applicationURL).isEmpty {
+        return true
+      }
+      try await Task.sleep(for: .milliseconds(200))
+    }
+    return processIDs(inside: applicationURL).isEmpty
   }
 
   private static func allProcessIDs() -> [pid_t] {

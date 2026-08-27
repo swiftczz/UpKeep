@@ -169,10 +169,18 @@ final class SparkleAppcastParserTests: XCTestCase {
     let insecureCandidate = SparkleCandidate(
       downloadURL: URL(string: "http://example.com/App.zip")
     )
+    let unsupportedCandidate = SparkleCandidate(
+      downloadURL: URL(string: "https://example.com/App.pkg")
+    )
     let informationOnlyCandidate = SparkleCandidate()
 
     XCTAssertTrue(relativeCandidate.hasSecureDownload(relativeTo: feedURL))
+    XCTAssertEqual(
+      relativeCandidate.supportedPackageURL(relativeTo: feedURL)?.absoluteString,
+      "https://example.com/releases/App.zip"
+    )
     XCTAssertFalse(insecureCandidate.hasSecureDownload(relativeTo: feedURL))
+    XCTAssertNil(unsupportedCandidate.supportedPackageURL(relativeTo: feedURL))
     XCTAssertFalse(informationOnlyCandidate.hasSecureDownload(relativeTo: feedURL))
   }
 

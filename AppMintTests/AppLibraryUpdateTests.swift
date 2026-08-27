@@ -57,6 +57,34 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.automaticUpdatesRequiringRelaunch().map(\.name), ["Running"])
   }
 
+  func testFailedUpdateKeepsOriginalSelectionAndReportsFailureAfterRefresh() async throws {
+    let eudic = makeUpdateApplication(
+      name: "欧路词典",
+      bundleIdentifier: "com.eusoft.eudic"
+    )
+    let tencent = makeUpdateApplication(
+      name: "腾讯视频",
+      bundleIdentifier: "com.tencent.tenvideo"
+    )
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let library = AppLibrary(
+      applications: [eudic, tencent],
+      scanner: UpdateSelectionScanner(applications: [tencent, eudic]),
+      coordinator: FailingUpdateCoordinator(),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+    library.selectedApplicationID = eudic.id
+
+    _ = await library.performPrimaryAction(for: eudic.id)
+
+    XCTAssertEqual(library.selectedApplicationID, eudic.id)
+    XCTAssertEqual(library.selectedApplication?.name, "欧路词典")
+    XCTAssertEqual(library.alertMessage, "模拟更新失败")
+  }
+
   private func makeLibrary(
     applications: [AppRecord],
     runningBundleIdentifiers: Set<String>
@@ -93,5 +121,30 @@ final class AppLibraryUpdateTests: XCTestCase {
       latestVersion: "2.0",
       canAutomaticallyUpdate: true
     )
+  }
+}
+
+private struct UpdateSelectionScanner: ApplicationScanning {
+  let applications: [AppRecord]
+
+  func scan() async -> [AppRecord] {
+    applications
+  }
+}
+
+private struct FailingUpdateCoordinator: UpdateCoordinating {
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+    applications
+  }
+
+  func check(_ application: AppRecord) async -> AppRecord {
+    application
+  }
+
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {
+    throw ProcessRunnerError.failed(status: 1, message: "模拟更新失败")
   }
 }

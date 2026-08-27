@@ -10,18 +10,14 @@ let package = Package(
   products: [
     .executable(name: "AppMint", targets: ["AppMint"])
   ],
-  dependencies: [
-    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.5")
-  ],
+  dependencies: [],
   targets: [
     .executableTarget(
       name: "AppMint",
-      dependencies: [
-        .product(name: "Sparkle", package: "Sparkle"),
-      ],
+      dependencies: [],
       path: "AppMint",
       linkerSettings: [
-        .linkedFramework("Security"),
+        .linkedFramework("Security")
       ]
     ),
     .testTarget(

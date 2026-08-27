@@ -218,6 +218,50 @@ final class ApplicationResidueTests: XCTestCase {
     )
   }
 
+  func testScannerSkipsSystemManagedDarwinRuntimeDirectories() throws {
+    let fileManager = FileManager.default
+    let fixture = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintResidueManagedDarwin-\(UUID().uuidString)", isDirectory: true)
+    defer { try? fileManager.removeItem(at: fixture) }
+
+    let applicationURL = fixture.appendingPathComponent("Demo.app", isDirectory: true)
+    let darwinTemp = fixture.appendingPathComponent("T", isDirectory: true)
+    let runtimeDirectory = darwinTemp.appendingPathComponent(
+      "com.apple.WebKit.GPU+com.example.demo",
+      isDirectory: true
+    )
+    let normalDirectory = darwinTemp.appendingPathComponent(
+      "com.example.demo",
+      isDirectory: true
+    )
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+    try createDirectory(runtimeDirectory)
+    try createDirectory(normalDirectory)
+
+    let scanner = ApplicationResidueScanner(
+      fileManager: fileManager,
+      homeDirectory: fixture,
+      libraryDirectories: [],
+      receiptsDirectory: nil,
+      darwinDirectories: [darwinTemp],
+      caskroomDirectories: [],
+      teamIdentifier: { _ in nil },
+      bundleName: { _ in "Demo" },
+      updaterCacheDirName: { _ in nil },
+      systemManagedDarwinItem: { $0.lastPathComponent.hasPrefix("com.apple.WebKit.") }
+    )
+    let application = AppRecord(
+      name: "Demo",
+      bundleIdentifier: "com.example.demo",
+      applicationURL: applicationURL,
+      currentVersion: "1.0"
+    )
+
+    let names = Set(scanner.items(for: application).map(\.displayName))
+    XCTAssertFalse(names.contains("com.apple.WebKit.GPU+com.example.demo"))
+    XCTAssertTrue(names.contains("com.example.demo"))
+  }
+
   func testUninstallerMovesSelectedFilesToTrash() async throws {
     let fileManager = FileManager.default
     let directory = fileManager.temporaryDirectory
@@ -324,6 +368,54 @@ final class ApplicationResidueTests: XCTestCase {
 
     XCTAssertTrue(result.didRemoveApplication)
     XCTAssertFalse(fileManager.fileExists(atPath: applicationURL.path))
+    XCTAssertFalse(fileManager.fileExists(atPath: residueURL.path))
+  }
+
+  func testUninstallerQuitsRunningApplicationBeforeRemovingResidueOnly() async throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintResidueOnlyQuit-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = directory.appendingPathComponent("Demo.app", isDirectory: true)
+    let residueURL = directory.appendingPathComponent("com.example.demo.plist")
+    defer { try? fileManager.removeItem(at: directory) }
+
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+    try Data("residue".utf8).write(to: residueURL)
+
+    let application = AppRecord(
+      name: "Demo",
+      bundleIdentifier: "com.example.demo",
+      applicationURL: applicationURL,
+      currentVersion: "1.0"
+    )
+    let item = ApplicationResidueItem(
+      url: residueURL,
+      displayName: residueURL.lastPathComponent,
+      category: .preferences,
+      byteCount: 7
+    )
+    let quitCount = LockedCounter()
+    let process = ApplicationProcessClient(
+      isRunning: { _ in quitCount.value == 0 },
+      quit: { _ in quitCount.increment() },
+      launch: { _ in }
+    )
+    let trashClient = ApplicationUninstaller.TrashClient(
+      moveDirectly: { url in try fileManager.removeItem(at: url) },
+      moveUsingFinder: { _ in XCTFail("Unexpected Finder fallback") }
+    )
+
+    let result = try await ApplicationUninstaller.uninstall(
+      application,
+      items: [item],
+      fileManager: fileManager,
+      process: process,
+      trashClient: trashClient
+    )
+
+    XCTAssertFalse(result.didRemoveApplication)
+    XCTAssertEqual(quitCount.value, 1)
+    XCTAssertTrue(fileManager.fileExists(atPath: applicationURL.path))
     XCTAssertFalse(fileManager.fileExists(atPath: residueURL.path))
   }
 
@@ -460,57 +552,176 @@ final class ApplicationResidueTests: XCTestCase {
     }
   }
 
-  func testPrivilegedTrashOnlyAcceptsSpecificCleanupChildren() {
+  func testFinderBatchTrashOnlyAcceptsSpecificCleanupChildren() {
     let home = URL(fileURLWithPath: "/Users/demo", isDirectory: true)
 
     XCTAssertTrue(
-      PrivilegedTrash.isAllowedTarget(
+      FinderBatchTrash.isAllowedTarget(
         URL(fileURLWithPath: "/Applications/UPDF.app"),
         homeDirectory: home
       )
     )
     XCTAssertTrue(
-      PrivilegedTrash.isAllowedTarget(
-        URL(fileURLWithPath: "/Users/demo/Library/Containers/com.example.app"),
+      FinderBatchTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/Users/demo/Library/Caches/com.example.app"),
         homeDirectory: home
       )
     )
     XCTAssertTrue(
-      PrivilegedTrash.isAllowedTarget(
+      FinderBatchTrash.isAllowedTarget(
         URL(fileURLWithPath: "/var/db/receipts/com.example.app.bom"),
         homeDirectory: home
       )
     )
 
     XCTAssertFalse(
-      PrivilegedTrash.isAllowedTarget(URL(fileURLWithPath: "/"), homeDirectory: home)
+      FinderBatchTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/"),
+        homeDirectory: home
+      )
     )
     XCTAssertFalse(
-      PrivilegedTrash.isAllowedTarget(
+      FinderBatchTrash.isAllowedTarget(
         URL(fileURLWithPath: "/Applications"),
         homeDirectory: home
       )
     )
     XCTAssertFalse(
-      PrivilegedTrash.isAllowedTarget(
+      FinderBatchTrash.isAllowedTarget(
         URL(fileURLWithPath: "/var/db/receipts"),
         homeDirectory: home
       )
     )
     XCTAssertFalse(
-      PrivilegedTrash.isAllowedTarget(
+      FinderBatchTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/var/folders/zz/demo/T/com.apple.WebKit.GPU+com.example.app"),
+        homeDirectory: home
+      )
+    )
+    XCTAssertFalse(
+      FinderBatchTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/var/folders/zz/demo/T", isDirectory: true),
+        homeDirectory: home
+      )
+    )
+    XCTAssertFalse(
+      FinderBatchTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/var/folders/zz/demo/C", isDirectory: true),
+        homeDirectory: home
+      )
+    )
+    XCTAssertFalse(
+      FinderBatchTrash.isAllowedTarget(
+        URL(fileURLWithPath: "/Users/demo/Library/Containers/com.example.app"),
+        homeDirectory: home
+      )
+    )
+    XCTAssertFalse(
+      FinderBatchTrash.isAllowedTarget(
         URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"),
         homeDirectory: home
       )
     )
   }
 
+  func testTrashFallbackPartitionsProtectedContainersBeforeFinderBatch() {
+    let home = URL(fileURLWithPath: "/Users/demo", isDirectory: true)
+    let application = URL(fileURLWithPath: "/Applications/Demo.app", isDirectory: true)
+    let receipt = URL(fileURLWithPath: "/var/db/receipts/com.example.demo.bom")
+    let container = URL(
+      fileURLWithPath: "/Users/demo/Library/Containers/com.example.demo",
+      isDirectory: true
+    )
+    let groupContainer = URL(
+      fileURLWithPath: "/Users/demo/Library/Group Containers/TEAM.example.demo",
+      isDirectory: true
+    )
+
+    let groups = FinderTrash.partitionTargets(
+      [application, container, receipt, groupContainer],
+      homeDirectory: home
+    )
+
+    XCTAssertEqual(groups.unprotected, [application, receipt])
+    XCTAssertEqual(groups.protected, [container, groupContainer])
+  }
+
+  func testDarwinVolatileTargetsMoveIntoUserTrashDirectly() async throws {
+    let fileManager = FileManager.default
+    let fixture = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintUserTrashMove-\(UUID().uuidString)", isDirectory: true)
+    defer { try? fileManager.removeItem(at: fixture) }
+
+    let home = fixture.appendingPathComponent("Home", isDirectory: true)
+    let temporaryDirectory =
+      fixture
+      .appendingPathComponent("var/folders/demo/T", isDirectory: true)
+    let target =
+      temporaryDirectory
+      .appendingPathComponent("com.apple.WebKit.GPU+com.example.app", isDirectory: true)
+    try fileManager.createDirectory(at: target, withIntermediateDirectories: true)
+
+    XCTAssertTrue(
+      UserTrashMove.isDarwinVolatileTarget(target, temporaryDirectory: temporaryDirectory)
+    )
+
+    try await UserTrashMove.moveToTrash(
+      [target],
+      homeDirectory: home,
+      temporaryDirectory: temporaryDirectory
+    )
+
+    XCTAssertFalse(fileManager.fileExists(atPath: target.path))
+    let trashDirectory = home.appendingPathComponent(".Trash", isDirectory: true)
+    let trashBundles = try fileManager.contentsOfDirectory(
+      at: trashDirectory,
+      includingPropertiesForKeys: nil
+    )
+    let movedTargets = trashBundles.map {
+      $0.appendingPathComponent("com.apple.WebKit.GPU+com.example.app", isDirectory: true)
+    }
+    XCTAssertTrue(movedTargets.contains { fileManager.fileExists(atPath: $0.path) })
+  }
+
   @MainActor
   func testTrashAppleScriptsCompile() throws {
-    for source in [FinderTrash.finderScriptSource, PrivilegedTrash.privilegedScriptSource] {
+    for source in [FinderBatchTrash.scriptSource] {
       let script = try XCTUnwrap(NSAppleScript(source: source))
       var errorInfo: NSDictionary?
       XCTAssertTrue(script.compileAndReturnError(&errorInfo), "\(errorInfo ?? [:])")
+    }
+  }
+
+  func testFinderBatchTrashUsesOneFinderBatchWithoutMutatingPackageContents() {
+    let batchDelete = "delete targetItems"
+    XCTAssertEqual(
+      FinderBatchTrash.scriptSource.components(separatedBy: batchDelete).count - 1,
+      1
+    )
+    XCTAssertTrue(FinderBatchTrash.scriptSource.contains("tell application \"Finder\""))
+    XCTAssertFalse(FinderBatchTrash.scriptSource.contains("chown"))
+  }
+
+  func testUserTrashMoveRejectsNonVolatileTargets() async throws {
+    let fileManager = FileManager.default
+    let fixture = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintUserTrashReject-\(UUID().uuidString)", isDirectory: true)
+    defer { try? fileManager.removeItem(at: fixture) }
+
+    let home = fixture.appendingPathComponent("Home", isDirectory: true)
+    let temporaryDirectory = fixture.appendingPathComponent("T", isDirectory: true)
+    let target = fixture.appendingPathComponent("Library/com.example.app", isDirectory: true)
+    try fileManager.createDirectory(at: target, withIntermediateDirectories: true)
+
+    do {
+      try await UserTrashMove.moveToTrash(
+        [target],
+        homeDirectory: home,
+        temporaryDirectory: temporaryDirectory
+      )
+      XCTFail("Expected non-volatile target to be rejected")
+    } catch let error as FinderTrashError {
+      XCTAssertTrue(error.localizedDescription.contains(target.lastPathComponent))
     }
   }
 
@@ -530,5 +741,20 @@ final class ApplicationResidueTests: XCTestCase {
   private func createDirectory(_ url: URL) throws {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     try Data("x".utf8).write(to: url.appendingPathComponent(".keep"))
+  }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = 0
+
+  var value: Int {
+    lock.withLock { storage }
+  }
+
+  func increment() {
+    lock.withLock {
+      storage += 1
+    }
   }
 }

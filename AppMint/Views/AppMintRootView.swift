@@ -95,6 +95,11 @@ struct AppMintRootView: View {
               uninstallingApplication = application
             }
           )
+          .task(
+            id: "\(application.id)|\(application.latestVersion ?? "")|\(application.releaseNotes == nil)"
+          ) {
+            await library.refreshReleaseMetadataIfNeeded(for: application.id)
+          }
         }
       } else {
         DetailUnavailableView(isLoading: library.isRefreshing)

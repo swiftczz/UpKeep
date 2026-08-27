@@ -119,10 +119,18 @@ struct TauriUpdateProvider: Sendable {
 
     do {
       let manifest = try await fetchManifest(from: endpoint)
+      let releaseNotes: String?
+      if let notes = manifest.notes {
+        releaseNotes = notes
+      } else if let releaseNotesURL = manifest.releaseNotesURL {
+        releaseNotes = await TauriReleaseNotes.fetch(from: releaseNotesURL)
+      } else {
+        releaseNotes = nil
+      }
       application.applyRemoteRelease(
         version: manifest.version,
         releaseDate: manifest.publicationDate,
-        releaseNotes: manifest.notes,
+        releaseNotes: releaseNotes,
         releaseNotesURL: manifest.releaseNotesURL,
         canInstall: manifest.selectedPlatform() != nil
       )
@@ -177,6 +185,69 @@ struct TauriUpdateProvider: Sendable {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
     }
     return manifest
+  }
+}
+
+enum TauriReleaseNotes {
+  static func fetch(from releaseURL: URL) async -> String? {
+    guard let apiURL = githubReleaseAPIURL(from: releaseURL) else {
+      return nil
+    }
+
+    do {
+      guard
+        let data = try await UpdateHTTP.successfulData(from: apiURL),
+        data.count <= 2_000_000
+      else {
+        return nil
+      }
+      return parseGitHubRelease(data)
+    } catch {
+      return nil
+    }
+  }
+
+  static func githubReleaseAPIURL(from releaseURL: URL) -> URL? {
+    guard releaseURL.host?.lowercased() == "github.com" else {
+      return nil
+    }
+
+    let components = releaseURL.pathComponents
+      .filter { $0 != "/" }
+      .map { $0.removingPercentEncoding ?? $0 }
+    guard components.count >= 5,
+      components[2].lowercased() == "releases",
+      components[3].lowercased() == "tag"
+    else {
+      return nil
+    }
+
+    let owner = components[0]
+    let repository = components[1]
+    let tag = components[4...].joined(separator: "/")
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+    guard
+      let encodedOwner = owner.addingPercentEncoding(withAllowedCharacters: allowed),
+      let encodedRepository = repository.addingPercentEncoding(withAllowedCharacters: allowed),
+      let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: allowed),
+      let url = URL(
+        string:
+          "https://api.github.com/repos/\(encodedOwner)/\(encodedRepository)/releases/tags/\(encodedTag)"
+      )
+    else {
+      return nil
+    }
+    return url
+  }
+
+  static func parseGitHubRelease(_ data: Data) -> String? {
+    guard
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let body = json["body"] as? String
+    else {
+      return nil
+    }
+    return body.nonBlankValue
   }
 }
 

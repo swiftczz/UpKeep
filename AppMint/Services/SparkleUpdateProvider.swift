@@ -1,5 +1,22 @@
 import Foundation
 
+enum SparkleUpdateProviderError: LocalizedError {
+  case insecureFeed
+  case noAvailableUpdate
+  case noInstallablePackage
+
+  var errorDescription: String? {
+    switch self {
+    case .insecureFeed:
+      return "此应用没有提供安全的 Sparkle 更新源。"
+    case .noAvailableUpdate:
+      return "Sparkle 更新源中没有找到更新版本。"
+    case .noInstallablePackage:
+      return "Sparkle 更新源没有提供 AppMint 可安装的更新包。"
+    }
+  }
+}
+
 struct SparkleUpdateProvider: Sendable {
   func check(_ application: AppRecord) async -> AppRecord {
     var application = application
@@ -61,23 +78,14 @@ struct SparkleUpdateProvider: Sendable {
 
       let updateIsAvailable: Bool
 
-      if let candidateBuild = candidate.buildVersion,
-        let installedBuild = application.buildVersion
-      {
-        updateIsAvailable = VersionComparator.isNewer(candidateBuild, than: installedBuild)
-      } else {
-        updateIsAvailable = VersionComparator.isNewer(
-          latestVersion,
-          than: application.currentVersion
-        )
-      }
+      updateIsAvailable = Self.isUpdateAvailable(candidate, for: application)
 
       application.status =
         updateIsAvailable
         ? .updateAvailable
         : .upToDate
       application.canAutomaticallyUpdate =
-        updateIsAvailable && candidate.hasSecureDownload(relativeTo: feedURL)
+        updateIsAvailable && candidate.supportedPackageURL(relativeTo: feedURL) != nil
     } catch is CancellationError {
       return application
     } catch {
@@ -102,7 +110,32 @@ struct SparkleUpdateProvider: Sendable {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
-    try await SparkleApplicationUpdater.upgrade(application, progress: progress)
+    guard let feedURL = application.sourceURL, SecureUpdateURL.https(feedURL) != nil else {
+      throw SparkleUpdateProviderError.insecureFeed
+    }
+
+    progress(.indeterminate("正在检查更新…"))
+    guard let data = try await UpdateHTTP.successfulData(from: feedURL, attempts: 3) else {
+      throw SparkleUpdateProviderError.noAvailableUpdate
+    }
+
+    let candidates = try SparkleAppcastParser(data: data).parse()
+    guard let candidate = Self.bestCandidate(from: candidates.filter { !$0.isPrerelease }),
+      Self.isUpdateAvailable(candidate, for: application)
+    else {
+      throw SparkleUpdateProviderError.noAvailableUpdate
+    }
+    guard let packageURL = candidate.supportedPackageURL(relativeTo: feedURL) else {
+      throw SparkleUpdateProviderError.noInstallablePackage
+    }
+
+    try await ApplicationPackageInstaller.install(
+      from: packageURL,
+      replacing: application,
+      expectedSHA512: nil,
+      requiresTeamIdentifier: true,
+      progress: progress
+    )
   }
 
   static func bestCandidate(from candidates: [SparkleCandidate]) -> SparkleCandidate? {
@@ -152,6 +185,22 @@ struct SparkleUpdateProvider: Sendable {
     let left = lhs.shortVersion ?? lhs.buildVersion ?? "0"
     let right = rhs.shortVersion ?? rhs.buildVersion ?? "0"
     return VersionComparator.isNewer(right, than: left)
+  }
+
+  private static func isUpdateAvailable(
+    _ candidate: SparkleCandidate,
+    for application: AppRecord
+  ) -> Bool {
+    if let candidateBuild = candidate.buildVersion,
+      let installedBuild = application.buildVersion
+    {
+      return VersionComparator.isNewer(candidateBuild, than: installedBuild)
+    }
+
+    guard let latestVersion = candidate.displayVersion else {
+      return false
+    }
+    return VersionComparator.isNewer(latestVersion, than: application.currentVersion)
   }
 
   static func parsePublicationDate(_ value: String) -> Date? {
@@ -348,12 +397,29 @@ struct SparkleCandidate: Hashable, Sendable {
   }
 
   func hasSecureDownload(relativeTo feedURL: URL) -> Bool {
-    guard let downloadURL else { return false }
-    guard let resolvedURL = URL(string: downloadURL.relativeString, relativeTo: feedURL)?.absoluteURL
+    resolvedDownloadURL(relativeTo: feedURL) != nil
+  }
+
+  func supportedPackageURL(relativeTo feedURL: URL) -> URL? {
+    guard let url = resolvedDownloadURL(relativeTo: feedURL),
+      ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
     else {
-      return false
+      return nil
     }
-    return SecureUpdateURL.https(resolvedURL) != nil
+    return url
+  }
+
+  private func resolvedDownloadURL(relativeTo feedURL: URL) -> URL? {
+    guard let downloadURL else { return nil }
+    guard
+      let resolvedURL = URL(
+        string: downloadURL.relativeString,
+        relativeTo: feedURL
+      )?.absoluteURL
+    else {
+      return nil
+    }
+    return SecureUpdateURL.https(resolvedURL)
   }
 }
 

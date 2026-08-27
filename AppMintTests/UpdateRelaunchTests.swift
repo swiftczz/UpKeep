@@ -10,8 +10,9 @@ final class UpdateRelaunchTests: XCTestCase {
     try await UpdateRelaunch.perform(
       makeApplication(source: .tauri),
       process: recorder.client,
-      progress: { _ in }
-    ) {}
+      progress: { _ in },
+      operation: {}
+    )
 
     let events = recorder.events()
     XCTAssertEqual(events, [])
@@ -23,8 +24,9 @@ final class UpdateRelaunchTests: XCTestCase {
     try await UpdateRelaunch.perform(
       application,
       process: recorder.client,
-      progress: { _ in }
-    ) {}
+      progress: { _ in },
+      operation: {}
+    )
 
     let events = recorder.events()
     XCTAssertEqual(events, [.launch(application.applicationURL)])
@@ -51,14 +53,63 @@ final class UpdateRelaunchTests: XCTestCase {
     )
   }
 
+  func testTerminatesOrphanedHelperInsideApplicationBundle() async throws {
+    let fileManager = FileManager.default
+    let applicationURL = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintProcess-\(UUID().uuidString)/Demo.app", isDirectory: true)
+    let resourcesURL = applicationURL.appendingPathComponent(
+      "Contents/Resources", isDirectory: true)
+    let helperURL = resourcesURL.appendingPathComponent("DemoHelper")
+    try fileManager.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+    try fileManager.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: helperURL)
+
+    let helper = Process()
+    helper.executableURL = helperURL
+    helper.arguments = ["30"]
+    helper.standardOutput = FileHandle.nullDevice
+    helper.standardError = FileHandle.nullDevice
+    try helper.run()
+    defer {
+      if helper.isRunning {
+        _ = Darwin.kill(helper.processIdentifier, SIGKILL)
+      }
+      try? fileManager.removeItem(at: applicationURL.deletingLastPathComponent())
+    }
+
+    for _ in 0..<20 {
+      if ApplicationProcess.processIDs(inside: applicationURL).contains(helper.processIdentifier) {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    XCTAssertTrue(
+      ApplicationProcess.processIDs(inside: applicationURL).contains(helper.processIdentifier)
+    )
+
+    let application = AppRecord(
+      name: "Demo",
+      bundleIdentifier: "com.example.demo",
+      applicationURL: applicationURL,
+      currentVersion: "1.0"
+    )
+    XCTAssertTrue(ApplicationProcess.isRunning(application))
+
+    try await ApplicationProcess.quit(application)
+    for _ in 0..<40 where helper.isRunning {
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    XCTAssertFalse(helper.isRunning)
+  }
+
   func testQuitsHomebrewApplicationBeforeUpdatingThenRelaunches() async throws {
     let recorder = ProcessRecorder(isRunning: true)
     let application = makeApplication(source: .homebrew)
     try await UpdateRelaunch.perform(
       application,
       process: recorder.client,
-      progress: { _ in }
-    ) {}
+      progress: { _ in },
+      operation: {}
+    )
 
     let events = recorder.events()
     XCTAssertEqual(
@@ -78,10 +129,11 @@ final class UpdateRelaunchTests: XCTestCase {
       try await UpdateRelaunch.perform(
         application,
         process: recorder.client,
-        progress: { _ in }
-      ) {
-        throw ProcessRunnerError.failed(status: 1, message: "failed")
-      }
+        progress: { _ in },
+        operation: {
+          throw ProcessRunnerError.failed(status: 1, message: "failed")
+        }
+      )
       XCTFail("Expected the update to throw")
     } catch {
       let events = recorder.events()
