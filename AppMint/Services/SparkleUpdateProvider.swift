@@ -434,6 +434,7 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
   private var captureElement: String?
   private var captureBuffer = ""
   private var parserError: Error?
+  private var deltaContainerDepth = 0
 
   init(data: Data) {
     self.data = data
@@ -464,7 +465,13 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
 
     guard currentCandidate != nil else { return }
 
+    if key == "deltas" {
+      deltaContainerDepth += 1
+      return
+    }
+
     if key == "enclosure" {
+      guard deltaContainerDepth == 0 else { return }
       guard var candidate = currentCandidate else { return }
       candidate.downloadURL =
         Self.attribute(named: "url", in: attributeDict)
@@ -531,6 +538,11 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       currentCandidate = nil
       captureElement = nil
       captureBuffer = ""
+      return
+    }
+
+    if key == "deltas" {
+      deltaContainerDepth = max(0, deltaContainerDepth - 1)
       return
     }
 

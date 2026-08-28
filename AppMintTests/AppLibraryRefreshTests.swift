@@ -110,6 +110,7 @@ final class AppLibraryRefreshTests: XCTestCase {
       if library.availableUpdates.map(\.name) == ["Fast"],
         library.applications.contains(where: { $0.name == "Slow" && $0.status == .checking })
       {
+        XCTAssertEqual(library.checkingApplicationIDs, [slow.id])
         sawIncrementalUpdate = true
         break
       }
@@ -118,7 +119,33 @@ final class AppLibraryRefreshTests: XCTestCase {
     await refresh.value
     XCTAssertTrue(sawIncrementalUpdate)
     XCTAssertEqual(library.availableUpdates.map(\.name), ["Fast"])
+    XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
     XCTAssertEqual(library.phase, .idle)
+  }
+
+  func testRefreshLimitsConcurrentUpdateChecks() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let applications = (0..<24).map {
+      makeApplication(name: "Application \($0)", status: .checking)
+    }
+    let probe = CheckConcurrencyProbe()
+    let library = AppLibrary(
+      applications: [],
+      scanner: StubScanner(applications: applications),
+      coordinator: ConcurrencyTrackingCoordinator(probe: probe),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    await library.refresh()
+
+    let observation = await probe.observation
+    XCTAssertEqual(observation.maximum, 10)
+    XCTAssertEqual(observation.current, 0)
+    XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
   }
 
   func testRefreshIfStaleSkipsWhenRecentlyChecked() async throws {
@@ -498,6 +525,44 @@ private final class StubCoordinator: UpdateCoordinating, @unchecked Sendable {
     if let checkHandler {
       return await checkHandler(application)
     }
+    return application
+  }
+
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {}
+}
+
+private actor CheckConcurrencyProbe {
+  private var currentCount = 0
+  private var maximumCount = 0
+
+  var observation: (current: Int, maximum: Int) {
+    (currentCount, maximumCount)
+  }
+
+  func started() {
+    currentCount += 1
+    maximumCount = max(maximumCount, currentCount)
+  }
+
+  func finished() {
+    currentCount -= 1
+  }
+}
+
+private struct ConcurrencyTrackingCoordinator: UpdateCoordinating {
+  let probe: CheckConcurrencyProbe
+
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+    applications
+  }
+
+  func check(_ application: AppRecord) async -> AppRecord {
+    await probe.started()
+    try? await Task.sleep(for: .milliseconds(50))
+    await probe.finished()
     return application
   }
 

@@ -1,11 +1,14 @@
 import SwiftUI
 
 struct AppSidebarView: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   let applications: [AppRecord]
   @Binding var selection: AppRecord.ID?
   let searchText: String
   let phase: LibraryPhase
   let ignoredApplicationIDs: Set<AppRecord.ID>
+  let checkingApplicationIDs: Set<AppRecord.ID>
   let updateProgressByID: [AppRecord.ID: UpdateProgress]
   let ignoreUpdates: (AppRecord.ID) -> Void
   let stopIgnoringUpdates: (AppRecord.ID) -> Void
@@ -30,18 +33,51 @@ struct AppSidebarView: View {
     filteredApplications.ignoredUpdates(ignoredIDs: ignoredApplicationIDs)
   }
 
+  private var layoutSnapshot: LayoutSnapshot {
+    LayoutSnapshot(
+      availableUpdateIDs: availableUpdates.map(\.id),
+      installedApplicationIDs: installedApplications.map(\.id),
+      ignoredUpdateIDs: ignoredUpdates.map(\.id)
+    )
+  }
+
+  private var stableSelection: Binding<AppRecord.ID?> {
+    Binding(
+      get: { selection },
+      set: { proposedSelection in
+        if proposedSelection == nil,
+          let selection,
+          applications.contains(where: { $0.id == selection })
+        {
+          return
+        }
+        selection = proposedSelection
+      }
+    )
+  }
+
+  private var rowTransition: AnyTransition {
+    .asymmetric(
+      insertion: .move(edge: .top).combined(with: .opacity),
+      removal: .opacity
+    )
+  }
+
   var body: some View {
-    List(selection: $selection) {
+    List(selection: stableSelection) {
       if !availableUpdates.isEmpty {
         Section {
           ForEach(availableUpdates) { application in
             AppRowView(
               application: application,
               isUpdateIgnored: false,
+              isChecking: checkingApplicationIDs.contains(application.id),
               updateProgress: updateProgressByID[application.id]
             )
             .equatable()
+            .id(application.id)
             .tag(application.id)
+            .transition(rowTransition)
             .contextMenu {
               Button("忽略更新", systemImage: "bell.slash") {
                 ignoreUpdates(application.id)
@@ -62,10 +98,13 @@ struct AppSidebarView: View {
             AppRowView(
               application: application,
               isUpdateIgnored: false,
+              isChecking: checkingApplicationIDs.contains(application.id),
               updateProgress: updateProgressByID[application.id]
             )
             .equatable()
+            .id(application.id)
             .tag(application.id)
+            .transition(rowTransition)
           }
         } header: {
           sectionHeader("已安装的应用", count: installedApplications.count)
@@ -78,10 +117,13 @@ struct AppSidebarView: View {
             AppRowView(
               application: application,
               isUpdateIgnored: true,
+              isChecking: checkingApplicationIDs.contains(application.id),
               updateProgress: updateProgressByID[application.id]
             )
             .equatable()
+            .id(application.id)
             .tag(application.id)
+            .transition(rowTransition)
             .contextMenu {
               Button("取消忽略更新", systemImage: "bell") {
                 stopIgnoringUpdates(application.id)
@@ -97,7 +139,10 @@ struct AppSidebarView: View {
       }
     }
     .listStyle(.sidebar)
-    .animation(nil, value: applications)
+    .animation(
+      reduceMotion ? nil : .smooth(duration: 0.24),
+      value: layoutSnapshot
+    )
     .navigationTitle("AppMint")
     .overlay {
       if applications.isEmpty {
@@ -130,12 +175,8 @@ struct AppSidebarView: View {
   }
 }
 
-extension AppSidebarView: Equatable {
-  nonisolated static func == (lhs: AppSidebarView, rhs: AppSidebarView) -> Bool {
-    lhs.applications == rhs.applications
-      && lhs.searchText == rhs.searchText
-      && lhs.phase == rhs.phase
-      && lhs.ignoredApplicationIDs == rhs.ignoredApplicationIDs
-      && lhs.updateProgressByID == rhs.updateProgressByID
-  }
+private struct LayoutSnapshot: Equatable {
+  let availableUpdateIDs: [AppRecord.ID]
+  let installedApplicationIDs: [AppRecord.ID]
+  let ignoredUpdateIDs: [AppRecord.ID]
 }

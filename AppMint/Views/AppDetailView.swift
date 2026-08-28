@@ -143,7 +143,7 @@ struct AppDetailView: View {
       Button("在 Finder 中显示", systemImage: "folder", action: showInFinder)
     }
 
-    if canOpenAppStore {
+    if canOpenAppStore && !usesAppStoreUpdateHandoff {
       Button("在 App Store 中查看", systemImage: "apple.logo", action: openAppStore)
     }
 
@@ -300,7 +300,9 @@ struct AppDetailView: View {
     if usesUpdatePrimaryAction {
       switch application.source {
       case .appStore:
-        return "使用当前 App Store 账号下载并安装此更新"
+        return usesAppStoreUpdateHandoff
+          ? "在 App Store 中打开此应用并更新"
+          : "使用当前 App Store 账号下载并安装此更新"
       case .homebrew:
         return "使用 Homebrew 下载并安装此更新"
       case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .selfManaged:
@@ -324,7 +326,14 @@ struct AppDetailView: View {
   }
 
   private var usesUpdatePrimaryAction: Bool {
-    application.needsUpdate && application.canAutomaticallyUpdate
+    application.needsUpdate
+      && (application.canAutomaticallyUpdate || usesAppStoreUpdateHandoff)
+  }
+
+  private var usesAppStoreUpdateHandoff: Bool {
+    application.needsUpdate
+      && !application.canAutomaticallyUpdate
+      && canOpenAppStore
   }
 
   private func handlePrimaryAction() {

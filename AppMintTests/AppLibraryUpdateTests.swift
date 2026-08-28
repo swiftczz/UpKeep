@@ -57,6 +57,29 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.automaticUpdatesRequiringRelaunch().map(\.name), ["Running"])
   }
 
+  func testIPhoneAppStoreUpdateOpensItsStorePage() async throws {
+    let application = AppRecord(
+      name: "Minis",
+      bundleIdentifier: "com.openminis.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/Minis.app"),
+      currentVersion: "1.12",
+      source: .appStore,
+      appStorePlatform: .iPhone,
+      status: .updateAvailable,
+      latestVersion: "1.13",
+      sourceURL: URL(string: "https://apps.apple.com/cn/app/minis/id123456789"),
+      canAutomaticallyUpdate: false
+    )
+    let library = try makeLibrary(applications: [application], runningBundleIdentifiers: [])
+
+    let destination = await library.performPrimaryAction(for: application.id)
+
+    XCTAssertEqual(destination?.scheme, "macappstore")
+    XCTAssertEqual(destination?.host, "apps.apple.com")
+    XCTAssertEqual(destination?.path, "/cn/app/minis/id123456789")
+    XCTAssertTrue(library.automaticUpdates.isEmpty)
+  }
+
   func testFailedUpdateKeepsOriginalSelectionAndReportsFailureAfterRefresh() async throws {
     let eudic = makeUpdateApplication(
       name: "欧路词典",

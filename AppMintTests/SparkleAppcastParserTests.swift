@@ -184,6 +184,38 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertFalse(informationOnlyCandidate.hasSecureDownload(relativeTo: feedURL))
   }
 
+  func testIgnoresDeltaEnclosuresWhenSelectingInstallablePackage() throws {
+    let xml = """
+      <?xml version="1.0" encoding="utf-8"?>
+      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+        <channel>
+          <item>
+            <title>0.0.16</title>
+            <sparkle:version>0.0.16</sparkle:version>
+            <sparkle:shortVersionString>0.0.16</sparkle:shortVersionString>
+            <enclosure url="https://example.com/Screenflare-0.0.16.zip" />
+            <sparkle:deltas>
+              <enclosure
+                url="https://example.com/Screenflare-0.0.16-0.0.15.delta"
+                sparkle:deltaFrom="0.0.15"
+              />
+            </sparkle:deltas>
+          </item>
+        </channel>
+      </rss>
+      """
+
+    let feedURL = try XCTUnwrap(URL(string: "https://example.com/appcast.xml"))
+    let candidate = try XCTUnwrap(
+      SparkleAppcastParser(data: Data(xml.utf8)).parse().first
+    )
+
+    XCTAssertEqual(
+      candidate.supportedPackageURL(relativeTo: feedURL)?.absoluteString,
+      "https://example.com/Screenflare-0.0.16.zip"
+    )
+  }
+
   func testPrefersHigherBuildWhenMarketingVersionsMatch() {
     let older = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "108")
     let newer = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "110")

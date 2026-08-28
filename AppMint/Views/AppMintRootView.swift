@@ -29,11 +29,11 @@ struct AppMintRootView: View {
         searchText: searchText,
         phase: library.phase,
         ignoredApplicationIDs: library.ignoredApplicationIDs,
+        checkingApplicationIDs: library.checkingApplicationIDs,
         updateProgressByID: library.updateProgressByID,
         ignoreUpdates: { library.ignoreUpdates(for: $0) },
         stopIgnoringUpdates: { library.stopIgnoringUpdates(for: $0) }
       )
-      .equatable()
       .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 430)
     } detail: {
       if let application = library.selectedApplication {

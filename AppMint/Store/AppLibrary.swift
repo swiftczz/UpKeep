@@ -9,6 +9,7 @@ final class AppLibrary {
   var phase: LibraryPhase = .idle
   var lastCheckedAt: Date?
   var alertMessage: String?
+  private(set) var checkingApplicationIDs = Set<AppRecord.ID>()
   private(set) var updatingApplicationIDs = Set<AppRecord.ID>()
   private(set) var updateProgressByID: [AppRecord.ID: UpdateProgress] = [:]
   private(set) var ignoredBundleIdentifiers: Set<String>
@@ -24,6 +25,9 @@ final class AppLibrary {
   private var refreshRequested = false
 
   private static let ignoredBundleIdentifiersKey = "ignoredUpdateBundleIdentifiers"
+  private static let maximumConcurrentChecks = 10
+  private static let checkedResultBatchSize = 10
+  private static let checkedResultFlushDelay = Duration.milliseconds(250)
 
   init(
     applications: [AppRecord] = [],
@@ -216,6 +220,7 @@ final class AppLibrary {
     pendingCheckedFlushTask?.cancel()
     pendingCheckedFlushTask = nil
     pendingCheckedApplications.removeAll(keepingCapacity: true)
+    checkingApplicationIDs.removeAll(keepingCapacity: true)
     phase = .scanning
     alertMessage = nil
 
@@ -224,6 +229,7 @@ final class AppLibrary {
     guard !scannedApplications.isEmpty else {
       applications = []
       selectedApplicationID = nil
+      checkingApplicationIDs.removeAll(keepingCapacity: true)
       phase = .idle
       lastCheckedAt = .now
       persistSnapshot()
@@ -235,6 +241,7 @@ final class AppLibrary {
       selecting: previousSelection
     )
     phase = .checking
+    checkingApplicationIDs = Set(applications.map(\.id))
     await Task.yield()
 
     let enrichedApplications = await coordinator.enrich(applications)
@@ -244,19 +251,9 @@ final class AppLibrary {
     )
 
     let applicationsToCheck = applications
-    let coordinator = coordinator
-    await withTaskGroup(of: AppRecord.self) { group in
-      for application in applicationsToCheck {
-        group.addTask {
-          await coordinator.check(application)
-        }
-      }
-
-      for await checked in group {
-        queueChecked(checked)
-      }
-    }
+    await checkApplications(applicationsToCheck)
     flushPendingChecked()
+    checkingApplicationIDs.removeAll(keepingCapacity: true)
 
     let claimedApplications = await coordinator.enrich(applications)
     publish(
@@ -267,6 +264,30 @@ final class AppLibrary {
     lastCheckedAt = .now
     phase = .idle
     persistSnapshot()
+  }
+
+  private func checkApplications(_ applications: [AppRecord]) async {
+    let coordinator = coordinator
+    await withTaskGroup(of: AppRecord.self) { group in
+      var iterator = applications.makeIterator()
+
+      for _ in 0..<min(Self.maximumConcurrentChecks, applications.count) {
+        guard let application = iterator.next() else { break }
+        group.addTask {
+          await coordinator.check(application)
+        }
+      }
+
+      while let checked = await group.next() {
+        queueChecked(checked)
+
+        if let application = iterator.next() {
+          group.addTask {
+            await coordinator.check(application)
+          }
+        }
+      }
+    }
   }
 
   private func publish(_ applications: [AppRecord], selecting selection: AppRecord.ID?) {
@@ -280,13 +301,13 @@ final class AppLibrary {
 
   private func queueChecked(_ application: AppRecord) {
     pendingCheckedApplications.append(application)
-    if pendingCheckedApplications.count >= 12 {
+    if pendingCheckedApplications.count >= Self.checkedResultBatchSize {
       flushPendingChecked()
       return
     }
     guard pendingCheckedFlushTask == nil else { return }
     pendingCheckedFlushTask = Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(80))
+      try? await Task.sleep(for: Self.checkedResultFlushDelay)
       flushPendingChecked()
     }
   }
@@ -297,6 +318,7 @@ final class AppLibrary {
     let pending = pendingCheckedApplications
     pendingCheckedApplications.removeAll(keepingCapacity: true)
     guard !pending.isEmpty else { return }
+    checkingApplicationIDs.subtract(pending.lazy.map(\.id))
 
     var updated = applications
     for application in pending {
@@ -446,6 +468,13 @@ final class AppLibrary {
     if application.needsUpdate, application.canAutomaticallyUpdate {
       await update(application)
       return nil
+    }
+
+    if application.needsUpdate,
+      application.source == .appStore,
+      let sourceURL = application.sourceURL
+    {
+      return Self.nativeAppStoreURL(from: sourceURL)
     }
 
     return application.applicationURL
