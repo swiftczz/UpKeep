@@ -5,6 +5,7 @@ enum ApplicationPackageInstallerError: LocalizedError {
   case insecureDownload
   case downloadFailed
   case checksumMismatch
+  case invalidUpdateSignature
   case unsupportedPackage
   case missingApplication
   case bundleIdentifierMismatch
@@ -19,6 +20,8 @@ enum ApplicationPackageInstallerError: LocalizedError {
       return "更新包下载失败。"
     case .checksumMismatch:
       return "更新包校验失败，已中止安装。"
+    case .invalidUpdateSignature:
+      return "Sparkle 更新包签名校验失败，已中止安装。"
     case .unsupportedPackage:
       return "不支持此更新包格式。"
     case .missingApplication:
@@ -39,6 +42,8 @@ enum ApplicationPackageInstaller {
     replacing application: AppRecord,
     expectedSHA512: String?,
     expectedSHA256: String? = nil,
+    expectedEd25519Signature: String? = nil,
+    ed25519PublicKey: String? = nil,
     requiresTeamIdentifier: Bool = false,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
@@ -55,17 +60,32 @@ enum ApplicationPackageInstaller {
     progress(.indeterminate("正在下载…"))
     let downloadedURL = try await download(
       from: packageURL,
-      to: workingDirectory.appendingPathComponent(packageURL.lastPathComponent),
+      into: workingDirectory,
       progress: progress
     )
 
-    if expectedSHA512 != nil || expectedSHA256 != nil {
+    if expectedSHA512 != nil || expectedSHA256 != nil
+      || expectedEd25519Signature != nil || ed25519PublicKey != nil
+    {
       progress(.indeterminate("正在校验…"))
       try verifyChecksums(
         of: downloadedURL,
         expectedSHA512: expectedSHA512,
         expectedSHA256: expectedSHA256
       )
+    }
+    let hasVerifiedUpdateSignature: Bool
+    if let expectedEd25519Signature, let ed25519PublicKey {
+      try verifyEd25519Signature(
+        of: downloadedURL,
+        signature: expectedEd25519Signature,
+        publicKey: ed25519PublicKey
+      )
+      hasVerifiedUpdateSignature = true
+    } else if expectedEd25519Signature != nil || ed25519PublicKey != nil {
+      throw ApplicationPackageInstallerError.invalidUpdateSignature
+    } else {
+      hasVerifiedUpdateSignature = false
     }
 
     progress(.indeterminate("正在解压…"))
@@ -77,7 +97,8 @@ enum ApplicationPackageInstaller {
     try verifyIdentity(
       of: extractedApplicationURL,
       matching: application,
-      requiresTeamIdentifier: requiresTeamIdentifier
+      requiresTeamIdentifier: requiresTeamIdentifier,
+      hasVerifiedUpdateSignature: hasVerifiedUpdateSignature
     )
 
     try await ApplicationProcess.quit(application)
@@ -102,6 +123,25 @@ enum ApplicationPackageInstaller {
   static func verifySHA256(of fileURL: URL, expected: String) throws {
     let data = try Data(contentsOf: fileURL)
     try verifySHA256(data, expected: expected)
+  }
+
+  static func verifyEd25519Signature(
+    of fileURL: URL,
+    signature: String,
+    publicKey: String
+  ) throws {
+    guard
+      let signatureData = Data(base64Encoded: signature.filter { !$0.isWhitespace }),
+      let publicKeyData = Data(base64Encoded: publicKey.filter { !$0.isWhitespace }),
+      let verifier = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
+    else {
+      throw ApplicationPackageInstallerError.invalidUpdateSignature
+    }
+
+    let packageData = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+    guard verifier.isValidSignature(signatureData, for: packageData) else {
+      throw ApplicationPackageInstallerError.invalidUpdateSignature
+    }
   }
 
   private static func verifyChecksums(
@@ -170,14 +210,38 @@ enum ApplicationPackageInstaller {
     return 0
   }
 
+  static func isPotentiallyInstallablePackageURL(_ url: URL) -> Bool {
+    packageKindScore(of: url.lastPathComponent) > 0 || isGitHubReleaseAssetAPIURL(url)
+  }
+
+  static func isGitHubReleaseAssetAPIURL(_ url: URL) -> Bool {
+    guard url.host?.lowercased() == "api.github.com" else {
+      return false
+    }
+    let components = url.pathComponents.filter { $0 != "/" }
+    guard components.count == 6,
+      components[0].lowercased() == "repos",
+      components[3].lowercased() == "releases",
+      components[4].lowercased() == "assets"
+    else {
+      return false
+    }
+    return Int(components[5]) != nil
+  }
+
   static func downloadRequest(for url: URL) -> URLRequest {
     var request = URLRequest(
       url: url,
-      cachePolicy: .reloadIgnoringLocalCacheData
+      cachePolicy: .reloadIgnoringLocalCacheData,
+      timeoutInterval: 60
     )
     request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
     request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
     request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+    if isGitHubReleaseAssetAPIURL(url) {
+      request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+      request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+    }
     return request
   }
 
@@ -185,33 +249,72 @@ enum ApplicationPackageInstaller {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
     configuration.urlCache = nil
+    configuration.waitsForConnectivity = true
+    configuration.httpMaximumConnectionsPerHost = 4
+    configuration.timeoutIntervalForRequest = 60
+    configuration.timeoutIntervalForResource = 30 * 60
     return configuration
   }
 
   private static func download(
     from url: URL,
-    to destinationURL: URL,
+    into directory: URL,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws -> URL {
+    let downloader = FileDownloadTask(progress: progress)
+    defer { downloader.invalidate() }
+
     var lastError: (any Error)?
-    for attempt in 0..<3 {
+    let totalAttempts = NetworkRetryPolicy.downloadAttempts
+    for attempt in 0..<totalAttempts {
       do {
-        let downloadedURL = try await FileDownloadTask.download(from: url, progress: progress)
+        let download = try await downloader.download(from: url)
+        guard let fileName = supportedPackageFileName(
+          suggestedFilename: download.suggestedFilename,
+          sourceURL: url
+        ) else {
+          try? FileManager.default.removeItem(at: download.url)
+          throw ApplicationPackageInstallerError.unsupportedPackage
+        }
+        let destinationURL = directory.appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: destinationURL.path) {
           try FileManager.default.removeItem(at: destinationURL)
         }
-        try FileManager.default.moveItem(at: downloadedURL, to: destinationURL)
+        try FileManager.default.moveItem(at: download.url, to: destinationURL)
         return destinationURL
       } catch let error as CancellationError {
         throw error
       } catch {
         lastError = error
-        if attempt < 2 {
-          try? await Task.sleep(for: .milliseconds(350 * (attempt + 1)))
+        guard NetworkRetryPolicy.shouldRetry(error), attempt < totalAttempts - 1 else {
+          throw NetworkRetryPolicy.presentableError(error, attempts: attempt + 1)
         }
+        progress(.indeterminate("连接中断，正在重试（\(attempt + 2)/\(totalAttempts)）…"))
+        try await NetworkRetryPolicy.sleepBeforeRetry(
+          afterAttempt: attempt,
+          retryAfter: NetworkRetryPolicy.retryAfterDelay(from: error)
+        )
       }
     }
-    throw lastError ?? ApplicationPackageInstallerError.downloadFailed
+    let error = lastError ?? ApplicationPackageInstallerError.downloadFailed
+    throw NetworkRetryPolicy.presentableError(error, attempts: totalAttempts)
+  }
+
+  static func supportedPackageFileName(
+    suggestedFilename: String?,
+    sourceURL: URL
+  ) -> String? {
+    for candidate in [suggestedFilename, sourceURL.lastPathComponent] {
+      guard let candidate else { continue }
+      let fileName = (candidate as NSString).lastPathComponent
+      guard fileName != ".", fileName != "..",
+        packageKindScore(of: fileName) > 0
+      else {
+        continue
+      }
+      return fileName
+    }
+    return nil
   }
 
   private static func extractApplication(from packageURL: URL, into directory: URL) throws -> URL {
@@ -291,7 +394,8 @@ enum ApplicationPackageInstaller {
   private static func verifyIdentity(
     of candidateURL: URL,
     matching application: AppRecord,
-    requiresTeamIdentifier: Bool
+    requiresTeamIdentifier: Bool,
+    hasVerifiedUpdateSignature: Bool
   ) throws {
     guard let bundle = Bundle(url: candidateURL),
       let bundleIdentifier = bundle.bundleIdentifier,
@@ -305,12 +409,29 @@ enum ApplicationPackageInstaller {
     if requiresTeamIdentifier && !ApplicationCodeSigning.signatureIsValid(at: candidateURL) {
       throw ApplicationPackageInstallerError.invalidSignature
     }
-    if requiresTeamIdentifier && (installedTeam == nil || candidateTeam != installedTeam) {
+    if !teamIdentifiersMatch(
+      installed: installedTeam,
+      candidate: candidateTeam,
+      requiresTeamIdentifier: requiresTeamIdentifier,
+      hasVerifiedUpdateSignature: hasVerifiedUpdateSignature
+    ) {
       throw ApplicationPackageInstallerError.teamIdentifierMismatch
     }
-    if let installedTeam, let candidateTeam, installedTeam != candidateTeam {
-      throw ApplicationPackageInstallerError.teamIdentifierMismatch
+  }
+
+  static func teamIdentifiersMatch(
+    installed: String?,
+    candidate: String?,
+    requiresTeamIdentifier: Bool,
+    hasVerifiedUpdateSignature: Bool
+  ) -> Bool {
+    if let installed, let candidate {
+      return installed == candidate
     }
+    if requiresTeamIdentifier {
+      return installed == nil && hasVerifiedUpdateSignature
+    }
+    return true
   }
 
   private static func run(_ executable: String, _ arguments: [String]) throws {
@@ -321,38 +442,74 @@ enum ApplicationPackageInstaller {
   }
 }
 
+private struct DownloadedFile: Sendable {
+  let url: URL
+  let suggestedFilename: String?
+}
+
 private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
   private let progress: @Sendable (UpdateProgress) -> Void
-  private var continuation: CheckedContinuation<URL, any Error>?
-  private var session: URLSession?
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<DownloadedFile, any Error>?
+  private var activeTask: URLSessionDownloadTask?
   private var stagedURL: URL?
+  private var isCancelled = false
 
-  static func download(
-    from url: URL,
+  private lazy var session = URLSession(
+    configuration: ApplicationPackageInstaller.downloadSessionConfiguration(),
+    delegate: self,
+    delegateQueue: nil
+  )
+
+  init(
     progress: @escaping @Sendable (UpdateProgress) -> Void
-  ) async throws -> URL {
-    try await withCheckedThrowingContinuation { continuation in
-      let task = FileDownloadTask(progress: progress, continuation: continuation)
-      task.start(url)
+  ) {
+    self.progress = progress
+  }
+
+  func download(from url: URL) async throws -> DownloadedFile {
+    try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      return try await withCheckedThrowingContinuation { continuation in
+        start(url, continuation: continuation)
+      }
+    } onCancel: {
+      cancel()
     }
   }
 
-  private init(
-    progress: @escaping @Sendable (UpdateProgress) -> Void,
-    continuation: CheckedContinuation<URL, any Error>
-  ) {
-    self.progress = progress
-    self.continuation = continuation
+  func invalidate() {
+    cancel()
+    session.finishTasksAndInvalidate()
   }
 
-  private func start(_ url: URL) {
-    let session = URLSession(
-      configuration: ApplicationPackageInstaller.downloadSessionConfiguration(),
-      delegate: self,
-      delegateQueue: nil
+  private func start(
+    _ url: URL,
+    continuation: CheckedContinuation<DownloadedFile, any Error>
+  ) {
+    lock.lock()
+    guard !isCancelled else {
+      lock.unlock()
+      continuation.resume(throwing: CancellationError())
+      return
+    }
+
+    self.continuation = continuation
+    stagedURL = nil
+    let task = session.downloadTask(
+      with: ApplicationPackageInstaller.downloadRequest(for: url)
     )
-    self.session = session
-    session.downloadTask(with: ApplicationPackageInstaller.downloadRequest(for: url)).resume()
+    activeTask = task
+    lock.unlock()
+    task.resume()
+  }
+
+  private func cancel() {
+    lock.lock()
+    isCancelled = true
+    let task = activeTask
+    lock.unlock()
+    task?.cancel()
   }
 
   func urlSession(
@@ -382,7 +539,9 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
       .appendingPathComponent("AppMint-download-\(UUID().uuidString)")
     do {
       try FileManager.default.copyItem(at: location, to: destination)
+      lock.lock()
       stagedURL = destination
+      lock.unlock()
     } catch {
       finish(.failure(error))
     }
@@ -394,20 +553,65 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
     didCompleteWithError error: (any Error)?
   ) {
     if let error {
-      finish(.failure(error))
+      if (error as? URLError)?.code == .cancelled {
+        finish(.failure(CancellationError()))
+      } else {
+        finish(.failure(error))
+      }
       return
     }
+
+    if let response = task.response as? HTTPURLResponse,
+      !(200..<300).contains(response.statusCode)
+    {
+      finish(
+        .failure(
+          UpdateHTTPError.statusCode(
+            response.statusCode,
+            retryAfter: NetworkRetryPolicy.retryAfterDelay(from: response)
+          )
+        )
+      )
+      return
+    }
+
+    lock.lock()
+    let stagedURL = stagedURL
+    lock.unlock()
     if let stagedURL {
-      finish(.success(stagedURL))
+      finish(
+        .success(
+          DownloadedFile(
+            url: stagedURL,
+            suggestedFilename: task.response?.suggestedFilename
+          )
+        )
+      )
     } else {
       finish(.failure(ApplicationPackageInstallerError.downloadFailed))
     }
   }
 
-  private func finish(_ result: Result<URL, any Error>) {
-    session?.finishTasksAndInvalidate()
-    session = nil
-    continuation?.resume(with: result)
-    continuation = nil
+  private func finish(_ result: Result<DownloadedFile, any Error>) {
+    lock.lock()
+    guard let continuation else {
+      lock.unlock()
+      return
+    }
+    let discardedURL: URL?
+    if case .failure = result {
+      discardedURL = stagedURL
+    } else {
+      discardedURL = nil
+    }
+    self.continuation = nil
+    activeTask = nil
+    stagedURL = nil
+    lock.unlock()
+
+    if let discardedURL {
+      try? FileManager.default.removeItem(at: discardedURL)
+    }
+    continuation.resume(with: result)
   }
 }

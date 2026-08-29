@@ -115,7 +115,12 @@ struct SparkleUpdateProvider: Sendable {
     }
 
     progress(.indeterminate("正在检查更新…"))
-    guard let data = try await UpdateHTTP.successfulData(from: feedURL, attempts: 3) else {
+    guard
+      let data = try await UpdateHTTP.successfulData(
+        from: feedURL,
+        attempts: NetworkRetryPolicy.downloadAttempts
+      )
+    else {
       throw SparkleUpdateProviderError.noAvailableUpdate
     }
 
@@ -133,6 +138,10 @@ struct SparkleUpdateProvider: Sendable {
       from: packageURL,
       replacing: application,
       expectedSHA512: nil,
+      expectedEd25519Signature: candidate.edSignature,
+      ed25519PublicKey: ApplicationCodeSigning.sparklePublicEDKey(
+        at: application.applicationURL
+      ),
       requiresTeamIdentifier: true,
       progress: progress
     )
@@ -371,6 +380,7 @@ struct SparkleCandidate: Hashable, Sendable {
   var operatingSystem: String?
   var architecture: String?
   var channel: String?
+  var edSignature: String?
 
   var displayVersion: String? {
     if let title {
@@ -497,6 +507,9 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       candidate.architecture =
         Self.attribute(named: "arch", in: attributeDict)
         ?? candidate.architecture
+      candidate.edSignature =
+        Self.attribute(named: "edsignature", in: attributeDict)
+        ?? candidate.edSignature
       currentCandidate = candidate
       return
     }

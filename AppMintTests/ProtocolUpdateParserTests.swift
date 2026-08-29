@@ -138,6 +138,27 @@ final class ProtocolUpdateParserTests: XCTestCase {
     XCTAssertEqual(platform.sha256, "bbb")
   }
 
+  func testSelectsExtensionlessGitHubReleaseAssetForTauriUpdate() throws {
+    let data = Data(
+      """
+      {
+        "version": "0.12.6",
+        "platforms": {
+          "darwin-aarch64": {
+            "url": "https://api.github.com/repos/readest/readest/releases/assets/534295058"
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(
+      manifest.selectedPlatform(architecture: .arm64)?.url.absoluteString,
+      "https://api.github.com/repos/readest/readest/releases/assets/534295058"
+    )
+  }
+
   func testBuildsGitHubReleaseAPIURLAndParsesReleaseBody() throws {
     let releaseURL = try XCTUnwrap(
       URL(string: "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.7.0")
@@ -341,6 +362,58 @@ final class ProtocolUpdateParserTests: XCTestCase {
     XCTAssertNoThrow(try ApplicationPackageInstaller.verifySHA256(of: fileURL, expected: digest))
     XCTAssertThrowsError(
       try ApplicationPackageInstaller.verifySHA256(of: fileURL, expected: "abcd")
+    )
+  }
+
+  func testVerifiesSparkleEd25519Signature() throws {
+    let privateKey = Curve25519.Signing.PrivateKey()
+    let data = Data("Pastel update".utf8)
+    let signature = try privateKey.signature(for: data)
+    let fileURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AppMint-ed25519-\(UUID().uuidString)")
+    try data.write(to: fileURL)
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    XCTAssertNoThrow(
+      try ApplicationPackageInstaller.verifyEd25519Signature(
+        of: fileURL,
+        signature: signature.base64EncodedString(),
+        publicKey: privateKey.publicKey.rawRepresentation.base64EncodedString()
+      )
+    )
+    XCTAssertThrowsError(
+      try ApplicationPackageInstaller.verifyEd25519Signature(
+        of: fileURL,
+        signature: Data(repeating: 0, count: 64).base64EncodedString(),
+        publicKey: privateKey.publicKey.rawRepresentation.base64EncodedString()
+      )
+    )
+  }
+
+  func testVerifiedSparkleSignatureAllowsMissingTeamIdentifier() {
+    XCTAssertTrue(
+      ApplicationPackageInstaller.teamIdentifiersMatch(
+        installed: nil,
+        candidate: nil,
+        requiresTeamIdentifier: true,
+        hasVerifiedUpdateSignature: true
+      )
+    )
+    XCTAssertFalse(
+      ApplicationPackageInstaller.teamIdentifiersMatch(
+        installed: nil,
+        candidate: nil,
+        requiresTeamIdentifier: true,
+        hasVerifiedUpdateSignature: false
+      )
+    )
+    XCTAssertFalse(
+      ApplicationPackageInstaller.teamIdentifiersMatch(
+        installed: "OLDTEAM123",
+        candidate: "NEWTEAM456",
+        requiresTeamIdentifier: true,
+        hasVerifiedUpdateSignature: true
+      )
     )
   }
 

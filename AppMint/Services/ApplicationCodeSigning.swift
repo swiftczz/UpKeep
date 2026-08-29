@@ -32,4 +32,14 @@ enum ApplicationCodeSigning {
     let identifier = line.replacingOccurrences(of: "TeamIdentifier=", with: "")
     return identifier == "notset" ? nil : identifier
   }
+
+  static func sparklePublicEDKey(at applicationURL: URL) -> String? {
+    guard
+      let value = Bundle(url: applicationURL)?
+        .object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+    else {
+      return nil
+    }
+    return value.trimmingCharacters(in: .whitespacesAndNewlines).nonBlankValue
+  }
 }

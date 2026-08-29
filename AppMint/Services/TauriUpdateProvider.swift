@@ -98,7 +98,7 @@ struct TauriUpdateManifest: Equatable, Sendable {
   }
 
   private static func isInstallable(_ url: URL) -> Bool {
-    ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
+    ApplicationPackageInstaller.isPotentiallyInstallablePackageURL(url)
   }
 
   private static func parseDate(_ value: String) -> Date? {

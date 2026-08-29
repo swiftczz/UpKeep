@@ -214,7 +214,11 @@ extension AppRecord {
     }
 
     guard let latestVersion else { return false }
-    return VersionComparator.isNewer(latestVersion, than: installed.currentVersion)
+    return VersionComparator.isNewer(
+      latestVersion,
+      than: installed.currentVersion,
+      build: installed.buildVersion
+    )
   }
 
   static func formattedVersion(_ version: String, build: String?) -> String {
