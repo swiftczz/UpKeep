@@ -6,52 +6,68 @@ struct AppStoreUpdateProvider: Sendable {
 
     do {
       let platform = application.appStorePlatform ?? .mac
-      let country =
-        application.appStoreCountryCode?.lowercased()
-        ?? Locale.current.region?.identifier.lowercased()
-        ?? "us"
-      guard
-        let url = Self.lookupURL(
-          bundleIdentifier: application.bundleIdentifier,
-          storeIdentifier: application.sourceIdentifier,
-          country: country,
-          platform: platform
-        )
-      else {
+      let countries = Self.lookupCountries(for: application)
+      guard !countries.isEmpty else {
         application.status = .unavailable("无法创建 App Store 查询地址。")
         return application
       }
 
-      guard
-        let data = try await UpdateHTTP.successfulData(from: url)
-      else {
-        application.status = .unavailable("App Store 暂时无法访问。")
-        return application
-      }
+      var matched: (country: String, result: AppStoreLookupResult)?
+      var sawReachableCatalog = false
+      var sawNetworkFailure = false
 
-      let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
-      guard
-        var result = lookup.result(
+      for country in countries {
+        guard
+          let url = Self.lookupURL(
+            bundleIdentifier: application.bundleIdentifier,
+            storeIdentifier: application.sourceIdentifier,
+            country: country,
+            platform: platform
+          )
+        else {
+          continue
+        }
+
+        guard let data = try await UpdateHTTP.successfulData(from: url) else {
+          sawNetworkFailure = true
+          continue
+        }
+
+        sawReachableCatalog = true
+        let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
+        if let result = lookup.result(
           matching: application.bundleIdentifier,
           platform: platform
-        )
-      else {
-        application.status = .unavailable("当前商店地区找不到对应的平台版本。")
+        ) {
+          matched = (country, result)
+          break
+        }
+      }
+
+      guard var matched else {
+        application.status =
+          sawReachableCatalog
+          ? .unavailable("在 App Store 中找不到对应的平台版本。")
+          : .unavailable(
+            sawNetworkFailure ? "App Store 暂时无法访问。" : "无法创建 App Store 查询地址。"
+          )
         return application
       }
 
       // Lookup-by-bundleId can lag hours behind the live catalog that App Store
       // itself uses. Once we have an Adam ID, query again by `id`.
-      if (application.sourceIdentifier ?? "").isEmpty, let trackID = result.trackID {
-        result =
+      if (application.sourceIdentifier ?? "").isEmpty, let trackID = matched.result.trackID {
+        matched.result =
           try await Self.fetchLookupResult(
             bundleIdentifier: application.bundleIdentifier,
             storeIdentifier: String(trackID),
-            country: country,
+            country: matched.country,
             platform: platform
-          ) ?? result
+          ) ?? matched.result
       }
 
+      let result = matched.result
+      application.appStoreCountryCode = matched.country
       application.appStorePlatform = result.appStorePlatform ?? platform
       application.latestVersion = result.version
       application.releaseNotes = result.releaseNotes?.nonBlankValue
@@ -74,6 +90,39 @@ struct AppStoreUpdateProvider: Sendable {
     }
 
     return application
+  }
+
+  static func lookupCountries(for application: AppRecord) -> [String] {
+    var countries: [String] = []
+    var seen = Set<String>()
+
+    func add(_ raw: String?) {
+      guard let code = normalizedCountryCode(raw), seen.insert(code).inserted else {
+        return
+      }
+      countries.append(code)
+    }
+
+    add(application.appStoreCountryCode)
+    add(Locale.current.region?.identifier)
+    for code in ["us", "cn", "hk", "tw", "mo", "jp", "sg", "gb", "au", "ca", "de", "kr"] {
+      add(code)
+    }
+    return countries
+  }
+
+  private static func normalizedCountryCode(_ raw: String?) -> String? {
+    guard let raw else { return nil }
+    var code = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if let separator = code.firstIndex(where: { $0 == "-" || $0 == "_" }) {
+      let suffix = String(code[code.index(after: separator)...])
+      code = suffix.count == 2 ? suffix : String(code[..<separator])
+    }
+    guard code.count == 2, code.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) })
+    else {
+      return nil
+    }
+    return code
   }
 
   static func lookupURL(

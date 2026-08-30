@@ -446,6 +446,9 @@ final class AppLibrary {
     if merged.sourceIdentifier == nil, previous.source == merged.source {
       merged.sourceIdentifier = previous.sourceIdentifier
     }
+    if merged.appStoreCountryCode == nil, previous.source == merged.source {
+      merged.appStoreCountryCode = previous.appStoreCountryCode
+    }
     if merged.releaseNotes == nil {
       merged.releaseNotes = previous.releaseNotes
     }

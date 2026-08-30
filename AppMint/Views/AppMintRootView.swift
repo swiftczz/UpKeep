@@ -74,18 +74,8 @@ struct AppMintRootView: View {
             showInFinder: {
               reveal(application.applicationURL)
             },
-            openAppStore: {
-              guard let destination = library.appStoreURL(for: application.id) else { return }
-              open(destination)
-            },
             openHomepage: {
-              guard
-                application.source == .homebrew || application.source == .sparkle
-                  || application.source == .githubReleases,
-                let homepageURL = application.homepageURL
-              else {
-                return
-              }
+              guard let homepageURL = application.homepageURL else { return }
               open(homepageURL)
             },
             openReleaseNotes: {

@@ -111,6 +111,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         "version": "v1.31.1",
         "notes": "",
         "pub_date": "",
+        "download_page": "https://reasonix.io/?download=desktop#start",
         "release_notes_url": "https://reasonix.io/changelog/v1.31.1/",
         "platforms": {
           "darwin-amd64": {
@@ -133,9 +134,61 @@ final class ProtocolUpdateParserTests: XCTestCase {
       manifest.releaseNotesURL?.absoluteString,
       "https://reasonix.io/changelog/v1.31.1/"
     )
+    XCTAssertEqual(
+      manifest.downloadPageURL?.absoluteString,
+      "https://reasonix.io/?download=desktop#start"
+    )
+    XCTAssertEqual(manifest.homepageURL()?.absoluteString, "https://reasonix.io")
     let platform = try XCTUnwrap(manifest.selectedPlatform(architecture: .arm64))
     XCTAssertEqual(platform.url.lastPathComponent, "Reasonix-darwin-arm64.zip")
     XCTAssertEqual(platform.sha256, "bbb")
+  }
+
+  func testDerivesReasonixStudioHomepageFromGitHubDownloadPage() throws {
+    let data = Data(
+      """
+      {
+        "version": "v2.10.0",
+        "download_page": "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.10.0",
+        "release_notes_url": "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.10.0",
+        "platforms": {
+          "darwin-arm64": {
+            "url": "https://github.com/esengine/DeepSeek-Reasonix/releases/download/studio-v2.10.0/ReasonixStudio-darwin-universal.zip"
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(
+      manifest.homepageURL()?.absoluteString,
+      "https://github.com/esengine/DeepSeek-Reasonix"
+    )
+  }
+
+  func testDerivesTauriHomepageFromChangelogWhenDownloadPageIsMissing() throws {
+    let data = Data(
+      """
+      {
+        "version": "v1.31.1",
+        "release_notes_url": "https://reasonix.io/changelog/v1.31.1/",
+        "platforms": {
+          "darwin-arm64": {
+            "url": "https://dl.reasonix.io/desktop-v1.31.1/Reasonix-darwin-arm64.zip"
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(
+      manifest.homepageURL(
+        endpoint: URL(string: "https://dl.reasonix.io/latest/latest.json")
+      )?.absoluteString,
+      "https://reasonix.io"
+    )
   }
 
   func testSelectsExtensionlessGitHubReleaseAssetForTauriUpdate() throws {
@@ -157,6 +210,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
       manifest.selectedPlatform(architecture: .arm64)?.url.absoluteString,
       "https://api.github.com/repos/readest/readest/releases/assets/534295058"
     )
+    XCTAssertEqual(manifest.homepageURL()?.absoluteString, "https://github.com/readest/readest")
   }
 
   func testBuildsGitHubReleaseAPIURLAndParsesReleaseBody() throws {

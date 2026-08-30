@@ -168,6 +168,41 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertEqual(MacAppStoreUpdateProvider.adamIdentifier(for: application), 1_518_036_000)
   }
 
+  func testLookupCountriesPutsKnownStorefrontFirstAndDeduplicates() {
+    let application = AppRecord(
+      name: "Clash",
+      bundleIdentifier: "com.hako.network",
+      applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
+      currentVersion: "1.0.4",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "US",
+      status: .checking
+    )
+
+    let countries = AppStoreUpdateProvider.lookupCountries(for: application)
+
+    XCTAssertEqual(countries.first, "us")
+    XCTAssertTrue(countries.contains("cn"))
+    XCTAssertEqual(Set(countries).count, countries.count)
+    XCTAssertTrue(countries.allSatisfy { $0.count == 2 })
+  }
+
+  func testLookupCountriesNormalizesLocaleStyleCodes() {
+    let application = AppRecord(
+      name: "Clash",
+      bundleIdentifier: "com.hako.network",
+      applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
+      currentVersion: "1.0.4",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "en_US",
+      status: .checking
+    )
+
+    XCTAssertEqual(AppStoreUpdateProvider.lookupCountries(for: application).first, "us")
+  }
+
   func testSelectsIPhoneReleaseForWrappedApplication() throws {
     let data = Data(
       """

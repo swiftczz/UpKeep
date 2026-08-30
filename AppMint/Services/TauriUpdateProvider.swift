@@ -11,7 +11,20 @@ struct TauriUpdateManifest: Equatable, Sendable {
   var notes: String?
   var publicationDate: Date?
   var releaseNotesURL: URL?
+  var downloadPageURL: URL?
   var platforms: [String: Platform]
+
+  func homepageURL(
+    endpoint: URL? = nil,
+    architecture: MacCPUArchitecture = .current
+  ) -> URL? {
+    TauriHomepage.url(
+      downloadPage: downloadPageURL,
+      releaseNotesURL: releaseNotesURL,
+      packageURL: selectedPlatform(architecture: architecture)?.url,
+      endpoint: endpoint
+    )
+  }
 
   func selectedPlatform(architecture: MacCPUArchitecture = .current) -> Platform? {
     let preferredKeys: [String]
@@ -93,6 +106,7 @@ struct TauriUpdateManifest: Equatable, Sendable {
       releaseNotesURL: (json["release_notes_url"] as? String).flatMap(
         SecureUpdateURL.https(string:)
       ),
+      downloadPageURL: (json["download_page"] as? String).flatMap(SecureUpdateURL.https(string:)),
       platforms: platforms
     )
   }
@@ -130,6 +144,9 @@ struct TauriUpdateProvider: Sendable {
         )
       } else {
         releaseNotes = await TauriReleaseNotes.fetch(from: nil, packageURL: selectedPlatform?.url)
+      }
+      if let homepageURL = manifest.homepageURL(endpoint: endpoint) {
+        application.homepageURL = homepageURL
       }
       application.applyRemoteRelease(
         version: manifest.version,
@@ -189,6 +206,92 @@ struct TauriUpdateProvider: Sendable {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
     }
     return manifest
+  }
+}
+
+enum TauriHomepage {
+  static func url(
+    downloadPage: URL?,
+    releaseNotesURL: URL?,
+    packageURL: URL?,
+    endpoint: URL?
+  ) -> URL? {
+    if let downloadPage {
+      return githubRepositoryHomepage(from: downloadPage) ?? siteHomepage(from: downloadPage)
+    }
+
+    for url in [releaseNotesURL, packageURL, endpoint].compactMap({ $0 }) {
+      if let homepage = githubRepositoryHomepage(from: url) {
+        return homepage
+      }
+    }
+
+    return releaseNotesURL.flatMap(siteHomepage(from:))
+  }
+
+  static func githubRepositoryHomepage(from url: URL) -> URL? {
+    guard let host = url.host?.lowercased() else {
+      return nil
+    }
+
+    let parts = url.pathComponents
+      .filter { $0 != "/" }
+      .map { $0.removingPercentEncoding ?? $0 }
+    let owner: String
+    let repository: String
+    if host == "github.com" || host == "www.github.com" {
+      guard parts.count >= 2 else { return nil }
+      owner = parts[0]
+      repository = parts[1]
+    } else if host == "api.github.com" {
+      guard parts.count >= 3, parts[0].lowercased() == "repos" else { return nil }
+      owner = parts[1]
+      repository = parts[2]
+    } else {
+      return nil
+    }
+
+    let reservedOwners: Set<String> = [
+      "about", "apps", "collections", "events", "explore", "features", "login",
+      "marketplace", "notifications", "orgs", "pricing", "settings", "sponsors",
+      "topics", "users",
+    ]
+    let normalizedOwner = owner.lowercased()
+    let normalizedRepository = repository
+      .replacingOccurrences(of: ".git", with: "", options: [.anchored, .backwards])
+    guard !reservedOwners.contains(normalizedOwner),
+      isRepositoryComponent(normalizedOwner),
+      isRepositoryComponent(normalizedRepository),
+      let homepage = URL(string: "https://github.com/\(owner)/\(normalizedRepository)")
+    else {
+      return nil
+    }
+    return homepage
+  }
+
+  private static func siteHomepage(from url: URL) -> URL? {
+    guard SecureUpdateURL.https(url) != nil, let host = url.host?.lowercased() else {
+      return nil
+    }
+    if isAssetHost(host) {
+      return nil
+    }
+
+    var components = URLComponents()
+    components.scheme = "https"
+    components.host = url.host
+    return components.url.flatMap(SecureUpdateURL.https)
+  }
+
+  private static func isAssetHost(_ host: String) -> Bool {
+    let firstLabel = host.split(separator: ".").first.map(String.init)?.lowercased() ?? ""
+    return ["assets", "cdn", "dl", "download", "downloads", "releases", "static"].contains(
+      firstLabel
+    )
+  }
+
+  private static func isRepositoryComponent(_ value: String) -> Bool {
+    !value.isEmpty && value != "." && value != ".." && value.count <= 100
   }
 }
 

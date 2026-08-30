@@ -9,7 +9,6 @@ struct AppDetailView: View {
   let primaryAction: () -> Void
   let openApplication: () -> Void
   let showInFinder: () -> Void
-  let openAppStore: () -> Void
   let openHomepage: () -> Void
   let openReleaseNotes: () -> Void
   let uninstallApplication: () -> Void
@@ -143,14 +142,6 @@ struct AppDetailView: View {
       Button("在 Finder 中显示", systemImage: "folder", action: showInFinder)
     }
 
-    if canOpenAppStore && !usesAppStoreUpdateHandoff {
-      Button("在 App Store 中查看", systemImage: "apple.logo", action: openAppStore)
-    }
-
-    if canOpenHomepage {
-      Button("在主页查看", systemImage: "globe", action: openHomepage)
-    }
-
     Divider()
 
     Button("卸载", systemImage: "trash", role: .destructive, action: uninstallApplication)
@@ -216,7 +207,7 @@ struct AppDetailView: View {
         spacing: 12
       ) {
         ForEach(informationItems, id: \.label) { item in
-          informationRow(item.label, value: item.value)
+          informationRow(item.label, value: item.value, action: item.action)
         }
       }
 
@@ -237,18 +228,21 @@ struct AppDetailView: View {
     return application.status.title
   }
 
-  private var informationItems: [(label: String, value: String)] {
-    var items: [(label: String, value: String)] = [
-      ("状态", isUpdateIgnored ? "已忽略更新" : statusTitle),
-      ("当前版本", application.versionSummary),
-      ("更新来源", application.sourceTitle),
-      ("Bundle ID", application.bundleIdentifier),
+  private var informationItems: [(label: String, value: String, action: (() -> Void)?)] {
+    var items: [(label: String, value: String, action: (() -> Void)?)] = [
+      ("状态", isUpdateIgnored ? "已忽略更新" : statusTitle, nil),
+      ("当前版本", application.versionSummary, nil),
+      ("更新来源", application.sourceTitle, nil),
+      ("Bundle ID", application.bundleIdentifier, nil),
     ]
     if let latestVersionSummary = application.latestVersionSummary {
-      items.append(("最新版本", latestVersionSummary))
+      items.append(("最新版本", latestVersionSummary, nil))
     }
     if let releaseDate = application.releaseDate {
-      items.append(("发布日期", releaseDate.formatted(date: .abbreviated, time: .omitted)))
+      items.append(("发布日期", releaseDate.formatted(date: .abbreviated, time: .omitted), nil))
+    }
+    if let homepageURL = application.homepageURL {
+      items.append(("主页", homepageDisplay(from: homepageURL), openHomepage))
     }
     return items
   }
@@ -284,16 +278,75 @@ struct AppDetailView: View {
     }
   }
 
-  private func informationRow(_ label: String, value: String) -> some View {
+  private func informationRow(
+    _ label: String,
+    value: String,
+    action: (() -> Void)? = nil
+  ) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 12) {
       Text(label)
         .foregroundStyle(.secondary)
         .frame(minWidth: 64, alignment: .leading)
-      Text(value)
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      if let action {
+        Button(action: action) {
+          Text(value)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.link)
+        .accessibilityLabel("\(label) \(value)")
+        .help("打开主页")
+      } else {
+        Text(value)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func homepageDisplay(from url: URL) -> String {
+    if let appStore = appStoreHomepageDisplay(from: url) {
+      return appStore
+    }
+
+    var value = url.absoluteString
+    if let range = value.range(of: "https://", options: [.anchored, .caseInsensitive])
+      ?? value.range(of: "http://", options: [.anchored, .caseInsensitive])
+    {
+      value.removeSubrange(range)
+    }
+    if let queryStart = value.firstIndex(of: "?") {
+      value = String(value[..<queryStart])
+    }
+    if let fragmentStart = value.firstIndex(of: "#") {
+      value = String(value[..<fragmentStart])
+    }
+    value = value.removingPercentEncoding ?? value
+    if value.hasSuffix("/") {
+      value.removeLast()
+    }
+    return value
+  }
+
+  private func appStoreHomepageDisplay(from url: URL) -> String? {
+    let host = url.host?.lowercased()
+    guard host == "apps.apple.com" || host == "itunes.apple.com" else {
+      return nil
+    }
+
+    let parts = url.pathComponents.filter { $0 != "/" }
+    guard let identifier = parts.last(where: { $0.lowercased().hasPrefix("id") }) else {
+      return nil
+    }
+
+    if let appIndex = parts.firstIndex(where: { $0.lowercased() == "app" }),
+      appIndex > 0,
+      parts[appIndex - 1].count == 2
+    {
+      return "apps.apple.com/\(parts[appIndex - 1])/app/\(identifier)"
+    }
+    return "apps.apple.com/app/\(identifier)"
   }
 
   private var primaryActionHelp: String {
@@ -348,15 +401,6 @@ struct AppDetailView: View {
 
   private var canOpenAppStore: Bool {
     application.source == .appStore && application.sourceURL != nil
-  }
-
-  private var canOpenHomepage: Bool {
-    switch application.source {
-    case .homebrew, .sparkle, .githubReleases:
-      return application.homepageURL != nil
-    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .selfManaged:
-      return false
-    }
   }
 
   private var releaseNotesPlaceholder: String {
