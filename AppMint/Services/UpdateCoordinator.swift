@@ -37,6 +37,7 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
   private let tauri = TauriUpdateProvider()
   private let vscode = VSCodeUpdateProvider()
   private let releaseJSON = ReleaseJSONUpdateProvider()
+  private let githubReleases = GitHubReleasesUpdateProvider()
   private let process: ApplicationProcessClient
 
   init(process: ApplicationProcessClient = .live) {
@@ -61,6 +62,8 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
       return await vscode.check(application)
     case .releaseJSON:
       return await releaseJSON.check(application)
+    case .githubReleases:
+      return await githubReleases.check(application)
     case .homebrew, .selfManaged, .sparkle:
       return application
     }
@@ -90,6 +93,8 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
         try await vscode.upgrade(application, progress: progress)
       case .releaseJSON:
         try await releaseJSON.upgrade(application, progress: progress)
+      case .githubReleases:
+        try await githubReleases.upgrade(application, progress: progress)
       case .selfManaged:
         throw ProcessRunnerError.failed(
           status: 1,

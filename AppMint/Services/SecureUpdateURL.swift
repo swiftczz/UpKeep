@@ -99,6 +99,10 @@ enum UpdateHTTP {
     )
     request.setValue("AppMint", forHTTPHeaderField: "User-Agent")
     request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+    if url.host?.lowercased() == "api.github.com" {
+      request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+      request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+    }
     return request
   }
 

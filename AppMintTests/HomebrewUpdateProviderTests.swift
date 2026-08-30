@@ -51,6 +51,7 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertTrue(claim(.sparkle, .updateAvailable, feed: true, brew: true))
     XCTAssertTrue(claim(.tauri, .upToDate, feed: true, brew: true))
     XCTAssertTrue(claim(.releaseJSON, .checking, feed: true, brew: true))
+    XCTAssertTrue(claim(.githubReleases, .upToDate, feed: true, brew: true))
   }
 
   func testKeepsWorkingFirstPartyProtocolWhenBrewHasNoUpdate() {
@@ -61,6 +62,7 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertFalse(claim(.sparkle, .upToDate, feed: true, brew: false))
     XCTAssertFalse(claim(.tauri, .checking, feed: true, brew: false))
     XCTAssertFalse(claim(.releaseJSON, .updateAvailable, feed: true, brew: false))
+    XCTAssertFalse(claim(.githubReleases, .checking, feed: true, brew: false))
   }
 
   func testFallsBackToHomebrewWhenFirstPartyCheckFails() {
@@ -74,6 +76,31 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertTrue(claim(.sparkle, .selfManaged, feed: false, brew: false))
     XCTAssertTrue(claim(.selfManaged, .selfManaged, feed: false, brew: false))
     XCTAssertTrue(claim(.homebrew, .selfManaged, feed: false, brew: false))
+  }
+
+  func testExtractsApplicationPathsFromPackageReceiptFileList() {
+    let paths = HomebrewUpdateProvider.applicationPaths(
+      inPackageFileList: """
+        Applications
+        Applications/SF Symbols Beta.app
+        Applications/SF Symbols Beta.app/Contents/MacOS/SF Symbols Beta
+        Library/Application Support/Example/config.json
+        """
+    )
+
+    XCTAssertEqual(paths, ["/Applications/SF Symbols Beta.app"])
+  }
+
+  func testExtractsMultipleApplicationsFromPackageReceiptFileList() {
+    let paths = HomebrewUpdateProvider.applicationPaths(
+      inPackageFileList: """
+        Applications/First.app/Contents/Info.plist
+        /Applications/Second.app/Contents/Info.plist
+        Applications/First.app/Contents/MacOS/First
+        """
+    )
+
+    XCTAssertEqual(paths, ["/Applications/First.app", "/Applications/Second.app"])
   }
 
   private func claim(

@@ -203,7 +203,7 @@ extension AppRecord {
       self.releaseNotesURL = releaseNotesURL
     }
 
-    let newer = VersionComparator.isNewer(version, than: currentVersion)
+    let newer = VersionComparator.isNewer(version, than: currentVersion, build: buildVersion)
     status = newer ? .updateAvailable : .upToDate
     canAutomaticallyUpdate = newer && canInstall
   }
@@ -279,6 +279,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
   case tauri
   case vscodeUpdater
   case releaseJSON
+  case githubReleases
   case selfManaged
 
   var title: String {
@@ -290,6 +291,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .tauri: "Tauri updater"
     case .vscodeUpdater: "VS Code updater"
     case .releaseJSON: "JSON release"
+    case .githubReleases: "GitHub Releases"
     case .selfManaged: "未知"
     }
   }
@@ -303,6 +305,7 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .tauri: "drop.fill"
     case .vscodeUpdater: "chevron.left.forwardslash.chevron.right"
     case .releaseJSON: "doc.text"
+    case .githubReleases: "shippingbox"
     case .selfManaged: "app.dashed"
     }
   }

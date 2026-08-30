@@ -295,6 +295,27 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(merged.first?.status, .checking)
   }
 
+  func testMergeDropsGitHubUpdateWhenRepositoryNoLongerMatchesApplication() {
+    var previous = makeApplication(
+      name: "FlClash",
+      status: .updateAvailable,
+      latestVersion: "1.19.30"
+    )
+    previous.source = .githubReleases
+    previous.sourceIdentifier = "MetaCubeX/mihomo"
+
+    var scanned = makeApplication(name: "FlClash", status: .selfManaged)
+    scanned.source = .selfManaged
+    scanned.sourceURL = nil
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertEqual(merged.first?.source, .selfManaged)
+    XCTAssertEqual(merged.first?.status, .selfManaged)
+    XCTAssertNil(merged.first?.latestVersion)
+    XCTAssertTrue(merged.availableUpdates(ignoredIDs: []).isEmpty)
+  }
+
   func testMergeCopiesReleaseNotesOntoHomebrewUpdate() {
     var previous = makeApplication(name: "Notes", status: .updateAvailable, latestVersion: "2.0")
     previous.source = .sparkle

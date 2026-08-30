@@ -73,7 +73,7 @@ struct HomebrewUpdateProvider: Sendable {
         return !hasCheckableFeed
       case .homebrew, .selfManaged:
         return true
-      case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON:
+      case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
         return false
       }
     case .unavailable, .selfManaged:
@@ -81,6 +81,24 @@ struct HomebrewUpdateProvider: Sendable {
     case .updateAvailable, .upToDate:
       return false
     }
+  }
+
+  static func applicationPaths(inPackageFileList fileList: String) -> [String] {
+    var paths = Set<String>()
+
+    for line in fileList.split(whereSeparator: \.isNewline) {
+      let components = line.split(separator: "/", omittingEmptySubsequences: true)
+      guard let appIndex = components.firstIndex(where: {
+        $0.lowercased().hasSuffix(".app")
+      }) else {
+        continue
+      }
+
+      let appComponents = components[...appIndex]
+      paths.insert("/" + appComponents.joined(separator: "/"))
+    }
+
+    return paths.sorted()
   }
 
   private func loadSnapshot() async -> Snapshot? {
@@ -101,12 +119,18 @@ struct HomebrewUpdateProvider: Sendable {
         arguments: ["outdated", "--cask", "--json=v2"]
       )
 
+      let info = try JSONDecoder().decode(BrewInfoResponse.self, from: await infoOutput.data)
+      let outdated = try JSONDecoder().decode(
+        BrewOutdatedResponse.self,
+        from: await outdatedOutput.data
+      )
+      let packageApplicationPaths = await loadPackageApplicationPaths(
+        for: info.packageReceiptIdentifiers
+      )
       let snapshot = Snapshot(
-        info: try JSONDecoder().decode(BrewInfoResponse.self, from: await infoOutput.data),
-        outdated: try JSONDecoder().decode(
-          BrewOutdatedResponse.self,
-          from: await outdatedOutput.data
-        )
+        info: info,
+        outdated: outdated,
+        packageApplicationPaths: packageApplicationPaths
       )
       cache.store(snapshot)
       return snapshot
@@ -116,19 +140,61 @@ struct HomebrewUpdateProvider: Sendable {
       return nil
     }
   }
+
+  private func loadPackageApplicationPaths(
+    for receiptIdentifiers: Set<String>
+  ) async -> [String: [String]] {
+    guard !receiptIdentifiers.isEmpty else { return [:] }
+
+    return await withTaskGroup(of: (String, [String])?.self) { group in
+      for identifier in receiptIdentifiers {
+        group.addTask {
+          do {
+            let output = try await ProcessRunner.run(
+              executableURL: URL(fileURLWithPath: "/usr/sbin/pkgutil"),
+              arguments: ["--files", identifier]
+            )
+            return (
+              identifier,
+              Self.applicationPaths(inPackageFileList: output.standardOutput)
+            )
+          } catch {
+            return nil
+          }
+        }
+      }
+
+      var pathsByReceipt: [String: [String]] = [:]
+      for await result in group {
+        guard let (identifier, paths) = result, !paths.isEmpty else { continue }
+        pathsByReceipt[identifier] = paths
+      }
+      return pathsByReceipt
+    }
+  }
 }
 
 private struct Snapshot {
   private var caskByTargetPath: [String: BrewCask]
   private var outdatedByToken: [String: BrewOutdatedCask]
 
-  init(info: BrewInfoResponse, outdated: BrewOutdatedResponse) {
+  init(
+    info: BrewInfoResponse,
+    outdated: BrewOutdatedResponse,
+    packageApplicationPaths: [String: [String]]
+  ) {
     var caskByTargetPath: [String: BrewCask] = [:]
     for cask in info.casks {
       for artifact in cask.artifacts where artifact.isApplication {
         guard let target = artifact.target else { continue }
         let path = URL(fileURLWithPath: target).standardizedFileURL.path
         caskByTargetPath[path] = cask
+      }
+      for receiptIdentifier in cask.packageReceiptIdentifiers {
+        for target in packageApplicationPaths[receiptIdentifier] ?? [] {
+          let path = URL(fileURLWithPath: target).standardizedFileURL.path
+          caskByTargetPath[path] = cask
+        }
       }
     }
     self.caskByTargetPath = caskByTargetPath
@@ -312,6 +378,10 @@ final class HomebrewOutputProgressParser: @unchecked Sendable {
 
 private struct BrewInfoResponse: Decodable, Sendable {
   let casks: [BrewCask]
+
+  var packageReceiptIdentifiers: Set<String> {
+    Set(casks.flatMap(\.packageReceiptIdentifiers))
+  }
 }
 
 private struct BrewCask: Decodable, Sendable {
@@ -326,21 +396,49 @@ private struct BrewCask: Decodable, Sendable {
     case homepage
     case artifacts
   }
+
+  var packageReceiptIdentifiers: [String] {
+    artifacts.flatMap(\.packageReceiptIdentifiers)
+  }
 }
 
 private struct BrewArtifact: Decodable, Sendable {
   let isApplication: Bool
   let target: String?
+  let packageReceiptIdentifiers: [String]
 
   enum CodingKeys: String, CodingKey {
     case app
     case target
+    case uninstall
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     isApplication = container.contains(.app)
     target = try container.decodeIfPresent(String.self, forKey: .target)
+    packageReceiptIdentifiers = try container.decodeIfPresent(
+      [BrewUninstallArtifact].self,
+      forKey: .uninstall
+    )?.flatMap(\.packageReceiptIdentifiers) ?? []
+  }
+}
+
+private struct BrewUninstallArtifact: Decodable, Sendable {
+  let packageReceiptIdentifiers: [String]
+
+  private enum CodingKeys: String, CodingKey {
+    case pkgutil
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    if let identifier = try? container.decode(String.self, forKey: .pkgutil) {
+      packageReceiptIdentifiers = [identifier]
+    } else {
+      packageReceiptIdentifiers =
+        (try? container.decode([String].self, forKey: .pkgutil)) ?? []
+    }
   }
 }
 

@@ -179,7 +179,7 @@ final class AppLibrary {
       return
     }
     switch application.source {
-    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON:
+    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
       break
     case .sparkle where application.sourceURL != nil:
       break
@@ -354,6 +354,10 @@ final class AppLibrary {
       }
 
       if current.source == .homebrew, current.status == .updateAvailable {
+        return carryingMetadata(from: previous, onto: current)
+      }
+
+      if previous.source == .githubReleases, current.source != .githubReleases {
         return carryingMetadata(from: previous, onto: current)
       }
 

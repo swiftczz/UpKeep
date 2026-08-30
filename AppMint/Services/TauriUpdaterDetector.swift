@@ -3,6 +3,7 @@ import Foundation
 struct ExecutableUpdaterDetection: Sendable {
   var tauriEndpoint: URL?
   var releaseJSONEndpoint: URL?
+  var githubReleases: GitHubReleasesMetadata? = nil
 }
 
 enum ExecutableUpdaterDetector {
@@ -20,6 +21,7 @@ enum ExecutableUpdaterDetector {
 
     let suppressReleaseJSON = ReleaseJSONDetector.hasTauriConfiguration(in: bundleURL)
     var releaseJSONEndpoint: URL?
+    var githubReleases: GitHubReleasesMetadata?
     for fileURL in executableFiles(in: bundleURL) {
       let detection = detect(fileURL: fileURL)
       if let tauriEndpoint = detection.tauriEndpoint {
@@ -31,10 +33,14 @@ enum ExecutableUpdaterDetector {
       if releaseJSONEndpoint == nil, !suppressReleaseJSON {
         releaseJSONEndpoint = detection.releaseJSONEndpoint
       }
+      if githubReleases == nil {
+        githubReleases = detection.githubReleases
+      }
     }
     return ExecutableUpdaterDetection(
       tauriEndpoint: nil,
-      releaseJSONEndpoint: releaseJSONEndpoint
+      releaseJSONEndpoint: releaseJSONEndpoint,
+      githubReleases: githubReleases
     )
   }
 
@@ -57,6 +63,7 @@ enum ExecutableUpdaterDetector {
     var sawTauri = false
     var sawGPUI = false
     var releaseJSONEndpoint: URL?
+    var githubReleases: GitHubReleasesMetadata?
 
     while true {
       let chunk = (try? handle.read(upToCount: chunkSize)) ?? Data()
@@ -75,6 +82,9 @@ enum ExecutableUpdaterDetector {
       if releaseJSONEndpoint == nil {
         releaseJSONEndpoint = ReleaseJSONDetector.firstEndpoint(in: window)
       }
+      if githubReleases == nil {
+        githubReleases = GitHubReleasesDetector.metadata(in: window)
+      }
       if sawTauri, foundURLs.contains(where: TauriUpdaterDetector.isDirectManifestURL) {
         break
       }
@@ -87,7 +97,8 @@ enum ExecutableUpdaterDetector {
       : TauriUpdaterDetector.preferredUpdaterJSONURL(foundURLs)
     return ExecutableUpdaterDetection(
       tauriEndpoint: tauriEndpoint,
-      releaseJSONEndpoint: releaseJSONEndpoint
+      releaseJSONEndpoint: releaseJSONEndpoint,
+      githubReleases: githubReleases
     )
   }
 

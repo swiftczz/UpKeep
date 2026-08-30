@@ -107,6 +107,7 @@ struct ApplicationScanner: ApplicationScanning {
     var tauriEndpoint: URL? = nil
     var vscodeMetadata: VSCodeUpdaterMetadata? = nil
     var releaseJSONEndpoint: URL? = nil
+    var githubReleasesMetadata: GitHubReleasesMetadata? = nil
 
     if hasAppStoreReceipt {
       source = .appStore
@@ -145,6 +146,17 @@ struct ApplicationScanner: ApplicationScanning {
         appStorePlatform = nil
         status = .checking
         releaseJSONEndpoint = detectedReleaseJSON
+      } else if let detectedGitHub = detection.githubReleases,
+        GitHubReleasesDetector.matchesApplication(
+          detectedGitHub,
+          name: name,
+          bundleIdentifier: bundleIdentifier
+        )
+      {
+        source = .githubReleases
+        appStorePlatform = nil
+        status = .checking
+        githubReleasesMetadata = detectedGitHub
       } else {
         source = .selfManaged
         appStorePlatform = nil
@@ -170,10 +182,12 @@ struct ApplicationScanner: ApplicationScanning {
         case .tauri: tauriEndpoint
         case .vscodeUpdater: vscodeMetadata?.updateURL
         case .releaseJSON: releaseJSONEndpoint
+        case .githubReleases: githubReleasesMetadata?.apiURL
         default: nil
         }
       }(),
-      homepageURL: electronMetadata?.homepageURL ?? vscodeMetadata?.homepageURL,
+      homepageURL: electronMetadata?.homepageURL ?? vscodeMetadata?.homepageURL
+        ?? githubReleasesMetadata?.homepageURL,
       sourceIdentifier: {
         switch source {
         case .appStore:
@@ -188,6 +202,8 @@ struct ApplicationScanner: ApplicationScanning {
           }
         case .releaseJSON:
           releaseJSONEndpoint?.absoluteString
+        case .githubReleases:
+          githubReleasesMetadata?.identifier
         default:
           nil
         }

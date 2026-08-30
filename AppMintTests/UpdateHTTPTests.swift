@@ -23,6 +23,17 @@ final class UpdateHTTPTests: XCTestCase {
     XCTAssertNil(configuration.urlCache)
   }
 
+  func testGitHubMetadataRequestUsesVersionedJSONAPI() throws {
+    let url = try XCTUnwrap(
+      URL(string: "https://api.github.com/repos/l0ng-ai/tty7/releases/latest")
+    )
+
+    let request = UpdateHTTP.request(for: url)
+
+    XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/vnd.github+json")
+    XCTAssertEqual(request.value(forHTTPHeaderField: "X-GitHub-Api-Version"), "2022-11-28")
+  }
+
   func testPackageDownloadDisablesClientAndProtocolCaches() throws {
     let url = try XCTUnwrap(URL(string: "https://example.com/App.zip"))
 

@@ -454,6 +454,80 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertNil(application.sourceURL)
   }
 
+  func testDetectsGitHubReleasesUpdaterInNativeExecutable() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent("tty7.app", isDirectory: true)
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.github.tty7"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      "gpui::app https://github.com/l0ng-ai/tty7/releases/latest".utf8
+    ).write(to: macOSURL.appendingPathComponent("tty7"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(application.source, .githubReleases)
+    XCTAssertEqual(application.sourceIdentifier, "l0ng-ai/tty7")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://api.github.com/repos/l0ng-ai/tty7/releases/latest"
+    )
+    XCTAssertEqual(application.homepageURL?.absoluteString, "https://github.com/l0ng-ai/tty7")
+    XCTAssertEqual(application.sourceTitle, "GitHub Releases")
+  }
+
+  func testDoesNotTreatSpecificGitHubReleaseLinkAsLatestUpdater() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent("Notes.app", isDirectory: true)
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.notes"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      "Release notes: https://github.com/example/notes/releases/tag/v1.0.0".utf8
+    ).write(to: macOSURL.appendingPathComponent("Notes"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .selfManaged)
+  }
+
+  func testDoesNotTreatDependencyGitHubRepositoryAsApplicationUpdater() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent("FlClash.app", isDirectory: true)
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.follow.clash"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      "Download core: https://github.com/MetaCubeX/mihomo/releases/latest".utf8
+    ).write(to: macOSURL.appendingPathComponent("FlClash"))
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .selfManaged)
+  }
+
   func testDetectsElectronBuilderGitHubProvider() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
@@ -806,6 +880,21 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(
       application.sourceURL?.absoluteString,
       "https://dl.reasonix.io/latest/latest.json"
+    )
+  }
+
+  func testDetectsInstalledTTY7GitHubReleasesWhenPresent() throws {
+    let applicationURL = URL(fileURLWithPath: "/Applications/tty7.app")
+    guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+      throw XCTSkip("tty7.app is not installed on this machine")
+    }
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .githubReleases)
+    XCTAssertEqual(application.sourceIdentifier, "l0ng-ai/tty7")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://api.github.com/repos/l0ng-ai/tty7/releases/latest"
     )
   }
 
