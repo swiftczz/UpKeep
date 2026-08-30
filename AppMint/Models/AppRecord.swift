@@ -157,6 +157,29 @@ extension AppRecord {
     return appStorePlatform?.systemImage
   }
 
+  func matchesSearch(_ searchText: String) -> Bool {
+    let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else { return true }
+
+    if UpdateSource.isSourceSearchQuery(query) {
+      return matchesSourceSearch(query)
+    }
+
+    return name.localizedCaseInsensitiveContains(query)
+      || bundleIdentifier.localizedCaseInsensitiveContains(query)
+      || sourceTitle.localizedCaseInsensitiveContains(query)
+  }
+
+  private func matchesSourceSearch(_ query: String) -> Bool {
+    let terms: [String]
+    if source == .appStore {
+      terms = [source.title, sourceTitle]
+    } else {
+      terms = source.searchTerms
+    }
+    return terms.contains { UpdateSource.searchTerm($0, matches: query) }
+  }
+
   var versionSummary: String {
     Self.formattedVersion(
       currentVersion,
@@ -271,7 +294,7 @@ enum AppStorePlatform: String, Hashable, Sendable, Codable {
   }
 }
 
-enum UpdateSource: String, Hashable, Sendable, Codable {
+enum UpdateSource: String, Hashable, Sendable, Codable, CaseIterable {
   case appStore
   case homebrew
   case sparkle
@@ -308,6 +331,43 @@ enum UpdateSource: String, Hashable, Sendable, Codable {
     case .githubReleases: "shippingbox"
     case .selfManaged: "app.dashed"
     }
+  }
+
+  var searchTerms: [String] {
+    switch self {
+    case .appStore:
+      ["App Store", "Mac App Store", "iPhone App Store", "iPad App Store"]
+    case .homebrew:
+      ["Homebrew"]
+    case .sparkle:
+      ["Sparkle"]
+    case .electronBuilder:
+      ["electron", "electron-updater"]
+    case .tauri:
+      ["Tauri", "Tauri updater"]
+    case .vscodeUpdater:
+      ["VS Code", "VS Code updater", "VSCode"]
+    case .releaseJSON:
+      ["Release JSON", "JSON release"]
+    case .githubReleases:
+      ["GitHub", "GitHub Releases"]
+    case .selfManaged:
+      ["未知", "Unknown"]
+    }
+  }
+
+  static func isSourceSearchQuery(_ query: String) -> Bool {
+    allCases.lazy.flatMap(\.searchTerms).contains {
+      searchTerm($0, matches: query)
+    }
+  }
+
+  static func searchTerm(_ term: String, matches query: String) -> Bool {
+    if term.localizedCaseInsensitiveCompare(query) == .orderedSame {
+      return true
+    }
+    guard query.count >= 4 else { return false }
+    return term.range(of: query, options: [.anchored, .caseInsensitive]) != nil
   }
 }
 

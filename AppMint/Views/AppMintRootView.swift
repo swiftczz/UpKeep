@@ -107,7 +107,7 @@ struct AppMintRootView: View {
     }
     .navigationSplitViewStyle(.balanced)
     .animation(nil, value: library.selectedApplicationID)
-    .searchable(text: $searchText, placement: .sidebar, prompt: "搜索应用")
+    .searchable(text: $searchText, placement: .sidebar, prompt: "搜索应用或更新来源")
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
         if !library.automaticUpdates.isEmpty {

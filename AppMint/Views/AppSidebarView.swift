@@ -14,11 +14,7 @@ struct AppSidebarView: View {
   let stopIgnoringUpdates: (AppRecord.ID) -> Void
 
   private var filteredApplications: [AppRecord] {
-    guard !searchText.isEmpty else { return applications }
-    return applications.filter {
-      $0.name.localizedCaseInsensitiveContains(searchText)
-        || $0.bundleIdentifier.localizedCaseInsensitiveContains(searchText)
-    }
+    applications.filter { $0.matchesSearch(searchText) }
   }
 
   private var availableUpdates: [AppRecord] {
