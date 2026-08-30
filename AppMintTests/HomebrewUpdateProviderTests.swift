@@ -45,6 +45,31 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertEqual(status, .selfManaged)
   }
 
+  func testPrefersCaskHomepageOverExistingUpdaterURL() {
+    let existing = URL(
+      string: "https://antigravity-hub-auto-updater.example/manifest"
+    )
+    XCTAssertEqual(
+      HomebrewUpdateProvider.homepageURL(
+        caskHomepage: "https://antigravity.google/product/antigravity-2",
+        existing: existing
+      )?.absoluteString,
+      "https://antigravity.google/product/antigravity-2"
+    )
+  }
+
+  func testKeepsExistingHomepageWhenCaskOmitsHomepage() {
+    let existing = URL(string: "https://example.com")
+    XCTAssertEqual(
+      HomebrewUpdateProvider.homepageURL(caskHomepage: nil, existing: existing),
+      existing
+    )
+    XCTAssertEqual(
+      HomebrewUpdateProvider.homepageURL(caskHomepage: "  ", existing: existing),
+      existing
+    )
+  }
+
   func testPrefersHomebrewWhenBrewHasUpdate() {
     XCTAssertTrue(claim(.electronBuilder, .updateAvailable, feed: true, brew: true))
     XCTAssertTrue(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: true))

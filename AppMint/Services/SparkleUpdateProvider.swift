@@ -71,6 +71,7 @@ struct SparkleUpdateProvider: Sendable {
       application.releaseDate = candidate.publicationDate.flatMap(Self.parsePublicationDate)
       application.releaseNotesURL = candidate.releaseNotesURL
       application.releaseNotes = candidate.summary.flatMap(Self.plainText(fromHTML:))
+      application.packageByteCount = candidate.packageByteCount
 
       if application.releaseNotes == nil,
         let releaseNotesURL = candidate.releaseNotesURL,
@@ -379,6 +380,7 @@ struct SparkleCandidate: Hashable, Sendable {
   var publicationDate: String?
   var releaseNotesURL: URL?
   var downloadURL: URL?
+  var packageByteCount: Int64?
   var minimumSystemVersion: String?
   var operatingSystem: String?
   var architecture: String?
@@ -528,6 +530,9 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       candidate.edSignature =
         Self.attribute(named: "edsignature", in: attributeDict)
         ?? candidate.edSignature
+      if let length = JSONByteCount.parse(Self.attribute(named: "length", in: attributeDict)) {
+        candidate.packageByteCount = length
+      }
       currentCandidate = candidate
       return
     }

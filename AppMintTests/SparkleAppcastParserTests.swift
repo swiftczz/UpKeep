@@ -17,6 +17,7 @@ final class SparkleAppcastParserTests: XCTestCase {
             <sparkle:releaseNotesLink>https://example.com/notes</sparkle:releaseNotesLink>
             <enclosure
               url="https://example.com/App.zip"
+              length="2048576"
               sparkle:version="240"
               sparkle:shortVersionString="2.4"
               sparkle:minimumSystemVersion="26.0"
@@ -38,6 +39,7 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertEqual(candidate.minimumSystemVersion, "26.0")
     XCTAssertEqual(candidate.operatingSystem, "macos")
     XCTAssertEqual(candidate.downloadURL?.absoluteString, "https://example.com/App.zip")
+    XCTAssertEqual(candidate.packageByteCount, 2_048_576)
     XCTAssertEqual(candidate.releaseNotesURL?.absoluteString, "https://example.com/notes")
     XCTAssertEqual(candidate.publicationDate, "Thu, 20 Aug 2026 12:00:00 +0000")
     XCTAssertEqual(candidate.edSignature, "signed-update")

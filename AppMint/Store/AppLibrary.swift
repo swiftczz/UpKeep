@@ -458,6 +458,9 @@ final class AppLibrary {
     if merged.releaseNotesURL == nil {
       merged.releaseNotesURL = previous.releaseNotesURL
     }
+    if merged.packageByteCount == nil {
+      merged.packageByteCount = previous.packageByteCount
+    }
     if merged.latestBuildVersion == nil {
       merged.latestBuildVersion = previous.latestBuildVersion
     }
@@ -653,6 +656,7 @@ final class AppLibrary {
     record.releaseDate = application.releaseDate
     record.releaseNotesURL = application.releaseNotesURL
     record.sourceIdentifier = application.sourceIdentifier
+    record.packageByteCount = application.packageByteCount
     record.latestVersion = application.latestVersion
     record.latestBuildVersion = application.latestBuildVersion
     record.lastInstalledAt = .now

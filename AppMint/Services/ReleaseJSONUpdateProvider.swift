@@ -6,6 +6,7 @@ struct ReleaseJSONManifest: Equatable, Sendable {
     let url: URL
     let sha256: String?
     let sha512: String?
+    let size: Int64?
   }
 
   var version: String
@@ -55,7 +56,8 @@ struct ReleaseJSONManifest: Equatable, Sendable {
         name: name ?? url.lastPathComponent,
         url: url,
         sha256: (raw["sha256"] as? String)?.nonBlankValue,
-        sha512: (raw["sha512"] as? String)?.nonBlankValue
+        sha512: (raw["sha512"] as? String)?.nonBlankValue,
+        size: JSONByteCount.parse(raw["size"])
       )
     }
 
@@ -144,11 +146,13 @@ struct ReleaseJSONUpdateProvider: Sendable {
         application.status = .upToDate
         application.canAutomaticallyUpdate = false
       case .update(let manifest):
+        let package = manifest.selectedPackage()
         application.applyRemoteRelease(
           version: manifest.version,
           releaseDate: manifest.publicationDate,
           releaseNotes: manifest.notes,
-          canInstall: manifest.selectedPackage() != nil
+          packageByteCount: package?.size,
+          canInstall: package != nil
         )
       case .notThisProtocol:
         application.source = .selfManaged

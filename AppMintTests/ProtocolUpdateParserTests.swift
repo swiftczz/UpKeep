@@ -41,6 +41,19 @@ final class ProtocolUpdateParserTests: XCTestCase {
       "https://releases.chatwise.app/ChatWise-26.8.0-arm64.zip"
     )
     XCTAssertEqual(package.sha512, "armzip")
+    XCTAssertEqual(package.size, 11)
+
+    let intelPackage = try XCTUnwrap(
+      manifest.selectedPackage(
+        relativeTo: URL(string: "https://releases.chatwise.app/latest-mac.yml")!,
+        architecture: .x64
+      )
+    )
+    XCTAssertEqual(
+      intelPackage.url.absoluteString,
+      "https://releases.chatwise.app/ChatWise-26.8.0-x64.zip"
+    )
+    XCTAssertEqual(intelPackage.size, 10)
   }
 
   func testRejectsCustomAndInsecureElectronBuilderConfigurations() {
@@ -120,7 +133,8 @@ final class ProtocolUpdateParserTests: XCTestCase {
           },
           "darwin-arm64": {
             "url": "https://dl.reasonix.io/desktop-v1.31.1/Reasonix-darwin-arm64.zip",
-            "sha256": "bbb"
+            "sha256": "bbb",
+            "size": 84200123
           }
         }
       }
@@ -142,6 +156,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
     let platform = try XCTUnwrap(manifest.selectedPlatform(architecture: .arm64))
     XCTAssertEqual(platform.url.lastPathComponent, "Reasonix-darwin-arm64.zip")
     XCTAssertEqual(platform.sha256, "bbb")
+    XCTAssertEqual(platform.size, 84_200_123)
   }
 
   func testDerivesReasonixStudioHomepageFromGitHubDownloadPage() throws {
@@ -623,7 +638,8 @@ final class ProtocolUpdateParserTests: XCTestCase {
           {
             "name": "app-v0.19.1-macos-aarch64.dmg",
             "url": "https://example.com/app-v0.19.1-macos-aarch64.dmg",
-            "sha256": "dd"
+            "sha256": "dd",
+            "size": 51200000
           }
         ]
       }
@@ -638,6 +654,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
     let armPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .arm64))
     XCTAssertEqual(armPackage.url.lastPathComponent, "app-v0.19.1-macos-aarch64.dmg")
     XCTAssertEqual(armPackage.sha256, "dd")
+    XCTAssertEqual(armPackage.size, 51_200_000)
 
     let intelPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .x64))
     XCTAssertEqual(intelPackage.url.lastPathComponent, "app-v0.19.1-macos-x86_64.dmg")

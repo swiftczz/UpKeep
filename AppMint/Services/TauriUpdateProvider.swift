@@ -5,6 +5,7 @@ struct TauriUpdateManifest: Equatable, Sendable {
     let url: URL
     let sha256: String?
     let sha512: String?
+    let size: Int64?
   }
 
   var version: String
@@ -86,7 +87,8 @@ struct TauriUpdateManifest: Equatable, Sendable {
       platforms[key] = Platform(
         url: url,
         sha256: (dictionary["sha256"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-        sha512: (dictionary["sha512"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        sha512: (dictionary["sha512"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+        size: JSONByteCount.parse(dictionary["size"])
       )
     }
 
@@ -153,6 +155,7 @@ struct TauriUpdateProvider: Sendable {
         releaseDate: manifest.publicationDate,
         releaseNotes: releaseNotes,
         releaseNotesURL: manifest.releaseNotesURL,
+        packageByteCount: selectedPlatform?.size,
         canInstall: selectedPlatform != nil
       )
     } catch is CancellationError {

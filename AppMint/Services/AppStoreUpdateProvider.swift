@@ -75,6 +75,7 @@ struct AppStoreUpdateProvider: Sendable {
       application.sourceURL = result.trackViewURL.flatMap(URL.init(string:))
       application.homepageURL = application.sourceURL
       application.sourceIdentifier = result.trackID.map(String.init)
+      application.packageByteCount = result.packageByteCount
       application.canAutomaticallyUpdate =
         application.appStorePlatform == .mac
         && MacAppStoreUpdateProvider.isAvailable
@@ -197,6 +198,19 @@ struct AppStoreLookupResult: Decodable, Sendable {
   let releaseDate: String?
   let trackViewURL: String?
   let supportedDevices: [String]?
+  let packageByteCount: Int64?
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
+    trackID = try container.decodeIfPresent(UInt64.self, forKey: .trackID)
+    version = try container.decode(String.self, forKey: .version)
+    releaseNotes = try container.decodeIfPresent(String.self, forKey: .releaseNotes)
+    releaseDate = try container.decodeIfPresent(String.self, forKey: .releaseDate)
+    trackViewURL = try container.decodeIfPresent(String.self, forKey: .trackViewURL)
+    supportedDevices = try container.decodeIfPresent([String].self, forKey: .supportedDevices)
+    packageByteCount = JSONByteCount.decode(container, forKey: .fileSizeBytes)
+  }
 
   var supportsMacDesktop: Bool {
     supportedDevices?.contains("MacDesktop-MacDesktop") == true
@@ -244,5 +258,6 @@ struct AppStoreLookupResult: Decodable, Sendable {
     case releaseDate = "currentVersionReleaseDate"
     case trackViewURL = "trackViewUrl"
     case supportedDevices
+    case fileSizeBytes
   }
 }

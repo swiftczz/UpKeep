@@ -241,6 +241,9 @@ struct AppDetailView: View {
     if let releaseDate = application.releaseDate {
       items.append(("发布日期", releaseDate.formatted(date: .abbreviated, time: .omitted), nil))
     }
+    if let packageSize = application.packageSizeDescription {
+      items.append(("更新包", packageSize, nil))
+    }
     if let homepageURL = application.homepageURL {
       items.append(("主页", homepageDisplay(from: homepageURL), openHomepage))
     }

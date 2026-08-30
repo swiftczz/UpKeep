@@ -6,6 +6,73 @@ struct GitHubReleasesMetadata: Equatable, Sendable {
   let homepageURL: URL
 }
 
+struct GitHubReleaseDownload: Equatable, Sendable {
+  let owner: String
+  let repository: String
+  let tag: String
+  let fileName: String
+
+  var cacheKey: String {
+    "\(owner)/\(repository)/\(tag)/\(fileName)"
+  }
+
+  var apiURL: URL? {
+    var allowed = CharacterSet.urlPathAllowed
+    allowed.remove(charactersIn: "/")
+    guard let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: allowed) else {
+      return nil
+    }
+    return SecureUpdateURL.https(
+      string: "https://api.github.com/repos/\(owner)/\(repository)/releases/tags/\(encodedTag)"
+    )
+  }
+
+  static func parse(_ value: String) -> GitHubReleaseDownload? {
+    guard let url = SecureUpdateURL.https(string: value) else {
+      return nil
+    }
+    return parse(url)
+  }
+
+  static func parse(_ url: URL) -> GitHubReleaseDownload? {
+    guard let host = url.host?.lowercased(),
+      host == "github.com" || host == "www.github.com"
+    else {
+      return nil
+    }
+
+    let parts = url.pathComponents.filter { $0 != "/" }
+    guard parts.count == 6,
+      parts[2].lowercased() == "releases",
+      parts[3].lowercased() == "download"
+    else {
+      return nil
+    }
+
+    let owner = parts[0]
+    let repository = parts[1].replacingOccurrences(
+      of: ".git",
+      with: "",
+      options: [.anchored, .backwards]
+    )
+    let tag = parts[4]
+    let fileName = parts[5]
+    guard !owner.isEmpty, owner != "." && owner != "..",
+      !repository.isEmpty, repository != "." && repository != "..",
+      !tag.isEmpty, !fileName.isEmpty
+    else {
+      return nil
+    }
+
+    return GitHubReleaseDownload(
+      owner: owner,
+      repository: repository,
+      tag: tag,
+      fileName: fileName
+    )
+  }
+}
+
 enum GitHubReleasesDetector {
   private static let githubNeedle = Data("github.com/".utf8)
   private static let expressions = [
@@ -118,6 +185,7 @@ struct GitHubReleaseManifest: Equatable, Sendable {
   struct Asset: Equatable, Sendable {
     let name: String
     let downloadURL: URL
+    let size: Int64?
   }
 
   let version: String
@@ -144,7 +212,11 @@ struct GitHubReleaseManifest: Equatable, Sendable {
       else {
         return nil
       }
-      return Asset(name: name, downloadURL: downloadURL)
+      return Asset(
+        name: name,
+        downloadURL: downloadURL,
+        size: JSONByteCount.parse(value["size"])
+      )
     }
 
     return GitHubReleaseManifest(
@@ -154,6 +226,28 @@ struct GitHubReleaseManifest: Equatable, Sendable {
       releaseURL: (json["html_url"] as? String).flatMap(SecureUpdateURL.https(string:)),
       assets: assets
     )
+  }
+
+  static func packageByteCount(named fileName: String, in data: Data) -> Int64? {
+    guard
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      json["draft"] as? Bool != true
+    else {
+      return nil
+    }
+
+    let target = fileName.lowercased()
+    for asset in json["assets"] as? [[String: Any]] ?? [] {
+      let name = (asset["name"] as? String)?.nonBlankValue
+      let downloadName = (asset["browser_download_url"] as? String)
+        .flatMap(URL.init(string:))?
+        .lastPathComponent
+      guard name?.lowercased() == target || downloadName?.lowercased() == target else {
+        continue
+      }
+      return JSONByteCount.parse(asset["size"])
+    }
+    return nil
   }
 
   func selectedPackage(
@@ -285,6 +379,7 @@ struct GitHubReleasesUpdateProvider: Sendable {
         releaseDate: release.releaseDate,
         releaseNotes: release.releaseNotes,
         releaseNotesURL: release.releaseURL,
+        packageByteCount: package?.size,
         canInstall: installability.canInstall
       )
     } catch is CancellationError {

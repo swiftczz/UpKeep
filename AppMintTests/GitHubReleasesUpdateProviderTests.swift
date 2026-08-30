@@ -104,11 +104,69 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
       release.selectedPackage(architecture: .arm64)?.name,
       "tty7-26.8.4-macos-arm64.dmg"
     )
+    XCTAssertEqual(release.selectedPackage(architecture: .arm64)?.size, 12_345_678)
     XCTAssertEqual(
       release.selectedPackage(architecture: .x64)?.name,
       "tty7-26.8.4-macos-x86_64.dmg"
     )
     XCTAssertEqual(release.checksumsAsset?.name, "checksums.txt")
+  }
+
+  func testParsesGitHubReleaseDownloadURL() throws {
+    let download = try XCTUnwrap(
+      GitHubReleaseDownload.parse(
+        "https://github.com/saltpi/Aria.X/releases/download/1.0.7/AriaX.dmg"
+      )
+    )
+    XCTAssertEqual(download.owner, "saltpi")
+    XCTAssertEqual(download.repository, "Aria.X")
+    XCTAssertEqual(download.tag, "1.0.7")
+    XCTAssertEqual(download.fileName, "AriaX.dmg")
+    XCTAssertEqual(
+      download.apiURL?.absoluteString,
+      "https://api.github.com/repos/saltpi/Aria.X/releases/tags/1.0.7"
+    )
+
+    let versioned = try XCTUnwrap(
+      GitHubReleaseDownload.parse(
+        "https://www.github.com/jsattler/BetterCapture/releases/download/v2026.3/BetterCapture-2026.3-arm64.dmg"
+      )
+    )
+    XCTAssertEqual(versioned.tag, "v2026.3")
+    XCTAssertEqual(versioned.fileName, "BetterCapture-2026.3-arm64.dmg")
+
+    XCTAssertNil(
+      GitHubReleaseDownload.parse(
+        "https://github.com/openai/codex/archive/refs/tags/rust-v0.151.0.tar.gz"
+      )
+    )
+    XCTAssertNil(
+      GitHubReleaseDownload.parse("https://static.adguard.com/mac/release/AdGuard.dmg")
+    )
+  }
+
+  func testReadsGitHubReleaseAssetSizeByFileName() {
+    let data = releaseData(
+      tag: "v2026.3",
+      assets: ["BetterCapture-2026.3-arm64.dmg", "checksums.txt"]
+    )
+
+    XCTAssertEqual(
+      GitHubReleaseManifest.packageByteCount(
+        named: "BetterCapture-2026.3-arm64.dmg",
+        in: data
+      ),
+      12_345_678
+    )
+    XCTAssertNil(
+      GitHubReleaseManifest.packageByteCount(named: "missing.dmg", in: data)
+    )
+    XCTAssertNil(
+      GitHubReleaseManifest.packageByteCount(
+        named: "BetterCapture-2026.3-arm64.dmg",
+        in: releaseData(tag: "v2026.3", assets: ["BetterCapture-2026.3-arm64.dmg"], draft: true)
+      )
+    )
   }
 
   func testIgnoresDraftAndPrereleaseResponses() {
@@ -171,6 +229,7 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
           "name": name,
           "browser_download_url":
             "https://github.com/l0ng-ai/tty7/releases/download/\(tag)/\(name)",
+          "size": 12_345_678,
         ]
       },
     ]

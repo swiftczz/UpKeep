@@ -13,12 +13,14 @@ struct ElectronBuilderUpdateProvider: Sendable {
 
     do {
       let manifest = try await loadManifest(from: feedURL)
+      let package = manifest.selectedPackage(relativeTo: feedURL)
       application.homepageURL = application.homepageURL ?? application.sourceURL
       application.applyRemoteRelease(
         version: manifest.version,
         releaseDate: manifest.releaseDate,
         releaseNotes: manifest.releaseNotes?.nonBlankYAMLValue,
-        canInstall: manifest.selectedPackage(relativeTo: feedURL) != nil
+        packageByteCount: package?.size,
+        canInstall: package != nil
       )
     } catch is CancellationError {
       return application

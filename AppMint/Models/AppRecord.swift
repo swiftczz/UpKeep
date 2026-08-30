@@ -21,6 +21,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var homepageURL: URL?
   var releaseNotesURL: URL?
   var sourceIdentifier: String?
+  var packageByteCount: Int64?
   var canAutomaticallyUpdate: Bool
   var lastInstalledAt: Date?
 
@@ -43,6 +44,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     homepageURL: URL? = nil,
     releaseNotesURL: URL? = nil,
     sourceIdentifier: String? = nil,
+    packageByteCount: Int64? = nil,
     canAutomaticallyUpdate: Bool = false,
     lastInstalledAt: Date? = nil
   ) {
@@ -65,6 +67,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.homepageURL = homepageURL
     self.releaseNotesURL = releaseNotesURL
     self.sourceIdentifier = sourceIdentifier
+    self.packageByteCount = packageByteCount
     self.canAutomaticallyUpdate = canAutomaticallyUpdate
     self.lastInstalledAt = lastInstalledAt
   }
@@ -90,6 +93,7 @@ extension AppRecord: Codable {
     case homepageURL
     case releaseNotesURL
     case sourceIdentifier
+    case packageByteCount
     case canAutomaticallyUpdate
     case lastInstalledAt
   }
@@ -118,6 +122,7 @@ extension AppRecord: Codable {
       homepageURL: try container.decodeIfPresent(URL.self, forKey: .homepageURL),
       releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
       sourceIdentifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
+      packageByteCount: try container.decodeIfPresent(Int64.self, forKey: .packageByteCount),
       canAutomaticallyUpdate: try container.decodeIfPresent(
         Bool.self,
         forKey: .canAutomaticallyUpdate
@@ -212,11 +217,23 @@ extension AppRecord {
     return "版本 \(versionSummary)"
   }
 
+  var packageSizeDescription: String? {
+    guard let packageByteCount, packageByteCount > 0 else {
+      return nil
+    }
+    let formatter = ByteCountFormatter()
+    formatter.allowedUnits = [.useKB, .useMB, .useGB]
+    formatter.countStyle = .file
+    formatter.includesUnit = true
+    return formatter.string(fromByteCount: packageByteCount)
+  }
+
   mutating func applyRemoteRelease(
     version: String,
     releaseDate: Date? = nil,
     releaseNotes: String? = nil,
     releaseNotesURL: URL? = nil,
+    packageByteCount: Int64? = nil,
     canInstall: Bool
   ) {
     latestVersion = version
@@ -225,6 +242,7 @@ extension AppRecord {
     if let releaseNotesURL {
       self.releaseNotesURL = releaseNotesURL
     }
+    self.packageByteCount = packageByteCount
 
     let newer = VersionComparator.isNewer(version, than: currentVersion, build: buildVersion)
     status = newer ? .updateAvailable : .upToDate
@@ -529,4 +547,45 @@ extension AppRecord {
       canAutomaticallyUpdate: true
     ),
   ]
+}
+
+enum JSONByteCount {
+  static func parse(_ value: Any?) -> Int64? {
+    switch value {
+    case let number as Int64:
+      return number > 0 ? number : nil
+    case let number as Int:
+      return number > 0 ? Int64(number) : nil
+    case let number as UInt64:
+      return number > 0 && number <= UInt64(Int64.max) ? Int64(number) : nil
+    case let number as Double:
+      guard number >= 1, number <= Double(Int64.max) else { return nil }
+      return Int64(number)
+    case let number as NSNumber:
+      let parsed = number.int64Value
+      return parsed > 0 ? parsed : nil
+    case let text as String:
+      let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let parsed = Int64(trimmed), parsed > 0 else { return nil }
+      return parsed
+    default:
+      return nil
+    }
+  }
+
+  static func decode<Key: CodingKey>(
+    _ container: KeyedDecodingContainer<Key>,
+    forKey key: Key
+  ) -> Int64? {
+    if let number = try? container.decode(Int64.self, forKey: key) {
+      return number > 0 ? number : nil
+    }
+    if let number = try? container.decode(Double.self, forKey: key) {
+      return parse(number)
+    }
+    if let text = try? container.decode(String.self, forKey: key) {
+      return parse(text)
+    }
+    return nil
+  }
 }

@@ -7,7 +7,8 @@ struct HomebrewUpdateProvider: Sendable {
     guard let snapshot = await loadSnapshot() else {
       return applications
     }
-    return applications.map { snapshot.applying(to: $0) }
+    let claimed = applications.map { snapshot.applying(to: $0) }
+    return await fillingGitHubPackageSizes(claimed, snapshot: snapshot)
   }
 
   func upgrade(
@@ -48,6 +49,13 @@ struct HomebrewUpdateProvider: Sendable {
     }
 
     return .upToDate
+  }
+
+  static func homepageURL(caskHomepage: String?, existing: URL?) -> URL? {
+    if let homepage = caskHomepage?.nonBlankValue, let url = URL(string: homepage) {
+      return url
+    }
+    return existing
   }
 
   /// Prefer Homebrew when brew itself has an update. Otherwise keep a working
@@ -172,10 +180,74 @@ struct HomebrewUpdateProvider: Sendable {
       return pathsByReceipt
     }
   }
+
+  private func fillingGitHubPackageSizes(
+    _ applications: [AppRecord],
+    snapshot: Snapshot
+  ) async -> [AppRecord] {
+    var started = Set<String>()
+    await withTaskGroup(of: (String, Int64)?.self) { group in
+      for application in applications {
+        guard application.source == .homebrew,
+          application.packageByteCount == nil,
+          let token = application.sourceIdentifier,
+          let download = snapshot.gitHubReleaseDownload(for: token),
+          cache.packageByteCount(for: download.cacheKey) == nil,
+          started.insert(download.cacheKey).inserted
+        else {
+          continue
+        }
+        group.addTask {
+          await Self.fetchGitHubAssetSize(download)
+        }
+      }
+
+      for await result in group {
+        guard let (key, size) = result else { continue }
+        cache.store(packageByteCount: size, for: key)
+      }
+    }
+
+    return applications.map { application in
+      var application = application
+      guard application.source == .homebrew,
+        application.packageByteCount == nil,
+        let token = application.sourceIdentifier,
+        let download = snapshot.gitHubReleaseDownload(for: token),
+        let size = cache.packageByteCount(for: download.cacheKey)
+      else {
+        return application
+      }
+      application.packageByteCount = size
+      return application
+    }
+  }
+
+  private static func fetchGitHubAssetSize(
+    _ download: GitHubReleaseDownload
+  ) async -> (String, Int64)? {
+    guard let apiURL = download.apiURL else {
+      return nil
+    }
+    do {
+      guard let data = try await UpdateHTTP.successfulData(from: apiURL),
+        data.count <= 5_000_000,
+        let size = GitHubReleaseManifest.packageByteCount(named: download.fileName, in: data)
+      else {
+        return nil
+      }
+      return (download.cacheKey, size)
+    } catch is CancellationError {
+      return nil
+    } catch {
+      return nil
+    }
+  }
 }
 
 private struct Snapshot {
   private var caskByTargetPath: [String: BrewCask]
+  private var downloadURLByToken: [String: String]
   private var outdatedByToken: [String: BrewOutdatedCask]
 
   init(
@@ -184,7 +256,11 @@ private struct Snapshot {
     packageApplicationPaths: [String: [String]]
   ) {
     var caskByTargetPath: [String: BrewCask] = [:]
+    var downloadURLByToken: [String: String] = [:]
     for cask in info.casks {
+      if let downloadURL = cask.downloadURL {
+        downloadURLByToken[cask.token] = downloadURL
+      }
       for artifact in cask.artifacts where artifact.isApplication {
         guard let target = artifact.target else { continue }
         let path = URL(fileURLWithPath: target).standardizedFileURL.path
@@ -198,6 +274,7 @@ private struct Snapshot {
       }
     }
     self.caskByTargetPath = caskByTargetPath
+    self.downloadURLByToken = downloadURLByToken
 
     var outdatedByToken: [String: BrewOutdatedCask] = [:]
     for item in outdated.casks {
@@ -205,6 +282,10 @@ private struct Snapshot {
       outdatedByToken[token] = item
     }
     self.outdatedByToken = outdatedByToken
+  }
+
+  func gitHubReleaseDownload(for token: String) -> GitHubReleaseDownload? {
+    downloadURLByToken[token].flatMap(GitHubReleaseDownload.parse)
   }
 
   func applying(to application: AppRecord) -> AppRecord {
@@ -245,12 +326,24 @@ private struct Snapshot {
     onto application: AppRecord
   ) -> AppRecord {
     var application = application
+    let remoteIsNewer = VersionComparator.isNewer(
+      remoteVersion,
+      than: application.currentVersion,
+      build: application.buildVersion
+    )
+    let preservedPackageByteCount =
+      application.source == .homebrew
+      && (application.latestVersion == remoteVersion || !remoteIsNewer)
+      ? application.packageByteCount
+      : nil
     application.source = .homebrew
     application.sourceIdentifier = cask.token
-    if application.homepageURL == nil {
-      application.homepageURL = cask.homepage.flatMap(URL.init(string:))
-    }
-    application.sourceURL = application.homepageURL ?? cask.homepage.flatMap(URL.init(string:))
+    application.homepageURL = HomebrewUpdateProvider.homepageURL(
+      caskHomepage: cask.homepage,
+      existing: application.homepageURL
+    )
+    application.sourceURL = application.homepageURL
+    application.packageByteCount = preservedPackageByteCount
     application.status = HomebrewUpdateProvider.resolvedStatus(
       currentVersion: application.currentVersion,
       remoteVersion: remoteVersion,
@@ -273,6 +366,7 @@ private final class SnapshotCache: @unchecked Sendable {
   private let lock = NSLock()
   private var stored: Snapshot?
   private var storedAt: Date?
+  private var packageByteCountByDownload: [String: Int64] = [:]
   private let timeToLive: TimeInterval = 20
 
   func snapshot() -> Snapshot? {
@@ -288,6 +382,18 @@ private final class SnapshotCache: @unchecked Sendable {
     lock.lock()
     stored = snapshot
     storedAt = Date()
+    lock.unlock()
+  }
+
+  func packageByteCount(for cacheKey: String) -> Int64? {
+    lock.lock()
+    defer { lock.unlock() }
+    return packageByteCountByDownload[cacheKey]
+  }
+
+  func store(packageByteCount: Int64, for cacheKey: String) {
+    lock.lock()
+    packageByteCountByDownload[cacheKey] = packageByteCount
     lock.unlock()
   }
 }
@@ -388,13 +494,19 @@ private struct BrewCask: Decodable, Sendable {
   let token: String
   let version: String
   let homepage: String?
+  let url: String?
   let artifacts: [BrewArtifact]
 
   enum CodingKeys: String, CodingKey {
     case token
     case version
     case homepage
+    case url
     case artifacts
+  }
+
+  var downloadURL: String? {
+    url?.nonBlankValue
   }
 
   var packageReceiptIdentifiers: [String] {

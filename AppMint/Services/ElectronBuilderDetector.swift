@@ -205,7 +205,7 @@ enum ElectronBuilderYAML {
 
       if trimmed.hasPrefix("- ") {
         commitFile()
-        currentFile = ElectronBuilderManifest.File(url: "", sha512: nil)
+        currentFile = ElectronBuilderManifest.File(url: "", sha512: nil, size: nil)
         let remainder = String(trimmed.dropFirst(2))
         applyFileField(remainder, to: &currentFile)
         continue
@@ -219,7 +219,7 @@ enum ElectronBuilderYAML {
       let rawValue = components.count == 2 ? String(components[1]) : ""
       let value = rawValue.yamlScalar
 
-      if currentFile != nil && indent >= 2 && ["url", "sha512"].contains(key) {
+      if currentFile != nil && indent >= 2 && ["url", "sha512", "size"].contains(key) {
         applyFileField(trimmed, to: &currentFile)
         continue
       }
@@ -280,6 +280,8 @@ enum ElectronBuilderYAML {
       file?.url = value
     case "sha512":
       file?.sha512 = value.nonBlankYAMLValue
+    case "size":
+      file?.size = JSONByteCount.parse(value.nonBlankYAMLValue)
     default:
       break
     }
@@ -313,11 +315,13 @@ struct ElectronBuilderManifest: Equatable, Sendable {
   struct File: Equatable, Sendable {
     var url: String
     var sha512: String?
+    var size: Int64?
   }
 
   struct Package: Equatable, Sendable {
     let url: URL
     let sha512: String?
+    let size: Int64?
   }
 
   var version: String
@@ -331,11 +335,18 @@ struct ElectronBuilderManifest: Equatable, Sendable {
     relativeTo feedURL: URL,
     architecture: MacCPUArchitecture = .current
   ) -> Package? {
-    var candidates: [(fileName: String, url: String, sha512: String?)] = files.map {
-      ($0.url, $0.url, $0.sha512)
+    var candidates: [(fileName: String, url: String, sha512: String?, size: Int64?)] = files.map {
+      ($0.url, $0.url, $0.sha512, $0.size)
     }
     if let path, !path.isEmpty {
-      candidates.append((path, path, sha512))
+      let pathFileName = URL(string: path)?.lastPathComponent ?? path
+      let alreadyListed = files.contains { file in
+        file.url == path
+          || (URL(string: file.url)?.lastPathComponent ?? file.url) == pathFileName
+      }
+      if !alreadyListed {
+        candidates.append((path, path, sha512, nil))
+      }
     }
 
     let ranked = candidates.compactMap { candidate -> (Int, Package)? in
@@ -350,7 +361,7 @@ struct ElectronBuilderManifest: Equatable, Sendable {
       guard let url = resolvedURL(candidate.url, relativeTo: feedURL) else {
         return nil
       }
-      return (score, Package(url: url, sha512: candidate.sha512))
+      return (score, Package(url: url, sha512: candidate.sha512, size: candidate.size))
     }
 
     return ranked.max(by: { $0.0 < $1.0 })?.1

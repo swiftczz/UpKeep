@@ -135,7 +135,8 @@ final class AppStoreLookupTests: XCTestCase {
             "trackId": 1518036000,
             "version": "5.4.0",
             "currentVersionReleaseDate": "2026-08-15T16:06:07Z",
-            "trackViewUrl": "https://apps.apple.com/cn/app/sequel-ace/id1518036000"
+            "trackViewUrl": "https://apps.apple.com/cn/app/sequel-ace/id1518036000",
+            "fileSizeBytes": "88473600"
           }
         ]
       }
@@ -149,6 +150,7 @@ final class AppStoreLookupTests: XCTestCase {
 
     XCTAssertEqual(result.version, "5.4.0")
     XCTAssertEqual(result.trackID, 1_518_036_000)
+    XCTAssertEqual(result.packageByteCount, 88_473_600)
     XCTAssertTrue(result.supports(.mac))
   }
 
