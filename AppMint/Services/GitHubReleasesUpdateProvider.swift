@@ -11,6 +11,7 @@ enum GitHubReleasesDetector {
   private static let expressions = [
     #"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/latest"#,
     #"https://api\.github\.com/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/latest"#,
+    #"https://api\.github\.com/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases(?!/)"#,
   ].compactMap { try? NSRegularExpression(pattern: $0) }
 
   static func metadata(in data: Data) -> GitHubReleasesMetadata? {
@@ -18,41 +19,63 @@ enum GitHubReleasesDetector {
     return metadata(in: String(decoding: data, as: UTF8.self))
   }
 
+  static func metadataCandidates(in data: Data) -> [GitHubReleasesMetadata] {
+    guard data.range(of: githubNeedle) != nil else { return [] }
+    return metadataCandidates(in: String(decoding: data, as: UTF8.self))
+  }
+
   static func metadata(in text: String) -> GitHubReleasesMetadata? {
+    metadataCandidates(in: text).first
+  }
+
+  static func metadataCandidates(in text: String) -> [GitHubReleasesMetadata] {
+    var matches: [(location: Int, metadata: GitHubReleasesMetadata)] = []
     for expression in expressions {
-      guard
-        let match = expression.firstMatch(
-          in: text,
-          range: NSRange(text.startIndex..., in: text)
-        ),
-        let ownerRange = Range(match.range(at: 1), in: text),
-        let repositoryRange = Range(match.range(at: 2), in: text)
-      else {
-        continue
-      }
+      expression.enumerateMatches(
+        in: text,
+        range: NSRange(text.startIndex..., in: text)
+      ) { match, _, _ in
+        guard
+          let match,
+          let ownerRange = Range(match.range(at: 1), in: text),
+          let repositoryRange = Range(match.range(at: 2), in: text)
+        else {
+          return
+        }
 
-      let owner = String(text[ownerRange])
-      let repository = String(text[repositoryRange]).replacingOccurrences(
-        of: ".git",
-        with: "",
-        options: [.anchored, .backwards]
-      )
-      guard isRepositoryComponent(owner), isRepositoryComponent(repository),
-        let apiURL = URL(
-          string: "https://api.github.com/repos/\(owner)/\(repository)/releases/latest"
-        ),
-        let homepageURL = URL(string: "https://github.com/\(owner)/\(repository)")
-      else {
-        continue
-      }
+        let owner = String(text[ownerRange])
+        let repository = String(text[repositoryRange]).replacingOccurrences(
+          of: ".git",
+          with: "",
+          options: [.anchored, .backwards]
+        )
+        guard isRepositoryComponent(owner), isRepositoryComponent(repository),
+          let apiURL = URL(
+            string: "https://api.github.com/repos/\(owner)/\(repository)/releases/latest"
+          ),
+          let homepageURL = URL(string: "https://github.com/\(owner)/\(repository)")
+        else {
+          return
+        }
 
-      return GitHubReleasesMetadata(
-        identifier: "\(owner)/\(repository)",
-        apiURL: apiURL,
-        homepageURL: homepageURL
-      )
+        matches.append(
+          (
+            match.range.location,
+            GitHubReleasesMetadata(
+              identifier: "\(owner)/\(repository)",
+              apiURL: apiURL,
+              homepageURL: homepageURL
+            )
+          )
+        )
+      }
     }
-    return nil
+
+    var seen = Set<String>()
+    return matches.sorted { $0.location < $1.location }.compactMap { match in
+      guard seen.insert(match.metadata.identifier).inserted else { return nil }
+      return match.metadata
+    }
   }
 
   static func matchesApplication(
@@ -160,7 +183,7 @@ struct GitHubReleaseManifest: Equatable, Sendable {
       let fields = line.split(whereSeparator: \.isWhitespace)
       guard fields.count >= 2 else { continue }
       let digest = String(fields[0]).lowercased()
-      let listedName = String(fields[1]).trimmingCharacters(in: CharacterSet(charactersIn: "*"))
+      let listedName = normalizedChecksumFileName(String(fields[1]))
       if listedName == fileName, isSHA256(digest) {
         return digest
       }
@@ -228,6 +251,14 @@ struct GitHubReleaseManifest: Equatable, Sendable {
   private static func isSHA256(_ value: String) -> Bool {
     value.count == 64 && value.allSatisfy { $0.isHexDigit }
   }
+
+  private static func normalizedChecksumFileName(_ value: String) -> String {
+    var name = value.trimmingCharacters(in: CharacterSet(charactersIn: "*"))
+    while name.hasPrefix("./") {
+      name.removeFirst(2)
+    }
+    return (name as NSString).lastPathComponent
+  }
 }
 
 struct GitHubReleasesUpdateProvider: Sendable {
@@ -243,14 +274,18 @@ struct GitHubReleasesUpdateProvider: Sendable {
     do {
       let release = try await loadRelease(from: apiURL)
       let package = release.selectedPackage()
+      let installability = await installability(
+        of: package,
+        in: release,
+        replacing: application
+      )
       application.homepageURL = application.homepageURL ?? release.releaseURL
       application.applyRemoteRelease(
         version: release.version,
         releaseDate: release.releaseDate,
         releaseNotes: release.releaseNotes,
         releaseNotesURL: release.releaseURL,
-        canInstall: package != nil
-          && ApplicationCodeSigning.teamIdentifier(at: application.applicationURL) != nil
+        canInstall: installability.canInstall
       )
     } catch is CancellationError {
       return application
@@ -276,13 +311,21 @@ struct GitHubReleasesUpdateProvider: Sendable {
       throw ProcessRunnerError.failed(status: 1, message: "GitHub Release 中没有兼容此 Mac 的安装包。")
     }
 
-    let expectedSHA256 = await checksum(for: package, in: release)
+    let installability = await installability(
+      of: package,
+      in: release,
+      replacing: application
+    )
+    guard installability.canInstall else {
+      throw ProcessRunnerError.failed(status: 1, message: "GitHub Release 没有提供可验证的 macOS 更新包。")
+    }
     try await ApplicationPackageInstaller.install(
       from: package.downloadURL,
       replacing: application,
       expectedSHA512: nil,
-      expectedSHA256: expectedSHA256,
-      requiresTeamIdentifier: true,
+      expectedSHA256: installability.expectedSHA256,
+      requiresValidSignature: installability.requiresValidSignature,
+      requiresTeamIdentifier: installability.requiresTeamIdentifier,
       progress: progress
     )
   }
@@ -295,6 +338,26 @@ struct GitHubReleasesUpdateProvider: Sendable {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 GitHub Release。")
     }
     return release
+  }
+
+  private func installability(
+    of package: GitHubReleaseManifest.Asset?,
+    in release: GitHubReleaseManifest,
+    replacing application: AppRecord
+  ) async -> (
+    canInstall: Bool,
+    expectedSHA256: String?,
+    requiresValidSignature: Bool,
+    requiresTeamIdentifier: Bool
+  ) {
+    guard let package else {
+      return (false, nil, false, false)
+    }
+
+    let requiresTeamIdentifier =
+      ApplicationCodeSigning.teamIdentifier(at: application.applicationURL) != nil
+    let expectedSHA256 = await checksum(for: package, in: release)
+    return (true, expectedSHA256, true, requiresTeamIdentifier)
   }
 
   private func checksum(

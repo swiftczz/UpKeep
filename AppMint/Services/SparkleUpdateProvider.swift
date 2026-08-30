@@ -43,6 +43,9 @@ struct SparkleUpdateProvider: Sendable {
 
       let parser = SparkleAppcastParser(data: data)
       let candidates = try parser.parse()
+      if application.homepageURL == nil {
+        application.homepageURL = parser.homepageURL
+      }
       guard !candidates.isEmpty else {
         application.status = .unavailable("更新源没有提供版本。")
         return application
@@ -443,8 +446,12 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
   private var currentCandidate: SparkleCandidate?
   private var captureElement: String?
   private var captureBuffer = ""
+  private var feedCaptureElement: String?
+  private var feedCaptureBuffer = ""
   private var parserError: Error?
   private var deltaContainerDepth = 0
+  private var channelDepth = 0
+  private(set) var homepageURL: URL?
 
   init(data: Data) {
     self.data = data
@@ -473,7 +480,18 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       return
     }
 
-    guard currentCandidate != nil else { return }
+    if currentCandidate == nil, key == "channel" {
+      channelDepth += 1
+      return
+    }
+
+    guard currentCandidate != nil else {
+      if channelDepth > 0, key == "link" {
+        feedCaptureElement = key
+        feedCaptureBuffer = ""
+      }
+      return
+    }
 
     if key == "deltas" {
       deltaContainerDepth += 1
@@ -532,8 +550,12 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
   }
 
   func parser(_ parser: XMLParser, foundCharacters string: String) {
-    guard captureElement != nil else { return }
-    captureBuffer += string
+    if feedCaptureElement != nil {
+      feedCaptureBuffer += string
+    }
+    if captureElement != nil {
+      captureBuffer += string
+    }
   }
 
   func parser(
@@ -544,6 +566,16 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
   ) {
     let key = Self.normalized(elementName)
 
+    if key == feedCaptureElement {
+      let value = feedCaptureBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+      if homepageURL == nil {
+        homepageURL = SecureUpdateURL.https(string: value)
+      }
+      feedCaptureElement = nil
+      feedCaptureBuffer = ""
+      return
+    }
+
     if key == "item" {
       if let currentCandidate {
         candidates.append(currentCandidate)
@@ -551,6 +583,11 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       currentCandidate = nil
       captureElement = nil
       captureBuffer = ""
+      return
+    }
+
+    if currentCandidate == nil, key == "channel" {
+      channelDepth = max(0, channelDepth - 1)
       return
     }
 

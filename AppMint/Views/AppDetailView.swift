@@ -351,7 +351,12 @@ struct AppDetailView: View {
   }
 
   private var canOpenHomepage: Bool {
-    application.source == .homebrew && application.homepageURL != nil
+    switch application.source {
+    case .homebrew, .sparkle, .githubReleases:
+      return application.homepageURL != nil
+    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .selfManaged:
+      return false
+    }
   }
 
   private var releaseNotesPlaceholder: String {

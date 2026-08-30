@@ -22,6 +22,16 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
       web.apiURL.absoluteString,
       "https://api.github.com/repos/l0ng-ai/tty7/releases/latest"
     )
+    let releasesList = try XCTUnwrap(
+      GitHubReleasesDetector.metadata(
+        in: "https://api.github.com/repos/wanghongenpin/proxypin/releases"
+      )
+    )
+    XCTAssertEqual(releasesList.identifier, "wanghongenpin/proxypin")
+    XCTAssertEqual(
+      releasesList.apiURL.absoluteString,
+      "https://api.github.com/repos/wanghongenpin/proxypin/releases/latest"
+    )
     XCTAssertNil(
       GitHubReleasesDetector.metadata(
         in: "https://github.com/l0ng-ai/tty7/releases/tag/nightly"
@@ -40,6 +50,21 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
         name: "Another Terminal",
         bundleIdentifier: "com.example.terminal"
       )
+    )
+  }
+
+  func testCollectsMultipleLatestReleaseCandidatesInTextOrder() {
+    let candidates = GitHubReleasesDetector.metadataCandidates(
+      in: """
+        Dependency: https://github.com/MetaCubeX/mihomo/releases/latest
+        Application: https://api.github.com/repos/chen08209/FlClash/releases/latest
+        Duplicate: https://github.com/chen08209/FlClash/releases/latest
+        """
+    )
+
+    XCTAssertEqual(
+      candidates.map(\.identifier),
+      ["MetaCubeX/mihomo", "chen08209/FlClash"]
     )
   }
 
@@ -108,6 +133,20 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
       GitHubReleaseManifest.sha256(
         for: package,
         in: Data("SHA256 (\(package)) = \(digest)\n".utf8)
+      ),
+      digest
+    )
+    XCTAssertEqual(
+      GitHubReleaseManifest.sha256(
+        for: package,
+        in: Data("\(digest)  ./\(package)\n".utf8)
+      ),
+      digest
+    )
+    XCTAssertEqual(
+      GitHubReleaseManifest.sha256(
+        for: package,
+        in: Data("\(digest)  releases/\(package)\n".utf8)
       ),
       digest
     )

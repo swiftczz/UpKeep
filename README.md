@@ -127,7 +127,7 @@ AppMint/
 - Sparkle 应用在 Appcast 含 HTTPS 安装包时支持直接更新；仅含说明、动态生成或需要鉴权的 Feed 仍打开应用处理。
 - Electron-builder 仅处理 `provider: github` 与带 HTTPS 地址的 `provider: generic`；`custom`、localhost、空地址等不安全配置仍交给应用自身。
 - Tauri updater 仅处理 HTTPS 的 `latest.json` / `update-proxy.json`，并安装当前架构的 `.app` 压缩包。
-- GitHub Releases 仅接受应用包中明确的稳定版接口，仓库名必须与应用名或 Bundle ID 对应；自动安装还会核对开发者签名。
+- GitHub Releases 仅接受应用包中明确的稳定版接口，仓库名必须与应用名或 Bundle ID 对应；自动安装会核对 Bundle ID 与候选应用签名，本地应用有 Team ID 时还会核对开发者签名，release 提供 SHA256 时会先校验安装包。
 - Homebrew 通常不提供发行说明，因此详情可能只有版本与主页。
 - 动态或需要鉴权的更新源不会被强行解析。
 - 脚本可以生成 `.app` 和 DMG；公开分发前仍需配置 Developer ID 签名、公证和正式应用图标。

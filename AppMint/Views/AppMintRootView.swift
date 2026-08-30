@@ -80,7 +80,8 @@ struct AppMintRootView: View {
             },
             openHomepage: {
               guard
-                application.source == .homebrew,
+                application.source == .homebrew || application.source == .sparkle
+                  || application.source == .githubReleases,
                 let homepageURL = application.homepageURL
               else {
                 return

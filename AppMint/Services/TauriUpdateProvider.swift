@@ -119,20 +119,24 @@ struct TauriUpdateProvider: Sendable {
 
     do {
       let manifest = try await fetchManifest(from: endpoint)
+      let selectedPlatform = manifest.selectedPlatform()
       let releaseNotes: String?
       if let notes = manifest.notes {
         releaseNotes = notes
       } else if let releaseNotesURL = manifest.releaseNotesURL {
-        releaseNotes = await TauriReleaseNotes.fetch(from: releaseNotesURL)
+        releaseNotes = await TauriReleaseNotes.fetch(
+          from: releaseNotesURL,
+          packageURL: selectedPlatform?.url
+        )
       } else {
-        releaseNotes = nil
+        releaseNotes = await TauriReleaseNotes.fetch(from: nil, packageURL: selectedPlatform?.url)
       }
       application.applyRemoteRelease(
         version: manifest.version,
         releaseDate: manifest.publicationDate,
         releaseNotes: releaseNotes,
         releaseNotesURL: manifest.releaseNotesURL,
-        canInstall: manifest.selectedPlatform() != nil
+        canInstall: selectedPlatform != nil
       )
     } catch is CancellationError {
       return application
@@ -189,11 +193,30 @@ struct TauriUpdateProvider: Sendable {
 }
 
 enum TauriReleaseNotes {
-  static func fetch(from releaseURL: URL) async -> String? {
-    guard let apiURL = githubReleaseAPIURL(from: releaseURL) else {
-      return nil
+  static func fetch(from releaseURL: URL?, packageURL: URL? = nil) async -> String? {
+    if let releaseURL {
+      if let apiURL = githubReleaseAPIURL(from: releaseURL),
+        let notes = await fetchGitHubRelease(from: apiURL)
+      {
+        return notes
+      }
+
+      if let notes = await fetchPlainText(from: releaseURL) {
+        return notes
+      }
     }
 
+    if let packageURL,
+      let apiURL = githubReleaseAPIURL(from: packageURL),
+      let notes = await fetchGitHubRelease(from: apiURL)
+    {
+      return notes
+    }
+
+    return nil
+  }
+
+  private static func fetchGitHubRelease(from apiURL: URL) async -> String? {
     do {
       guard
         let data = try await UpdateHTTP.successfulData(from: apiURL),
@@ -215,16 +238,22 @@ enum TauriReleaseNotes {
     let components = releaseURL.pathComponents
       .filter { $0 != "/" }
       .map { $0.removingPercentEncoding ?? $0 }
-    guard components.count >= 5,
-      components[2].lowercased() == "releases",
-      components[3].lowercased() == "tag"
-    else {
+    guard components.count >= 5, components[2].lowercased() == "releases" else {
       return nil
     }
 
     let owner = components[0]
     let repository = components[1]
-    let tag = components[4...].joined(separator: "/")
+    let tag: String
+    switch components[3].lowercased() {
+    case "tag":
+      tag = components[4...].joined(separator: "/")
+    case "download":
+      tag = components[4]
+    default:
+      return nil
+    }
+
     let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
     guard
       let encodedOwner = owner.addingPercentEncoding(withAllowedCharacters: allowed),
@@ -248,6 +277,78 @@ enum TauriReleaseNotes {
       return nil
     }
     return body.nonBlankValue
+  }
+
+  static func plainText(fromHTML html: String) -> String? {
+    let removablePatterns = [
+      "(?is)<script\\b[^>]*>.*?</script\\s*>",
+      "(?is)<style\\b[^>]*>.*?</style\\s*>",
+      "(?is)<noscript\\b[^>]*>.*?</noscript\\s*>",
+    ]
+    let lineBreakPatterns = [
+      "(?i)<br\\s*/?>",
+      "(?i)</p\\s*>",
+      "(?i)</li\\s*>",
+      "(?i)</h[1-6]\\s*>",
+      "(?i)</tr\\s*>",
+    ]
+
+    var value = html
+    for pattern in removablePatterns {
+      value = value.replacingOccurrences(
+        of: pattern,
+        with: "",
+        options: .regularExpression
+      )
+    }
+    for pattern in lineBreakPatterns {
+      value = value.replacingOccurrences(
+        of: pattern,
+        with: "\n",
+        options: .regularExpression
+      )
+    }
+
+    value = value.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+    value =
+      value
+      .replacingOccurrences(of: "&nbsp;", with: " ")
+      .replacingOccurrences(of: "&amp;", with: "&")
+      .replacingOccurrences(of: "&lt;", with: "<")
+      .replacingOccurrences(of: "&gt;", with: ">")
+      .replacingOccurrences(of: "&quot;", with: "\"")
+      .replacingOccurrences(of: "&#39;", with: "'")
+
+    let lines =
+      value
+      .components(separatedBy: .newlines)
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    let result = lines.joined(separator: "\n")
+    return result.isEmpty ? nil : result
+  }
+
+  private static func fetchPlainText(from url: URL) async -> String? {
+    guard SecureUpdateURL.https(url) != nil else {
+      return nil
+    }
+
+    do {
+      guard
+        let data = try await UpdateHTTP.successfulData(from: url),
+        data.count <= 2_000_000,
+        let text = String(data: data, encoding: .utf8)
+      else {
+        return nil
+      }
+
+      if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
+        return plainText(fromHTML: text)
+      }
+      return text.nonBlankValue
+    } catch {
+      return nil
+    }
   }
 }
 

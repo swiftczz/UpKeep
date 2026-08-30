@@ -528,6 +528,97 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.source, .selfManaged)
   }
 
+  func testDetectsGitHubReleasesUpdaterInFlutterAppFramework() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent("FlClash.app", isDirectory: true)
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    let appFrameworkExecutableURL = contentsURL
+      .appendingPathComponent("Frameworks/App.framework/Versions/A", isDirectory: true)
+      .appendingPathComponent("App")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try fileManager.createDirectory(
+      at: appFrameworkExecutableURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.follow.clash",
+        extraValues: [
+          "CFBundleDisplayName": "FlClash",
+          "CFBundleName": "FlClash",
+          "CFBundleExecutable": "FlClash",
+        ]
+      ),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      "Download core: https://github.com/MetaCubeX/mihomo/releases/latest".utf8
+    ).write(to: macOSURL.appendingPathComponent("FlClash"))
+    try Data(
+      "App update: https://api.github.com/repos/chen08209/FlClash/releases/latest".utf8
+    ).write(to: appFrameworkExecutableURL)
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(application.source, .githubReleases)
+    XCTAssertEqual(application.sourceIdentifier, "chen08209/FlClash")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://api.github.com/repos/chen08209/FlClash/releases/latest"
+    )
+  }
+
+  func testDetectsGitHubReleasesListUpdaterInFlutterAppFramework() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "ProxyPin.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+    let appFrameworkExecutableURL = contentsURL
+      .appendingPathComponent("Frameworks/App.framework/Versions/A", isDirectory: true)
+      .appendingPathComponent("App")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+    try fileManager.createDirectory(
+      at: appFrameworkExecutableURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.proxy.pin",
+        extraValues: [
+          "CFBundleDisplayName": "ProxyPin",
+          "CFBundleName": "ProxyPin",
+          "CFBundleExecutable": "ProxyPin",
+        ]
+      ),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data("ProxyPin launcher".utf8).write(to: macOSURL.appendingPathComponent("ProxyPin"))
+    try Data(
+      "Updates: https://api.github.com/repos/wanghongenpin/proxypin/releases".utf8
+    ).write(to: appFrameworkExecutableURL)
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(application.source, .githubReleases)
+    XCTAssertEqual(application.sourceIdentifier, "wanghongenpin/proxypin")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://api.github.com/repos/wanghongenpin/proxypin/releases/latest"
+    )
+  }
+
   func testDetectsElectronBuilderGitHubProvider() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
@@ -895,6 +986,36 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(
       application.sourceURL?.absoluteString,
       "https://api.github.com/repos/l0ng-ai/tty7/releases/latest"
+    )
+  }
+
+  func testDetectsInstalledFlClashGitHubReleasesWhenPresent() throws {
+    let applicationURL = URL(fileURLWithPath: "/Applications/FlClash.app")
+    guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+      throw XCTSkip("FlClash.app is not installed on this machine")
+    }
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .githubReleases)
+    XCTAssertEqual(application.sourceIdentifier, "chen08209/FlClash")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://api.github.com/repos/chen08209/FlClash/releases/latest"
+    )
+  }
+
+  func testDetectsInstalledProxyPinGitHubReleasesWhenPresent() throws {
+    let applicationURL = URL(fileURLWithPath: "/Applications/ProxyPin.app")
+    guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+      throw XCTSkip("ProxyPin.app is not installed on this machine")
+    }
+
+    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(application.source, .githubReleases)
+    XCTAssertEqual(application.sourceIdentifier, "wanghongenpin/proxypin")
+    XCTAssertEqual(
+      application.sourceURL?.absoluteString,
+      "https://api.github.com/repos/wanghongenpin/proxypin/releases/latest"
     )
   }
 

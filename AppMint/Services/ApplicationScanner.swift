@@ -146,13 +146,13 @@ struct ApplicationScanner: ApplicationScanning {
         appStorePlatform = nil
         status = .checking
         releaseJSONEndpoint = detectedReleaseJSON
-      } else if let detectedGitHub = detection.githubReleases,
+      } else if let detectedGitHub = detection.githubReleases.first(where: {
         GitHubReleasesDetector.matchesApplication(
-          detectedGitHub,
+          $0,
           name: name,
           bundleIdentifier: bundleIdentifier
         )
-      {
+      }) {
         source = .githubReleases
         appStorePlatform = nil
         status = .checking

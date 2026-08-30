@@ -9,6 +9,7 @@ final class SparkleAppcastParserTests: XCTestCase {
       <?xml version="1.0" encoding="utf-8"?>
       <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
         <channel>
+          <link>https://example.com/app</link>
           <item>
             <title>Version 2.4</title>
             <pubDate>Thu, 20 Aug 2026 12:00:00 +0000</pubDate>
@@ -30,6 +31,7 @@ final class SparkleAppcastParserTests: XCTestCase {
     let parser = SparkleAppcastParser(data: Data(xml.utf8))
     let candidate = try XCTUnwrap(parser.parse().first)
 
+    XCTAssertEqual(parser.homepageURL?.absoluteString, "https://example.com/app")
     XCTAssertEqual(candidate.shortVersion, "2.4")
     XCTAssertEqual(candidate.displayVersion, "2.4")
     XCTAssertEqual(candidate.buildVersion, "240")
@@ -71,6 +73,27 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertEqual(candidate.shortVersion, "4.2.1")
     XCTAssertEqual(candidate.buildVersion, "99")
     XCTAssertNil(candidate.channel)
+  }
+
+  func testIgnoresItemLinkWhenReadingHomepage() throws {
+    let xml = """
+      <?xml version="1.0" encoding="utf-8"?>
+      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+        <channel>
+          <link>https://example.com/home</link>
+          <item>
+            <title>Version 1.1</title>
+            <link>https://example.com/releases/1.1</link>
+            <enclosure url="https://example.com/App.zip" sparkle:shortVersionString="1.1" />
+          </item>
+        </channel>
+      </rss>
+      """
+
+    let parser = SparkleAppcastParser(data: Data(xml.utf8))
+    _ = try parser.parse()
+
+    XCTAssertEqual(parser.homepageURL?.absoluteString, "https://example.com/home")
   }
 
   func testIgnoresUnchanneledPrereleaseVersion() {

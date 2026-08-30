@@ -176,6 +176,49 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
   }
 
+  func testBuildsGitHubReleaseAPIURLFromDownloadAsset() throws {
+    let packageURL = try XCTUnwrap(
+      URL(
+        string:
+          "https://github.com/esengine/DeepSeek-Reasonix/releases/download/desktop-v1.34.0/Reasonix-darwin-arm64.zip"
+      )
+    )
+
+    XCTAssertEqual(
+      TauriReleaseNotes.githubReleaseAPIURL(from: packageURL)?.absoluteString,
+      "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/desktop-v1.34.0"
+    )
+  }
+
+  func testConvertsHTMLReleaseNotesToPlainText() {
+    let html = """
+      <!doctype html>
+      <html>
+        <head>
+          <style>.hidden { display: none }</style>
+          <script>window.noise = true</script>
+        </head>
+        <body>
+          <main>
+            <h1>Reasonix Desktop v1.34.0</h1>
+            <p>Improved update handling &amp; release notes.</p>
+            <ul><li>Fixed updater display</li><li>Added changelog fallback</li></ul>
+          </main>
+        </body>
+      </html>
+      """
+
+    XCTAssertEqual(
+      TauriReleaseNotes.plainText(fromHTML: html),
+      """
+      Reasonix Desktop v1.34.0
+      Improved update handling & release notes.
+      Fixed updater display
+      Added changelog fallback
+      """
+    )
+  }
+
   func testParsesVersionsCatalogAndPrefersNewestStableManifest() throws {
     let data = Data(
       """

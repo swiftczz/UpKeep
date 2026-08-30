@@ -44,6 +44,7 @@ enum ApplicationPackageInstaller {
     expectedSHA256: String? = nil,
     expectedEd25519Signature: String? = nil,
     ed25519PublicKey: String? = nil,
+    requiresValidSignature: Bool = false,
     requiresTeamIdentifier: Bool = false,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
@@ -97,6 +98,7 @@ enum ApplicationPackageInstaller {
     try verifyIdentity(
       of: extractedApplicationURL,
       matching: application,
+      requiresValidSignature: requiresValidSignature,
       requiresTeamIdentifier: requiresTeamIdentifier,
       hasVerifiedUpdateSignature: hasVerifiedUpdateSignature
     )
@@ -394,6 +396,7 @@ enum ApplicationPackageInstaller {
   private static func verifyIdentity(
     of candidateURL: URL,
     matching application: AppRecord,
+    requiresValidSignature: Bool,
     requiresTeamIdentifier: Bool,
     hasVerifiedUpdateSignature: Bool
   ) throws {
@@ -406,7 +409,9 @@ enum ApplicationPackageInstaller {
 
     let installedTeam = ApplicationCodeSigning.teamIdentifier(at: application.applicationURL)
     let candidateTeam = ApplicationCodeSigning.teamIdentifier(at: candidateURL)
-    if requiresTeamIdentifier && !ApplicationCodeSigning.signatureIsValid(at: candidateURL) {
+    if (requiresValidSignature || requiresTeamIdentifier)
+      && !ApplicationCodeSigning.signatureIsValid(at: candidateURL)
+    {
       throw ApplicationPackageInstallerError.invalidSignature
     }
     if !teamIdentifiersMatch(

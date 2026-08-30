@@ -3,7 +3,7 @@ import Foundation
 struct ExecutableUpdaterDetection: Sendable {
   var tauriEndpoint: URL?
   var releaseJSONEndpoint: URL?
-  var githubReleases: GitHubReleasesMetadata? = nil
+  var githubReleases: [GitHubReleasesMetadata] = []
 }
 
 enum ExecutableUpdaterDetector {
@@ -21,7 +21,8 @@ enum ExecutableUpdaterDetector {
 
     let suppressReleaseJSON = ReleaseJSONDetector.hasTauriConfiguration(in: bundleURL)
     var releaseJSONEndpoint: URL?
-    var githubReleases: GitHubReleasesMetadata?
+    var githubReleases: [GitHubReleasesMetadata] = []
+    var seenGitHubReleases = Set<String>()
     for fileURL in executableFiles(in: bundleURL) {
       let detection = detect(fileURL: fileURL)
       if let tauriEndpoint = detection.tauriEndpoint {
@@ -33,8 +34,9 @@ enum ExecutableUpdaterDetector {
       if releaseJSONEndpoint == nil, !suppressReleaseJSON {
         releaseJSONEndpoint = detection.releaseJSONEndpoint
       }
-      if githubReleases == nil {
-        githubReleases = detection.githubReleases
+      for candidate in detection.githubReleases
+      where seenGitHubReleases.insert(candidate.identifier).inserted {
+        githubReleases.append(candidate)
       }
     }
     return ExecutableUpdaterDetection(
@@ -63,7 +65,8 @@ enum ExecutableUpdaterDetector {
     var sawTauri = false
     var sawGPUI = false
     var releaseJSONEndpoint: URL?
-    var githubReleases: GitHubReleasesMetadata?
+    var githubReleases: [GitHubReleasesMetadata] = []
+    var seenGitHubReleases = Set<String>()
 
     while true {
       let chunk = (try? handle.read(upToCount: chunkSize)) ?? Data()
@@ -82,8 +85,9 @@ enum ExecutableUpdaterDetector {
       if releaseJSONEndpoint == nil {
         releaseJSONEndpoint = ReleaseJSONDetector.firstEndpoint(in: window)
       }
-      if githubReleases == nil {
-        githubReleases = GitHubReleasesDetector.metadata(in: window)
+      for candidate in GitHubReleasesDetector.metadataCandidates(in: window)
+      where seenGitHubReleases.insert(candidate.identifier).inserted {
+        githubReleases.append(candidate)
       }
       if sawTauri, foundURLs.contains(where: TauriUpdaterDetector.isDirectManifestURL) {
         break
@@ -117,7 +121,47 @@ enum ExecutableUpdaterDetector {
     {
       files.swapAt(0, preferredIndex)
     }
+
+    var seen = Set(files.map(\.standardizedFileURL.path))
+    for file in applicationPayloadExecutables(in: bundleURL, preferredName: preferredName)
+    where seen.insert(file.standardizedFileURL.path).inserted {
+      files.append(file)
+    }
     return files
+  }
+
+  private static func applicationPayloadExecutables(
+    in bundleURL: URL,
+    preferredName: String?
+  ) -> [URL] {
+    let frameworksURL = bundleURL.appendingPathComponent("Contents/Frameworks", isDirectory: true)
+    let frameworkNames = ["App", preferredName].compactMap(\.self)
+    var files: [URL] = []
+
+    for frameworkName in frameworkNames {
+      let frameworkURL = frameworksURL.appendingPathComponent(
+        "\(frameworkName).framework",
+        isDirectory: true
+      )
+      let candidates = [
+        Bundle(url: frameworkURL)?.executableURL,
+        frameworkURL
+          .appendingPathComponent("Versions/A", isDirectory: true)
+          .appendingPathComponent(frameworkName),
+        frameworkURL.appendingPathComponent(frameworkName),
+      ].compactMap(\.self)
+
+      for candidate in candidates where isRegularFile(candidate) {
+        files.append(candidate)
+        break
+      }
+    }
+
+    return files
+  }
+
+  private static func isRegularFile(_ url: URL) -> Bool {
+    (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
   }
 }
 
