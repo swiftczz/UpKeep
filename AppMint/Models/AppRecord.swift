@@ -21,6 +21,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var homepageURL: URL?
   var releaseNotesURL: URL?
   var sourceIdentifier: String?
+  var homebrewCaskToken: String?
   var packageByteCount: Int64?
   var canAutomaticallyUpdate: Bool
   var lastInstalledAt: Date?
@@ -44,6 +45,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     homepageURL: URL? = nil,
     releaseNotesURL: URL? = nil,
     sourceIdentifier: String? = nil,
+    homebrewCaskToken: String? = nil,
     packageByteCount: Int64? = nil,
     canAutomaticallyUpdate: Bool = false,
     lastInstalledAt: Date? = nil
@@ -67,6 +69,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.homepageURL = homepageURL
     self.releaseNotesURL = releaseNotesURL
     self.sourceIdentifier = sourceIdentifier
+    self.homebrewCaskToken = homebrewCaskToken
     self.packageByteCount = packageByteCount
     self.canAutomaticallyUpdate = canAutomaticallyUpdate
     self.lastInstalledAt = lastInstalledAt
@@ -93,6 +96,7 @@ extension AppRecord: Codable {
     case homepageURL
     case releaseNotesURL
     case sourceIdentifier
+    case homebrewCaskToken
     case packageByteCount
     case canAutomaticallyUpdate
     case lastInstalledAt
@@ -122,6 +126,7 @@ extension AppRecord: Codable {
       homepageURL: try container.decodeIfPresent(URL.self, forKey: .homepageURL),
       releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
       sourceIdentifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
+      homebrewCaskToken: try container.decodeIfPresent(String.self, forKey: .homebrewCaskToken),
       packageByteCount: try container.decodeIfPresent(Int64.self, forKey: .packageByteCount),
       canAutomaticallyUpdate: try container.decodeIfPresent(
         Bool.self,
@@ -133,6 +138,10 @@ extension AppRecord: Codable {
 }
 
 extension AppRecord {
+  var homebrewManagedCaskToken: String? {
+    homebrewCaskToken ?? (source == .homebrew ? sourceIdentifier : nil)
+  }
+
   var needsUpdate: Bool {
     switch status {
     case .updateAvailable:

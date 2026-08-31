@@ -262,6 +262,49 @@ final class ApplicationResidueTests: XCTestCase {
     XCTAssertTrue(names.contains("com.example.demo"))
   }
 
+  func testScannerIncludesCaskroomForHomebrewManagedSparkleApplication() throws {
+    let fileManager = FileManager.default
+    let fixture = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintResidueCaskroom-\(UUID().uuidString)", isDirectory: true)
+    defer { try? fileManager.removeItem(at: fixture) }
+
+    let applicationURL = fixture.appendingPathComponent("Screendrop.app", isDirectory: true)
+    let caskroom = fixture.appendingPathComponent("Caskroom", isDirectory: true)
+    let caskDirectory = caskroom.appendingPathComponent("screendrop", isDirectory: true)
+
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+    try createDirectory(caskDirectory)
+
+    let scanner = ApplicationResidueScanner(
+      fileManager: fileManager,
+      homeDirectory: fixture,
+      libraryDirectories: [],
+      receiptsDirectory: nil,
+      darwinDirectories: [],
+      caskroomDirectories: [caskroom],
+      teamIdentifier: { _ in nil },
+      bundleName: { _ in "Screendrop" },
+      updaterCacheDirName: { _ in nil }
+    )
+    let application = AppRecord(
+      name: "Screendrop",
+      bundleIdentifier: "com.fayazahmed.Screendrop",
+      applicationURL: applicationURL,
+      currentVersion: "0.31.3",
+      source: .sparkle,
+      status: .upToDate,
+      homebrewCaskToken: "screendrop"
+    )
+
+    let items = scanner.items(for: application)
+
+    XCTAssertTrue(
+      items.contains {
+        $0.url == caskDirectory.standardizedFileURL && $0.category == .other
+      }
+    )
+  }
+
   func testUninstallerMovesSelectedFilesToTrash() async throws {
     let fileManager = FileManager.default
     let directory = fileManager.temporaryDirectory
@@ -309,6 +352,61 @@ final class ApplicationResidueTests: XCTestCase {
     XCTAssertTrue(result.didRemoveApplication)
     XCTAssertFalse(fileManager.fileExists(atPath: applicationURL.path))
     XCTAssertFalse(fileManager.fileExists(atPath: residueURL.path))
+  }
+
+  func testUninstallerUsesHomebrewTokenForSparkleApplicationInstalledByCask() async throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintBrewUninstall-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = directory.appendingPathComponent("Screendrop.app", isDirectory: true)
+    let brewURL = directory.appendingPathComponent("brew")
+    let argumentsURL = directory.appendingPathComponent("brew-arguments.txt")
+    defer { try? fileManager.removeItem(at: directory) }
+
+    try fileManager.createDirectory(at: applicationURL, withIntermediateDirectories: true)
+    try Data(
+      """
+      #!/bin/sh
+      printf '%s\\n' "$@" > '\(argumentsURL.path)'
+      exit 0
+      """.utf8
+    ).write(to: brewURL)
+    try fileManager.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: brewURL.path
+    )
+
+    let application = AppRecord(
+      name: "Screendrop",
+      bundleIdentifier: "com.fayazahmed.Screendrop",
+      applicationURL: applicationURL,
+      currentVersion: "0.31.3",
+      source: .sparkle,
+      status: .upToDate,
+      homebrewCaskToken: "screendrop"
+    )
+    let item = ApplicationResidueItem(
+      url: applicationURL,
+      displayName: "Screendrop",
+      category: .application,
+      byteCount: 0
+    )
+    let process = ApplicationProcessClient(
+      isRunning: { _ in false },
+      quit: { _ in },
+      launch: { _ in }
+    )
+
+    _ = try await ApplicationUninstaller.uninstall(
+      application,
+      items: [item],
+      fileManager: fileManager,
+      process: process,
+      brewExecutableURL: brewURL
+    )
+
+    let arguments = try String(contentsOf: argumentsURL, encoding: .utf8)
+    XCTAssertEqual(arguments, "uninstall\n--cask\n--force\nscreendrop\n")
   }
 
   func testUninstallerUsesFinderFallbackAndVerifiesEveryPathWasRemoved() async throws {

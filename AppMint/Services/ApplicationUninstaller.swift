@@ -77,8 +77,7 @@ enum ApplicationUninstaller {
     )
 
     if removingApplication,
-      application.source == .homebrew,
-      let token = application.sourceIdentifier
+      let token = application.homebrewManagedCaskToken
     {
       try? await uninstallHomebrewCask(token: token, brewExecutableURL: brewExecutableURL)
     }

@@ -109,7 +109,7 @@ struct HomebrewUpdateProvider: Sendable {
     return paths.sorted()
   }
 
-  private func loadSnapshot() async -> Snapshot? {
+  private func loadSnapshot() async -> HomebrewSnapshot? {
     if let snapshot = cache.snapshot() {
       return snapshot
     }
@@ -135,7 +135,7 @@ struct HomebrewUpdateProvider: Sendable {
       let packageApplicationPaths = await loadPackageApplicationPaths(
         for: info.packageReceiptIdentifiers
       )
-      let snapshot = Snapshot(
+      let snapshot = HomebrewSnapshot(
         info: info,
         outdated: outdated,
         packageApplicationPaths: packageApplicationPaths
@@ -183,7 +183,7 @@ struct HomebrewUpdateProvider: Sendable {
 
   private func fillingGitHubPackageSizes(
     _ applications: [AppRecord],
-    snapshot: Snapshot
+    snapshot: HomebrewSnapshot
   ) async -> [AppRecord] {
     var started = Set<String>()
     await withTaskGroup(of: (String, Int64)?.self) { group in
@@ -245,7 +245,7 @@ struct HomebrewUpdateProvider: Sendable {
   }
 }
 
-private struct Snapshot {
+struct HomebrewSnapshot {
   private var caskByTargetPath: [String: BrewCask]
   private var downloadURLByToken: [String: String]
   private var outdatedByToken: [String: BrewOutdatedCask]
@@ -306,6 +306,9 @@ private struct Snapshot {
         build: application.buildVersion
       )
 
+    var application = application
+    application.homebrewCaskToken = cask.token
+
     guard
       HomebrewUpdateProvider.shouldClaimInstalledCask(
         source: application.source,
@@ -338,6 +341,7 @@ private struct Snapshot {
       : nil
     application.source = .homebrew
     application.sourceIdentifier = cask.token
+    application.homebrewCaskToken = cask.token
     application.homepageURL = HomebrewUpdateProvider.homepageURL(
       caskHomepage: cask.homepage,
       existing: application.homepageURL
@@ -364,12 +368,12 @@ private struct Snapshot {
 
 private final class SnapshotCache: @unchecked Sendable {
   private let lock = NSLock()
-  private var stored: Snapshot?
+  private var stored: HomebrewSnapshot?
   private var storedAt: Date?
   private var packageByteCountByDownload: [String: Int64] = [:]
   private let timeToLive: TimeInterval = 20
 
-  func snapshot() -> Snapshot? {
+  func snapshot() -> HomebrewSnapshot? {
     lock.lock()
     defer { lock.unlock() }
     guard let stored, let storedAt, Date().timeIntervalSince(storedAt) < timeToLive else {
@@ -378,7 +382,7 @@ private final class SnapshotCache: @unchecked Sendable {
     return stored
   }
 
-  func store(_ snapshot: Snapshot) {
+  func store(_ snapshot: HomebrewSnapshot) {
     lock.lock()
     stored = snapshot
     storedAt = Date()
@@ -482,7 +486,7 @@ final class HomebrewOutputProgressParser: @unchecked Sendable {
   }
 }
 
-private struct BrewInfoResponse: Decodable, Sendable {
+struct BrewInfoResponse: Decodable, Sendable {
   let casks: [BrewCask]
 
   var packageReceiptIdentifiers: Set<String> {
@@ -490,7 +494,7 @@ private struct BrewInfoResponse: Decodable, Sendable {
   }
 }
 
-private struct BrewCask: Decodable, Sendable {
+struct BrewCask: Decodable, Sendable {
   let token: String
   let version: String
   let homepage: String?
@@ -514,7 +518,7 @@ private struct BrewCask: Decodable, Sendable {
   }
 }
 
-private struct BrewArtifact: Decodable, Sendable {
+struct BrewArtifact: Decodable, Sendable {
   let isApplication: Bool
   let target: String?
   let packageReceiptIdentifiers: [String]
@@ -536,7 +540,7 @@ private struct BrewArtifact: Decodable, Sendable {
   }
 }
 
-private struct BrewUninstallArtifact: Decodable, Sendable {
+struct BrewUninstallArtifact: Decodable, Sendable {
   let packageReceiptIdentifiers: [String]
 
   private enum CodingKeys: String, CodingKey {
@@ -554,11 +558,11 @@ private struct BrewUninstallArtifact: Decodable, Sendable {
   }
 }
 
-private struct BrewOutdatedResponse: Decodable, Sendable {
+struct BrewOutdatedResponse: Decodable, Sendable {
   let casks: [BrewOutdatedCask]
 }
 
-private struct BrewOutdatedCask: Decodable, Sendable {
+struct BrewOutdatedCask: Decodable, Sendable {
   let name: String?
   let legacyToken: String?
   let currentVersion: String?

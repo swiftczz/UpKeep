@@ -255,6 +255,35 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(merged.first?.canAutomaticallyUpdate, false)
   }
 
+  func testMergeKeepsHomebrewTokenForNonAppStoreApplication() {
+    var previous = makeApplication(name: "Screendrop", status: .upToDate)
+    previous.source = .sparkle
+    previous.homebrewCaskToken = "screendrop"
+
+    var scanned = makeApplication(name: "Screendrop", status: .checking)
+    scanned.source = .sparkle
+    scanned.homebrewCaskToken = nil
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertEqual(merged.first?.homebrewCaskToken, "screendrop")
+  }
+
+  func testMergeDoesNotCarryHomebrewTokenOntoAppStoreApplication() {
+    var previous = makeApplication(name: "Example", status: .upToDate)
+    previous.source = .sparkle
+    previous.homebrewCaskToken = "example"
+
+    var scanned = makeApplication(name: "Example", status: .checking)
+    scanned.source = .appStore
+    scanned.appStorePlatform = .mac
+    scanned.homebrewCaskToken = nil
+
+    let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+
+    XCTAssertNil(merged.first?.homebrewCaskToken)
+  }
+
   func testMergeKeepsLastInstalledAtAcrossRescan() {
     let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
     var previous = makeApplication(name: "Example", status: .upToDate)

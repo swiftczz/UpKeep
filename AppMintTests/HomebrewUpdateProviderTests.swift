@@ -90,6 +90,56 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertFalse(claim(.githubReleases, .checking, feed: true, brew: false))
   }
 
+  func testRecordsCaskTokenWithoutClaimingWorkingSparkleFeed() throws {
+    let info = try JSONDecoder().decode(
+      BrewInfoResponse.self,
+      from: Data(
+        """
+        {
+          "casks": [
+            {
+              "token": "screendrop",
+              "version": "0.31.3",
+              "homepage": "https://example.com/screendrop",
+              "url": null,
+              "artifacts": [
+                {
+                  "app": ["Screendrop.app"],
+                  "target": "/Applications/Screendrop.app"
+                }
+              ]
+            }
+          ]
+        }
+        """.utf8
+      )
+    )
+    let outdated = try JSONDecoder().decode(
+      BrewOutdatedResponse.self,
+      from: Data(#"{"casks":[]}"#.utf8)
+    )
+    let snapshot = HomebrewSnapshot(
+      info: info,
+      outdated: outdated,
+      packageApplicationPaths: [:]
+    )
+    let application = AppRecord(
+      name: "Screendrop",
+      bundleIdentifier: "com.fayazahmed.Screendrop",
+      applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
+      currentVersion: "0.31.3",
+      source: .sparkle,
+      status: .upToDate,
+      sourceURL: URL(string: "https://example.com/appcast.xml")
+    )
+
+    let enriched = snapshot.applying(to: application)
+
+    XCTAssertEqual(enriched.source, .sparkle)
+    XCTAssertNil(enriched.sourceIdentifier)
+    XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
+  }
+
   func testFallsBackToHomebrewWhenFirstPartyCheckFails() {
     XCTAssertTrue(claim(.vscodeUpdater, .selfManaged, feed: true, brew: false))
     XCTAssertTrue(claim(.electronBuilder, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))

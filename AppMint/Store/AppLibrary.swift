@@ -446,6 +446,9 @@ final class AppLibrary {
     if merged.sourceIdentifier == nil, previous.source == merged.source {
       merged.sourceIdentifier = previous.sourceIdentifier
     }
+    if merged.homebrewCaskToken == nil, merged.source != .appStore {
+      merged.homebrewCaskToken = previous.homebrewCaskToken
+    }
     if merged.appStoreCountryCode == nil, previous.source == merged.source {
       merged.appStoreCountryCode = previous.appStoreCountryCode
     }
@@ -656,6 +659,7 @@ final class AppLibrary {
     record.releaseDate = application.releaseDate
     record.releaseNotesURL = application.releaseNotesURL
     record.sourceIdentifier = application.sourceIdentifier
+    record.homebrewCaskToken = application.homebrewCaskToken
     record.packageByteCount = application.packageByteCount
     record.latestVersion = application.latestVersion
     record.latestBuildVersion = application.latestBuildVersion

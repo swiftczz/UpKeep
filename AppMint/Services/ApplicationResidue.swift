@@ -81,7 +81,7 @@ struct ApplicationResidueIdentity: Equatable, Sendable {
       teamIdentifier: teamIdentifier,
       names: Set(names.filter { !$0.isEmpty }),
       updaterCacheDirName: updaterCacheDirName,
-      homebrewToken: application.source == .homebrew ? application.sourceIdentifier : nil
+      homebrewToken: application.homebrewManagedCaskToken
     )
   }
 
