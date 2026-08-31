@@ -4,7 +4,14 @@ struct HomebrewUpdateProvider: Sendable {
   private let cache = SnapshotCache()
 
   func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
-    guard let snapshot = await loadSnapshot() else {
+    await enrich(applications, cachePolicy: .allowed)
+  }
+
+  func enrich(
+    _ applications: [AppRecord],
+    cachePolicy: UpdateCachePolicy
+  ) async -> [AppRecord] {
+    guard let snapshot = await loadSnapshot(cachePolicy: cachePolicy) else {
       return applications
     }
     let claimed = applications.map { snapshot.applying(to: $0) }
@@ -109,8 +116,8 @@ struct HomebrewUpdateProvider: Sendable {
     return paths.sorted()
   }
 
-  private func loadSnapshot() async -> HomebrewSnapshot? {
-    if let snapshot = cache.snapshot() {
+  private func loadSnapshot(cachePolicy: UpdateCachePolicy) async -> HomebrewSnapshot? {
+    if cachePolicy == .allowed, let snapshot = cache.snapshot() {
       return snapshot
     }
     guard let brewURL = HomebrewCLI.executableURL else {
@@ -371,7 +378,7 @@ private final class SnapshotCache: @unchecked Sendable {
   private var stored: HomebrewSnapshot?
   private var storedAt: Date?
   private var packageByteCountByDownload: [String: Int64] = [:]
-  private let timeToLive: TimeInterval = 20
+  private let timeToLive: TimeInterval = 5 * 60
 
   func snapshot() -> HomebrewSnapshot? {
     lock.lock()

@@ -89,6 +89,52 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(updated.currentVersion, "2.0")
   }
 
+  func testReusesCachedRecordWhenBundleIdentityVersionAndModificationDateAreUnchanged() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("AppMintTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "Cached.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let infoURL = contentsURL.appendingPathComponent("Info.plist")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: contentsURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.cached"),
+      to: infoURL
+    )
+
+    var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    cached.source = .githubReleases
+    cached.sourceIdentifier = "example/cached"
+    cached.releaseNotes = "Cached release notes"
+
+    let reused = try XCTUnwrap(
+      ApplicationScanner.makeRecord(from: applicationURL, reusing: cached)
+    )
+
+    XCTAssertEqual(reused.source, .githubReleases)
+    XCTAssertEqual(reused.sourceIdentifier, "example/cached")
+    XCTAssertEqual(reused.releaseNotes, "Cached release notes")
+
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.example.cached",
+        extraValues: ["CFBundleShortVersionString": "2.0"]
+      ),
+      to: infoURL
+    )
+    let changed = try XCTUnwrap(
+      ApplicationScanner.makeRecord(from: applicationURL, reusing: cached)
+    )
+
+    XCTAssertEqual(changed.currentVersion, "2.0")
+    XCTAssertNil(changed.releaseNotes)
+  }
+
   func testSortsNewestApplicationBundleFirst() {
     let older = makeApplication(name: "Older", modifiedAt: Date(timeIntervalSince1970: 100))
     let newer = makeApplication(name: "Newer", modifiedAt: Date(timeIntervalSince1970: 200))

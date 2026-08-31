@@ -21,6 +21,7 @@ final class AppLibrary {
   @ObservationIgnored private let libraryStore: ApplicationLibraryStore
   @ObservationIgnored private var pendingCheckedApplications: [AppRecord] = []
   @ObservationIgnored private var pendingCheckedFlushTask: Task<Void, Never>?
+  @ObservationIgnored private var requestedRefreshCachePolicy: UpdateCachePolicy = .allowed
   private var hasLoaded: Bool
   private var refreshRequested = false
 
@@ -155,7 +156,7 @@ final class AppLibrary {
   func loadIfNeeded() async {
     guard !hasLoaded else { return }
     hasLoaded = true
-    await refresh()
+    await refresh(cachePolicy: .allowed)
   }
 
   func refreshIfStale(after interval: TimeInterval = 60) async {
@@ -163,7 +164,7 @@ final class AppLibrary {
     if let lastCheckedAt, Date.now.timeIntervalSince(lastCheckedAt) < interval {
       return
     }
-    await refresh()
+    await refresh(cachePolicy: .allowed)
   }
 
   func refreshReleaseMetadataIfNeeded(for applicationID: AppRecord.ID) async {
@@ -202,19 +203,27 @@ final class AppLibrary {
   }
 
   func refresh() async {
+    await refresh(cachePolicy: .reloadIgnoringCache)
+  }
+
+  private func refresh(cachePolicy: UpdateCachePolicy) async {
     guard updatingApplicationIDs.isEmpty else { return }
     guard phase == .idle else {
       refreshRequested = true
+      requestedRefreshCachePolicy = requestedRefreshCachePolicy.merging(cachePolicy)
       return
     }
 
+    var activeCachePolicy = cachePolicy
     repeat {
       refreshRequested = false
-      await performRefresh()
+      requestedRefreshCachePolicy = .allowed
+      await performRefresh(cachePolicy: activeCachePolicy)
+      activeCachePolicy = requestedRefreshCachePolicy
     } while refreshRequested
   }
 
-  private func performRefresh() async {
+  private func performRefresh(cachePolicy: UpdateCachePolicy) async {
     let previousSelection = selectedApplicationID
     let previousApplications = applications
     pendingCheckedFlushTask?.cancel()
@@ -224,7 +233,7 @@ final class AppLibrary {
     phase = .scanning
     alertMessage = nil
 
-    let scannedApplications = await scanner.scan()
+    let scannedApplications = await scanner.scan(reusing: previousApplications)
 
     guard !scannedApplications.isEmpty else {
       applications = []
@@ -241,21 +250,25 @@ final class AppLibrary {
       selecting: previousSelection
     )
     phase = .checking
-    checkingApplicationIDs = Set(applications.map(\.id))
+    checkingApplicationIDs = Set(Self.checkableApplications(applications).map(\.id))
     await Task.yield()
 
-    let enrichedApplications = await coordinator.enrich(applications)
+    let enrichedApplications = await coordinator.enrich(applications, cachePolicy: cachePolicy)
     publish(
       Self.mergeKeepingCheckResults(enrichedApplications, previous: applications),
       selecting: selectedApplicationID
     )
 
-    let applicationsToCheck = applications
+    let applicationsToCheck = Self.checkableApplications(
+      applications,
+      prioritizing: selectedApplicationID
+    )
+    checkingApplicationIDs = Set(applicationsToCheck.map(\.id))
     await checkApplications(applicationsToCheck)
     flushPendingChecked()
     checkingApplicationIDs.removeAll(keepingCapacity: true)
 
-    let claimedApplications = await coordinator.enrich(applications)
+    let claimedApplications = await coordinator.enrich(applications, cachePolicy: .allowed)
     publish(
       Self.mergeKeepingCheckResults(claimedApplications, previous: applications),
       selecting: selectedApplicationID
@@ -267,6 +280,8 @@ final class AppLibrary {
   }
 
   private func checkApplications(_ applications: [AppRecord]) async {
+    guard !applications.isEmpty else { return }
+
     let coordinator = coordinator
     await withTaskGroup(of: AppRecord.self) { group in
       var iterator = applications.makeIterator()
@@ -288,6 +303,22 @@ final class AppLibrary {
         }
       }
     }
+  }
+
+  private static func checkableApplications(
+    _ applications: [AppRecord],
+    prioritizing selection: AppRecord.ID? = nil
+  ) -> [AppRecord] {
+    let checkable = applications.filter(\.isCheckable)
+    guard let selection,
+      let selectedIndex = checkable.firstIndex(where: { $0.id == selection })
+    else {
+      return checkable
+    }
+
+    var prioritized = checkable
+    prioritized.insert(prioritized.remove(at: selectedIndex), at: 0)
+    return prioritized
   }
 
   private func publish(_ applications: [AppRecord], selecting selection: AppRecord.ID?) {

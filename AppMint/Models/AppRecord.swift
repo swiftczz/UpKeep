@@ -138,6 +138,17 @@ extension AppRecord: Codable {
 }
 
 extension AppRecord {
+  var isCheckable: Bool {
+    switch source {
+    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
+      return true
+    case .sparkle:
+      return sourceURL != nil
+    case .homebrew, .selfManaged:
+      return false
+    }
+  }
+
   var homebrewManagedCaskToken: String? {
     homebrewCaskToken ?? (source == .homebrew ? sourceIdentifier : nil)
   }

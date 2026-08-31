@@ -148,6 +148,45 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
   }
 
+  func testRefreshOnlyChecksApplicationsWithCheckableSources() async throws {
+    let suiteName = "AppMintTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    var sparkle = makeApplication(name: "Sparkle", status: .checking)
+    sparkle.source = .sparkle
+    sparkle.sourceURL = URL(string: "https://example.com/appcast.xml")
+    var appStore = makeApplication(name: "Store", status: .checking)
+    appStore.source = .appStore
+    appStore.appStorePlatform = .mac
+    var homebrew = makeApplication(name: "Brew", status: .upToDate)
+    homebrew.source = .homebrew
+    homebrew.sourceIdentifier = "brew"
+    var selfManaged = makeApplication(name: "Manual", status: .selfManaged)
+    selfManaged.source = .selfManaged
+    var sparkleWithoutFeed = makeApplication(name: "Sparkle No Feed", status: .selfManaged)
+    sparkleWithoutFeed.source = .sparkle
+    sparkleWithoutFeed.sourceURL = nil
+
+    let recorder = CheckedApplicationRecorder()
+    let library = AppLibrary(
+      applications: [],
+      scanner: StubScanner(
+        applications: [sparkle, appStore, homebrew, selfManaged, sparkleWithoutFeed]
+      ),
+      coordinator: RecordingCoordinator(recorder: recorder),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    await library.refresh()
+
+    let checkedNames = await recorder.names()
+    XCTAssertEqual(Set(checkedNames), ["Sparkle", "Store"])
+    XCTAssertEqual(checkedNames.count, 2)
+    XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
+  }
+
   func testRefreshIfStaleSkipsWhenRecentlyChecked() async throws {
     let suiteName = "AppMintTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -605,6 +644,36 @@ private final class StubCoordinator: UpdateCoordinating, @unchecked Sendable {
     if let checkHandler {
       return await checkHandler(application)
     }
+    return application
+  }
+
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {}
+}
+
+private actor CheckedApplicationRecorder {
+  private var storage: [String] = []
+
+  func append(_ name: String) {
+    storage.append(name)
+  }
+
+  func names() -> [String] {
+    storage
+  }
+}
+
+private struct RecordingCoordinator: UpdateCoordinating {
+  let recorder: CheckedApplicationRecorder
+
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+    applications
+  }
+
+  func check(_ application: AppRecord) async -> AppRecord {
+    await recorder.append(application.name)
     return application
   }
 

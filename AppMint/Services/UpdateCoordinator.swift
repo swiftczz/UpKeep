@@ -21,11 +21,35 @@ struct UpdateProgress: Hashable, Sendable {
 
 protocol UpdateCoordinating: Sendable {
   func enrich(_ applications: [AppRecord]) async -> [AppRecord]
+  func enrich(
+    _ applications: [AppRecord],
+    cachePolicy: UpdateCachePolicy
+  ) async -> [AppRecord]
   func check(_ application: AppRecord) async -> AppRecord
   func update(
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws
+}
+
+extension UpdateCoordinating {
+  func enrich(
+    _ applications: [AppRecord],
+    cachePolicy: UpdateCachePolicy
+  ) async -> [AppRecord] {
+    await enrich(applications)
+  }
+}
+
+enum UpdateCachePolicy: Sendable {
+  case allowed
+  case reloadIgnoringCache
+
+  func merging(_ other: UpdateCachePolicy) -> UpdateCachePolicy {
+    self == .reloadIgnoringCache || other == .reloadIgnoringCache
+      ? .reloadIgnoringCache
+      : .allowed
+  }
 }
 
 struct UpdateCoordinator: UpdateCoordinating, Sendable {
@@ -45,7 +69,14 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
   }
 
   func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
-    await homebrew.enrich(applications)
+    await enrich(applications, cachePolicy: .allowed)
+  }
+
+  func enrich(
+    _ applications: [AppRecord],
+    cachePolicy: UpdateCachePolicy
+  ) async -> [AppRecord] {
+    await homebrew.enrich(applications, cachePolicy: cachePolicy)
   }
 
   func check(_ application: AppRecord) async -> AppRecord {

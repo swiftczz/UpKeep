@@ -2,18 +2,39 @@ import Foundation
 
 protocol ApplicationScanning: Sendable {
   func scan() async -> [AppRecord]
+  func scan(reusing previousApplications: [AppRecord]) async -> [AppRecord]
+}
+
+extension ApplicationScanning {
+  func scan(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
+    await scan()
+  }
 }
 
 struct ApplicationScanner: ApplicationScanning {
   func scan() async -> [AppRecord] {
+    await scan(reusing: [])
+  }
+
+  func scan(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
     let ownBundleIdentifier = Bundle.main.bundleIdentifier
+    let previousByPath = Dictionary(
+      previousApplications.map { ($0.applicationURL.standardizedFileURL.path, $0) },
+      uniquingKeysWith: { first, _ in first }
+    )
 
     return await Task.detached(priority: .userInitiated) {
-      Self.scanSynchronously(excludingBundleIdentifier: ownBundleIdentifier)
+      Self.scanSynchronously(
+        excludingBundleIdentifier: ownBundleIdentifier,
+        reusing: previousByPath
+      )
     }.value
   }
 
-  private static func scanSynchronously(excludingBundleIdentifier: String?) -> [AppRecord] {
+  private static func scanSynchronously(
+    excludingBundleIdentifier: String?,
+    reusing previousByPath: [String: AppRecord] = [:]
+  ) -> [AppRecord] {
     let fileManager = FileManager.default
     let locations = [
       URL(fileURLWithPath: "/Applications", isDirectory: true),
@@ -47,7 +68,7 @@ struct ApplicationScanner: ApplicationScanning {
         enumerator.skipDescendants()
         let path = applicationURL.standardizedFileURL.path
         guard seenPaths.insert(path).inserted,
-          let record = makeRecord(from: applicationURL),
+          let record = makeRecord(from: applicationURL, reusing: previousByPath[path]),
           record.bundleIdentifier != excludingBundleIdentifier
         else {
           continue
@@ -62,6 +83,18 @@ struct ApplicationScanner: ApplicationScanning {
 
   static func makeRecord(
     from applicationURL: URL,
+    preferredLanguages: [String] = Locale.preferredLanguages
+  ) -> AppRecord? {
+    makeRecord(
+      from: applicationURL,
+      reusing: nil,
+      preferredLanguages: preferredLanguages
+    )
+  }
+
+  static func makeRecord(
+    from applicationURL: URL,
+    reusing previous: AppRecord?,
     preferredLanguages: [String] = Locale.preferredLanguages
   ) -> AppRecord? {
     guard let bundle = resolvedBundle(from: applicationURL) else {
@@ -90,6 +123,16 @@ struct ApplicationScanner: ApplicationScanning {
       of: applicationURL,
       bundle: bundle
     )
+    if let previous,
+      canReuse(
+        previous,
+        bundleIdentifier: bundleIdentifier,
+        currentVersion: currentVersion,
+        applicationModificationDate: applicationModificationDate
+      )
+    {
+      return previous
+    }
 
     let contentsURL = bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true)
     let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
@@ -234,6 +277,23 @@ struct ApplicationScanner: ApplicationScanning {
 
   private static func contentModificationDate(at url: URL) -> Date? {
     (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+  }
+
+  private static func canReuse(
+    _ previous: AppRecord,
+    bundleIdentifier: String,
+    currentVersion: String,
+    applicationModificationDate: Date?
+  ) -> Bool {
+    guard previous.bundleIdentifier == bundleIdentifier,
+      previous.currentVersion == currentVersion,
+      let previousDate = previous.applicationModificationDate,
+      let applicationModificationDate
+    else {
+      return false
+    }
+
+    return abs(previousDate.timeIntervalSince(applicationModificationDate)) < 0.001
   }
 
   private static func resolvedName(
