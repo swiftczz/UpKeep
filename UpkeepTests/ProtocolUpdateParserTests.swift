@@ -1,0 +1,681 @@
+import CryptoKit
+import Foundation
+import XCTest
+
+@testable import Upkeep
+
+final class ProtocolUpdateParserTests: XCTestCase {
+  func testParsesElectronBuilderLatestMacManifestAndPrefersNativeZip() throws {
+    let text = """
+      version: 26.8.0
+      files:
+        - url: ChatWise-26.8.0-x64.zip
+          sha512: x64zip
+          size: 10
+        - url: ChatWise-26.8.0-arm64.zip
+          sha512: armzip
+          size: 11
+        - url: ChatWise-26.8.0-arm64.dmg
+          sha512: armdmg
+          size: 12
+      path: ChatWise-26.8.0-x64.zip
+      sha512: x64zip
+      releaseNotes: |
+        - add gemini 3.7 flash, grok 4.6
+      releaseDate: '2026-08-13T23:34:09.226Z'
+      """
+
+    let manifest = try XCTUnwrap(ElectronBuilderYAML.parseManifest(text))
+    XCTAssertEqual(manifest.version, "26.8.0")
+    XCTAssertEqual(manifest.releaseNotes, "- add gemini 3.7 flash, grok 4.6")
+    XCTAssertEqual(manifest.files.count, 3)
+
+    let package = try XCTUnwrap(
+      manifest.selectedPackage(
+        relativeTo: URL(string: "https://releases.chatwise.app/latest-mac.yml")!,
+        architecture: .arm64
+      )
+    )
+    XCTAssertEqual(
+      package.url.absoluteString,
+      "https://releases.chatwise.app/ChatWise-26.8.0-arm64.zip"
+    )
+    XCTAssertEqual(package.sha512, "armzip")
+    XCTAssertEqual(package.size, 11)
+
+    let intelPackage = try XCTUnwrap(
+      manifest.selectedPackage(
+        relativeTo: URL(string: "https://releases.chatwise.app/latest-mac.yml")!,
+        architecture: .x64
+      )
+    )
+    XCTAssertEqual(
+      intelPackage.url.absoluteString,
+      "https://releases.chatwise.app/ChatWise-26.8.0-x64.zip"
+    )
+    XCTAssertEqual(intelPackage.size, 10)
+  }
+
+  func testRejectsCustomAndInsecureElectronBuilderConfigurations() {
+    XCTAssertNil(
+      ElectronBuilderDetector.metadata(
+        from: """
+          provider: custom
+          url: https://example.com
+          """
+      )
+    )
+    XCTAssertNil(
+      ElectronBuilderDetector.metadata(
+        from: """
+          provider: generic
+          url: http://localhost:8080
+          """
+      )
+    )
+    XCTAssertNil(
+      ElectronBuilderDetector.metadata(
+        from: """
+          provider: github
+          owner: example
+          repo: app
+          private: true
+          """
+      )
+    )
+  }
+
+  func testParsesTauriLatestJSONAndPrefersAppleSilicon() throws {
+    let data = Data(
+      """
+      {
+        "version": "v0.2.24",
+        "notes": "Grok App v0.2.24",
+        "pub_date": "2026-08-21T04:09:05Z",
+        "platforms": {
+          "darwin-aarch64": {
+            "signature": "sig",
+            "url": "https://example.com/Grok_0.2.24_aarch64.app.tar.gz"
+          },
+          "darwin-x86_64": {
+            "url": "https://example.com/Grok_0.2.24_x64.app.tar.gz"
+          },
+          "windows-x86_64": {
+            "url": "https://example.com/setup.exe"
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(manifest.version, "0.2.24")
+    XCTAssertEqual(manifest.notes, "Grok App v0.2.24")
+    XCTAssertEqual(
+      manifest.selectedPlatform(architecture: .arm64)?.url.lastPathComponent,
+      "Grok_0.2.24_aarch64.app.tar.gz"
+    )
+  }
+
+  func testParsesGoStyleLatestJSONAndPrefersDarwinArm64() throws {
+    let data = Data(
+      """
+      {
+        "version": "v1.31.1",
+        "notes": "",
+        "pub_date": "",
+        "download_page": "https://reasonix.io/?download=desktop#start",
+        "release_notes_url": "https://reasonix.io/changelog/v1.31.1/",
+        "platforms": {
+          "darwin-amd64": {
+            "url": "https://dl.reasonix.io/desktop-v1.31.1/Reasonix-darwin-amd64.zip",
+            "sha256": "aaa"
+          },
+          "darwin-arm64": {
+            "url": "https://dl.reasonix.io/desktop-v1.31.1/Reasonix-darwin-arm64.zip",
+            "sha256": "bbb",
+            "size": 84200123
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(manifest.version, "1.31.1")
+    XCTAssertNil(manifest.notes)
+    XCTAssertEqual(
+      manifest.releaseNotesURL?.absoluteString,
+      "https://reasonix.io/changelog/v1.31.1/"
+    )
+    XCTAssertEqual(
+      manifest.downloadPageURL?.absoluteString,
+      "https://reasonix.io/?download=desktop#start"
+    )
+    XCTAssertEqual(manifest.homepageURL()?.absoluteString, "https://reasonix.io")
+    let platform = try XCTUnwrap(manifest.selectedPlatform(architecture: .arm64))
+    XCTAssertEqual(platform.url.lastPathComponent, "Reasonix-darwin-arm64.zip")
+    XCTAssertEqual(platform.sha256, "bbb")
+    XCTAssertEqual(platform.size, 84_200_123)
+  }
+
+  func testDerivesReasonixStudioHomepageFromGitHubDownloadPage() throws {
+    let data = Data(
+      """
+      {
+        "version": "v2.10.0",
+        "download_page": "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.10.0",
+        "release_notes_url": "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.10.0",
+        "platforms": {
+          "darwin-arm64": {
+            "url": "https://github.com/esengine/DeepSeek-Reasonix/releases/download/studio-v2.10.0/ReasonixStudio-darwin-universal.zip"
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(
+      manifest.homepageURL()?.absoluteString,
+      "https://github.com/esengine/DeepSeek-Reasonix"
+    )
+  }
+
+  func testDerivesTauriHomepageFromChangelogWhenDownloadPageIsMissing() throws {
+    let data = Data(
+      """
+      {
+        "version": "v1.31.1",
+        "release_notes_url": "https://reasonix.io/changelog/v1.31.1/",
+        "platforms": {
+          "darwin-arm64": {
+            "url": "https://dl.reasonix.io/desktop-v1.31.1/Reasonix-darwin-arm64.zip"
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(
+      manifest.homepageURL(
+        endpoint: URL(string: "https://dl.reasonix.io/latest/latest.json")
+      )?.absoluteString,
+      "https://reasonix.io"
+    )
+  }
+
+  func testSelectsExtensionlessGitHubReleaseAssetForTauriUpdate() throws {
+    let data = Data(
+      """
+      {
+        "version": "0.12.6",
+        "platforms": {
+          "darwin-aarch64": {
+            "url": "https://api.github.com/repos/readest/readest/releases/assets/534295058"
+          }
+        }
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(TauriUpdateManifest.parse(data))
+    XCTAssertEqual(
+      manifest.selectedPlatform(architecture: .arm64)?.url.absoluteString,
+      "https://api.github.com/repos/readest/readest/releases/assets/534295058"
+    )
+    XCTAssertEqual(manifest.homepageURL()?.absoluteString, "https://github.com/readest/readest")
+  }
+
+  func testBuildsGitHubReleaseAPIURLAndParsesReleaseBody() throws {
+    let releaseURL = try XCTUnwrap(
+      URL(string: "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.7.0")
+    )
+
+    XCTAssertEqual(
+      TauriReleaseNotes.githubReleaseAPIURL(from: releaseURL)?.absoluteString,
+      "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/studio-v2.7.0"
+    )
+    XCTAssertEqual(
+      TauriReleaseNotes.parseGitHubRelease(
+        Data("{\"body\":\"## 新增\\n\\n- 运行图\"}".utf8)
+      ),
+      "## 新增\n\n- 运行图"
+    )
+  }
+
+  func testBuildsGitHubReleaseAPIURLFromDownloadAsset() throws {
+    let packageURL = try XCTUnwrap(
+      URL(
+        string:
+          "https://github.com/esengine/DeepSeek-Reasonix/releases/download/desktop-v1.34.0/Reasonix-darwin-arm64.zip"
+      )
+    )
+
+    XCTAssertEqual(
+      TauriReleaseNotes.githubReleaseAPIURL(from: packageURL)?.absoluteString,
+      "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/desktop-v1.34.0"
+    )
+  }
+
+  func testConvertsHTMLReleaseNotesToPlainText() {
+    let html = """
+      <!doctype html>
+      <html>
+        <head>
+          <style>.hidden { display: none }</style>
+          <script>window.noise = true</script>
+        </head>
+        <body>
+          <main>
+            <h1>Reasonix Desktop v1.34.0</h1>
+            <p>Improved update handling &amp; release notes.</p>
+            <ul><li>Fixed updater display</li><li>Added changelog fallback</li></ul>
+          </main>
+        </body>
+      </html>
+      """
+
+    XCTAssertEqual(
+      TauriReleaseNotes.plainText(fromHTML: html),
+      """
+      Reasonix Desktop v1.34.0
+      Improved update handling & release notes.
+      Fixed updater display
+      Added changelog fallback
+      """
+    )
+  }
+
+  func testParsesVersionsCatalogAndPrefersNewestStableManifest() throws {
+    let data = Data(
+      """
+      {
+        "schemaVersion": 1,
+        "versions": [
+          {
+            "version": "v2.2.0",
+            "manifest": "https://dl.reasonix.io/studio-v2.2.0/latest.json"
+          },
+          {
+            "version": "v2.4.0",
+            "manifest": "https://dl.reasonix.io/studio-v2.4.0/latest.json"
+          },
+          {
+            "version": "v2.5.0-beta.1",
+            "manifest": "https://dl.reasonix.io/studio-v2.5.0-beta.1/latest.json"
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let catalog = try XCTUnwrap(TauriUpdateCatalog.parse(data))
+    XCTAssertEqual(
+      catalog.latestManifestURL?.absoluteString,
+      "https://dl.reasonix.io/studio-v2.4.0/latest.json"
+    )
+  }
+
+  func testFindsVersionsJSONURLInExecutable() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-versions-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      "https://dl.reasonix.io/versions.jsonhttps://dl.reasonix.io/studio/versions.json"
+        .utf8
+    ).write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://dl.reasonix.io/studio/versions.json"
+    )
+  }
+
+  func testPrefersLatestJSONOverVersionsJSON() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-latest-over-versions-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      """
+      https://dl.reasonix.io/studio/versions.json
+      https://dl.reasonix.io/latest/latest.json
+      """.utf8
+    ).write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://dl.reasonix.io/latest/latest.json"
+    )
+  }
+
+  func testFindsUpdaterJSONURLAfterFirstMegabyte() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-updater-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    var data = Data(count: 1_200_000)
+    data.append(contentsOf: "https://dl.reasonix.io/latest/latest.json".utf8)
+    try data.write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://dl.reasonix.io/latest/latest.json"
+    )
+  }
+
+  func testIgnoresTemplateLatestJSONURLInExecutable() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-updater-template-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data("https://example.com/%s/%s/latest.json".utf8).write(to: fileURL)
+    XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
+  }
+
+  func testExtractsTauriJSONURLFromConcatenatedBinaryText() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-concatenated-url-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    try Data(
+      "icon.icohttps://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.jsontrailing"
+        .utf8
+    ).write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
+    )
+  }
+
+  func testIgnoresGPUIExecutableWithLatestJSON() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-gpui-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      """
+      gpui::app https://assets.example.com/github/release/desktop/latest.json crates/auto_update
+      """.utf8
+    ).write(to: fileURL)
+
+    XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
+  }
+
+  func testStillDetectsTauriWhenGPUIStringsAreAlsoPresent() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-tauri-gpui-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data(
+      """
+      gpui::app tauri_plugin_updater https://example.com/updates/latest.json
+      """.utf8
+    ).write(to: fileURL)
+
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+      "https://example.com/updates/latest.json"
+    )
+  }
+
+  func testIgnoresLatestJSONURLSplitByBinaryBytes() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-binary-url-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    var data = Data("https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
+    data.append(contentsOf: [0xC0, 0x0C])
+    data.append(contentsOf: "/latest.json".utf8)
+    try data.write(to: fileURL)
+
+    XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
+  }
+
+  func testVerifiesElectronBuilderSHA512() throws {
+    let fileManager = FileManager.default
+    let fileURL = fileManager.temporaryDirectory.appendingPathComponent(
+      "Upkeep-sha512-\(UUID().uuidString)"
+    )
+    defer { try? fileManager.removeItem(at: fileURL) }
+
+    let payload = Data("hello-upkeep".utf8)
+    try payload.write(to: fileURL)
+    let digest = Data(SHA512.hash(data: payload)).base64EncodedString()
+
+    XCTAssertNoThrow(try ApplicationPackageInstaller.verifySHA512(of: fileURL, expected: digest))
+    XCTAssertThrowsError(
+      try ApplicationPackageInstaller.verifySHA512(of: fileURL, expected: "not-a-hash")
+    )
+  }
+
+  func testVerifiesHexSHA256() throws {
+    let fileManager = FileManager.default
+    let fileURL = fileManager.temporaryDirectory.appendingPathComponent(
+      "Upkeep-sha256-\(UUID().uuidString)"
+    )
+    defer { try? fileManager.removeItem(at: fileURL) }
+
+    let payload = Data("hello-upkeep".utf8)
+    try payload.write(to: fileURL)
+    let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+
+    XCTAssertNoThrow(try ApplicationPackageInstaller.verifySHA256(of: fileURL, expected: digest))
+    XCTAssertThrowsError(
+      try ApplicationPackageInstaller.verifySHA256(of: fileURL, expected: "abcd")
+    )
+  }
+
+  func testVerifiesSparkleEd25519Signature() throws {
+    let privateKey = Curve25519.Signing.PrivateKey()
+    let data = Data("Pastel update".utf8)
+    let signature = try privateKey.signature(for: data)
+    let fileURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("Upkeep-ed25519-\(UUID().uuidString)")
+    try data.write(to: fileURL)
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    XCTAssertNoThrow(
+      try ApplicationPackageInstaller.verifyEd25519Signature(
+        of: fileURL,
+        signature: signature.base64EncodedString(),
+        publicKey: privateKey.publicKey.rawRepresentation.base64EncodedString()
+      )
+    )
+    XCTAssertThrowsError(
+      try ApplicationPackageInstaller.verifyEd25519Signature(
+        of: fileURL,
+        signature: Data(repeating: 0, count: 64).base64EncodedString(),
+        publicKey: privateKey.publicKey.rawRepresentation.base64EncodedString()
+      )
+    )
+  }
+
+  func testVerifiedSparkleSignatureAllowsMissingTeamIdentifier() {
+    XCTAssertTrue(
+      ApplicationPackageInstaller.teamIdentifiersMatch(
+        installed: nil,
+        candidate: nil,
+        requiresTeamIdentifier: true,
+        hasVerifiedUpdateSignature: true
+      )
+    )
+    XCTAssertFalse(
+      ApplicationPackageInstaller.teamIdentifiersMatch(
+        installed: nil,
+        candidate: nil,
+        requiresTeamIdentifier: true,
+        hasVerifiedUpdateSignature: false
+      )
+    )
+    XCTAssertFalse(
+      ApplicationPackageInstaller.teamIdentifiersMatch(
+        installed: "OLDTEAM123",
+        candidate: "NEWTEAM456",
+        requiresTeamIdentifier: true,
+        hasVerifiedUpdateSignature: true
+      )
+    )
+  }
+
+  func testParsesVSCodeUpdatePayloadAndIgnoresCommitNotes() throws {
+    let data = Data(
+      """
+      {
+        "url": "https://vscode.download.prss.microsoft.com/stable/abc/VSCode-darwin-arm64.zip",
+        "name": "1.134.0",
+        "version": "110a328ea54b42367b803ec53ee0bf52ef26b419",
+        "productVersion": "1.134.0",
+        "timestamp": 1787078154886,
+        "sha256hash": "6df181646588f0132339d19f5bdfb20bd0d6db05e5801061f12e0dc93c85fa70",
+        "notes": "110a328ea54b42367b803ec53ee0bf52ef26b419"
+      }
+      """.utf8
+    )
+
+    let payload = try XCTUnwrap(VSCodeUpdatePayload.parse(data))
+    XCTAssertEqual(payload.productVersion, "1.134.0")
+    XCTAssertEqual(payload.commit, "110a328ea54b42367b803ec53ee0bf52ef26b419")
+    XCTAssertEqual(
+      payload.packageURL?.lastPathComponent,
+      "VSCode-darwin-arm64.zip"
+    )
+    XCTAssertEqual(
+      payload.sha256,
+      "6df181646588f0132339d19f5bdfb20bd0d6db05e5801061f12e0dc93c85fa70"
+    )
+    XCTAssertNil(payload.notes)
+    XCTAssertEqual(payload.timestamp, Date(timeIntervalSince1970: 1_787_078_154.886))
+    XCTAssertTrue(payload.shouldOfferUpdate(against: "1.133.0"))
+    XCTAssertTrue(payload.shouldOfferUpdate(against: "1.134.0"))
+    XCTAssertFalse(payload.shouldOfferUpdate(against: "1.135.0"))
+  }
+
+  func testReconstructsStableReleaseJSONURLSplitByBinaryBytes() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-release-json-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    var data = Data("https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
+    data.append(contentsOf: [0xC0, 0x0C])
+    data.append(contentsOf: "/latest.json".utf8)
+    try data.write(to: fileURL)
+
+    XCTAssertEqual(
+      ReleaseJSONDetector.endpoint(inFile: fileURL)?.absoluteString,
+      "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
+    )
+  }
+
+  func testInsertsStableChannelWhenLatestJSONIsMissing() throws {
+    let url = try XCTUnwrap(
+      URL(string: "https://assets.lbkrs.com/github/release/longbridge-desktop/latest.json")
+    )
+    XCTAssertEqual(
+      ReleaseJSONDetector.stableChannelURL(from: url)?.absoluteString,
+      "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
+    )
+    XCTAssertNil(
+      ReleaseJSONDetector.stableChannelURL(
+        from: try XCTUnwrap(
+          URL(
+            string:
+              "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
+          )
+        )
+      )
+    )
+  }
+
+  func testIgnoresPrereleaseReleaseJSONChannel() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "Upkeep-release-json-beta-\(UUID().uuidString)"
+    )
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    try Data("https://example.com/updates/beta/latest.json".utf8).write(to: fileURL)
+    XCTAssertNil(ReleaseJSONDetector.endpoint(inFile: fileURL))
+  }
+
+  func testParsesReleaseJSONAssetsAndPrefersAppleSiliconDMG() throws {
+    let data = Data(
+      """
+      {
+        "version": "v0.19.1",
+        "published_at": "2026-08-20T07:46:53Z",
+        "release_notes": {
+          "en": "### Improvements",
+          "zh-CN": "### 优化"
+        },
+        "assets": [
+          {
+            "name": "app-v0.19.1-linux-x86_64.tar.gz",
+            "url": "https://example.com/app-v0.19.1-linux-x86_64.tar.gz",
+            "sha256": "aa"
+          },
+          {
+            "name": "app-v0.19.1-windows-x86_64.exe",
+            "url": "https://example.com/app-v0.19.1-windows-x86_64.exe",
+            "sha256": "bb"
+          },
+          {
+            "name": "app-v0.19.1-macos-x86_64.dmg",
+            "url": "https://example.com/app-v0.19.1-macos-x86_64.dmg",
+            "sha256": "cc"
+          },
+          {
+            "name": "app-v0.19.1-macos-aarch64.dmg",
+            "url": "https://example.com/app-v0.19.1-macos-aarch64.dmg",
+            "sha256": "dd",
+            "size": 51200000
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let manifest = try XCTUnwrap(ReleaseJSONManifest.parse(data, languageCode: "zh-Hans"))
+    XCTAssertEqual(manifest.version, "0.19.1")
+    XCTAssertEqual(manifest.notes, "### 优化")
+    XCTAssertEqual(manifest.publicationDate, ISO8601Parsing.date(from: "2026-08-20T07:46:53Z"))
+
+    let armPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .arm64))
+    XCTAssertEqual(armPackage.url.lastPathComponent, "app-v0.19.1-macos-aarch64.dmg")
+    XCTAssertEqual(armPackage.sha256, "dd")
+    XCTAssertEqual(armPackage.size, 51_200_000)
+
+    let intelPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .x64))
+    XCTAssertEqual(intelPackage.url.lastPathComponent, "app-v0.19.1-macos-x86_64.dmg")
+
+    XCTAssertNil(ReleaseJSONManifest.parse(Data(#"{"version":"1.0","platforms":{}}"#.utf8)))
+  }
+
+  func testBuildsVSCodeUpdaterCheckURL() throws {
+    let updateURL = try XCTUnwrap(URL(string: "https://update.code.visualstudio.com/"))
+    XCTAssertEqual(
+      VSCodeUpdaterDetector.checkURL(
+        updateURL: updateURL,
+        platform: "darwin-arm64",
+        quality: "stable",
+        commit: "abc123"
+      )?.absoluteString,
+      "https://update.code.visualstudio.com/api/update/darwin-arm64/stable/abc123"
+    )
+    XCTAssertEqual(
+      VSCodeUpdaterDetector.parseSourceIdentifier("stable/abc123")?.commit,
+      "abc123"
+    )
+  }
+}

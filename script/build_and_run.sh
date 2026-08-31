@@ -2,8 +2,8 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="AppMint"
-BUNDLE_ID="com.chengzhong.AppMint"
+APP_NAME="Upkeep"
+BUNDLE_ID="com.chengzhong.Upkeep"
 MIN_SYSTEM_VERSION="26.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

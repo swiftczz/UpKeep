@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""绘制 AppMint 的应用图标，输出 AppIcon.png 与 AppIcon.icns。
+"""绘制 Upkeep 的应用图标，输出 AppIcon.png 与 AppIcon.icns。
 
 用法：
     python3 script/make_app_icon.py [输出目录]

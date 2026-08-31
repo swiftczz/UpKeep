@@ -3,27 +3,28 @@
 import PackageDescription
 
 let package = Package(
-  name: "AppMint",
+  name: "Upkeep",
   platforms: [
     .macOS(.v26)
   ],
   products: [
-    .executable(name: "AppMint", targets: ["AppMint"])
+    .executable(name: "Upkeep", targets: ["Upkeep"])
   ],
   dependencies: [],
   targets: [
     .executableTarget(
-      name: "AppMint",
+      name: "Upkeep",
       dependencies: [],
-      path: "AppMint",
+      path: "Upkeep",
       linkerSettings: [
+        .linkedFramework("CoreServices"),
         .linkedFramework("Security")
       ]
     ),
     .testTarget(
-      name: "AppMintTests",
-      dependencies: ["AppMint"],
-      path: "AppMintTests"
+      name: "UpkeepTests",
+      dependencies: ["Upkeep"],
+      path: "UpkeepTests"
     ),
   ]
 )

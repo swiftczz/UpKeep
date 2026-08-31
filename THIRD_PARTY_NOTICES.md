@@ -2,7 +2,7 @@
 
 ## mas-cli/mas
 
-The App Store transaction flow in `AppMint/Services/AppStoreUpdateSession.swift` is derived from
+The App Store transaction flow in `Upkeep/Services/AppStoreUpdateSession.swift` is derived from
 [mas-cli/mas](https://github.com/mas-cli/mas).
 
 The MIT License (MIT)
