@@ -75,6 +75,126 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertFalse(library.isRefreshing)
   }
 
+  func testLoadIfNeededPublishesInstalledApplicationsBeforeFullScanFinishes() async throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let quick = AppRecord(
+      name: "Listed",
+      bundleIdentifier: "com.example.listed",
+      applicationURL: URL(fileURLWithPath: "/Applications/Listed.app"),
+      currentVersion: "1.0",
+      source: .selfManaged,
+      status: .selfManaged
+    )
+    let scanned = AppRecord(
+      name: "Listed",
+      bundleIdentifier: "com.example.listed",
+      applicationURL: URL(fileURLWithPath: "/Applications/Listed.app"),
+      currentVersion: "1.0",
+      source: .sparkle,
+      status: .checking,
+      sourceURL: URL(string: "https://example.com/appcast.xml")
+    )
+    let gate = AsyncGate()
+    let library = AppLibrary(
+      scanner: TwoStageScanner(
+        installedApplications: [quick],
+        scannedApplications: [scanned],
+        gate: gate
+      ),
+      coordinator: StubCoordinator(),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    let load = Task { await library.loadIfNeeded() }
+
+    var sawQuickList = false
+    for _ in 0..<40 {
+      try await Task.sleep(for: .milliseconds(10))
+      if library.applications == [quick], library.phase == .scanning {
+        sawQuickList = true
+        break
+      }
+    }
+
+    XCTAssertTrue(sawQuickList)
+    await gate.open()
+    await load.value
+    XCTAssertEqual(library.applications.map(\.source), [.sparkle])
+    XCTAssertEqual(library.phase, .idle)
+  }
+
+  func testRestartRefreshSupersedesInFlightAutomaticRefresh() async throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let seed = AppRecord(
+      name: "Seed",
+      bundleIdentifier: "com.example.seed",
+      applicationURL: URL(fileURLWithPath: "/Applications/Seed.app"),
+      currentVersion: "1.0",
+      source: .selfManaged,
+      status: .selfManaged
+    )
+    let stale = AppRecord(
+      name: "Stale",
+      bundleIdentifier: "com.example.stale",
+      applicationURL: URL(fileURLWithPath: "/Applications/Stale.app"),
+      currentVersion: "1.0",
+      source: .selfManaged,
+      status: .selfManaged
+    )
+    let fresh = AppRecord(
+      name: "Fresh",
+      bundleIdentifier: "com.example.fresh",
+      applicationURL: URL(fileURLWithPath: "/Applications/Fresh.app"),
+      currentVersion: "1.0",
+      source: .selfManaged,
+      status: .selfManaged
+    )
+    let firstScanGate = AsyncGate()
+    let scanner = RestartingScanner(
+      firstResult: [stale],
+      restartedResult: [fresh],
+      firstScanGate: firstScanGate
+    )
+    let library = AppLibrary(
+      applications: [seed],
+      scanner: scanner,
+      coordinator: StubCoordinator(),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    let automaticRefresh = Task {
+      await library.refreshIfStale(after: 0)
+    }
+
+    for _ in 0..<40 {
+      try await Task.sleep(for: .milliseconds(10))
+      if scanner.startedScanCount == 1, library.phase == .scanning {
+        break
+      }
+    }
+    XCTAssertEqual(scanner.startedScanCount, 1)
+    XCTAssertEqual(library.phase, .scanning)
+
+    await library.restartRefresh()
+
+    XCTAssertEqual(library.applications.map(\.name), ["Fresh"])
+    XCTAssertEqual(library.phase, .idle)
+
+    await firstScanGate.open()
+    await automaticRefresh.value
+
+    XCTAssertEqual(library.applications.map(\.name), ["Fresh"])
+    XCTAssertEqual(library.phase, .idle)
+  }
+
   func testPublishesAvailableUpdatesAsEachCheckFinishes() async throws {
     let suiteName = "UpkeepTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -128,7 +248,7 @@ final class AppLibraryRefreshTests: XCTestCase {
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
-    let applications = (0..<24).map {
+    let applications = (0..<64).map {
       makeApplication(name: "Application \($0)", status: .checking)
     }
     let probe = CheckConcurrencyProbe()
@@ -143,7 +263,7 @@ final class AppLibraryRefreshTests: XCTestCase {
     await library.refresh()
 
     let observation = await probe.observation
-    XCTAssertEqual(observation.maximum, 10)
+    XCTAssertEqual(observation.maximum, 30)
     XCTAssertEqual(observation.current, 0)
     XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
   }
@@ -616,6 +736,83 @@ private struct StubScanner: ApplicationScanning {
 
   func scan() async -> [AppRecord] {
     applications
+  }
+}
+
+private struct TwoStageScanner: ApplicationScanning {
+  let installedApplications: [AppRecord]
+  let scannedApplications: [AppRecord]
+  let gate: AsyncGate
+
+  func scanInstalledApplications(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
+    installedApplications
+  }
+
+  func scan() async -> [AppRecord] {
+    await gate.wait()
+    return scannedApplications
+  }
+}
+
+private final class RestartingScanner: ApplicationScanning, @unchecked Sendable {
+  let firstResult: [AppRecord]
+  let restartedResult: [AppRecord]
+  let firstScanGate: AsyncGate
+
+  private let lock = NSLock()
+  private var startedScans = 0
+
+  init(
+    firstResult: [AppRecord],
+    restartedResult: [AppRecord],
+    firstScanGate: AsyncGate
+  ) {
+    self.firstResult = firstResult
+    self.restartedResult = restartedResult
+    self.firstScanGate = firstScanGate
+  }
+
+  var startedScanCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return startedScans
+  }
+
+  func scan() async -> [AppRecord] {
+    let scanNumber = nextScanNumber()
+    if scanNumber == 1 {
+      await firstScanGate.wait()
+      return firstResult
+    }
+    return restartedResult
+  }
+
+  private func nextScanNumber() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    startedScans += 1
+    return startedScans
+  }
+}
+
+private actor AsyncGate {
+  private var isOpen = false
+  private var continuations: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    if isOpen {
+      return
+    }
+    await withCheckedContinuation { continuation in
+      continuations.append(continuation)
+    }
+  }
+
+  func open() {
+    isOpen = true
+    let pending = continuations
+    continuations.removeAll()
+    pending.forEach { $0.resume() }
   }
 }
 

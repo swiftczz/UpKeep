@@ -22,11 +22,12 @@ final class AppLibrary {
   @ObservationIgnored private var pendingCheckedApplications: [AppRecord] = []
   @ObservationIgnored private var pendingCheckedFlushTask: Task<Void, Never>?
   @ObservationIgnored private var requestedRefreshCachePolicy: UpdateCachePolicy = .allowed
+  @ObservationIgnored private var refreshGeneration = 0
   private var hasLoaded: Bool
   private var refreshRequested = false
 
   private static let ignoredBundleIdentifiersKey = "ignoredUpdateBundleIdentifiers"
-  private static let maximumConcurrentChecks = 10
+  private static let maximumConcurrentChecks = 30
   private static let checkedResultBatchSize = 10
   private static let checkedResultFlushDelay = Duration.milliseconds(250)
 
@@ -184,6 +185,8 @@ final class AppLibrary {
       break
     case .sparkle where application.sourceURL != nil:
       break
+    case .homebrew where application.alternateUpdateCheckRecord != nil:
+      break
     case .homebrew, .selfManaged, .sparkle:
       return
     }
@@ -206,6 +209,17 @@ final class AppLibrary {
     await refresh(cachePolicy: .reloadIgnoringCache)
   }
 
+  func restartRefresh() async {
+    guard updatingApplicationIDs.isEmpty else { return }
+    refreshGeneration += 1
+    refreshRequested = false
+    requestedRefreshCachePolicy = .allowed
+    await performRefresh(
+      cachePolicy: .reloadIgnoringCache,
+      generation: refreshGeneration
+    )
+  }
+
   private func refresh(cachePolicy: UpdateCachePolicy) async {
     guard updatingApplicationIDs.isEmpty else { return }
     guard phase == .idle else {
@@ -218,12 +232,20 @@ final class AppLibrary {
     repeat {
       refreshRequested = false
       requestedRefreshCachePolicy = .allowed
-      await performRefresh(cachePolicy: activeCachePolicy)
+      let completed = await performRefresh(
+        cachePolicy: activeCachePolicy,
+        generation: refreshGeneration
+      )
+      guard completed else { return }
       activeCachePolicy = requestedRefreshCachePolicy
     } while refreshRequested
   }
 
-  private func performRefresh(cachePolicy: UpdateCachePolicy) async {
+  @discardableResult
+  private func performRefresh(
+    cachePolicy: UpdateCachePolicy,
+    generation: Int
+  ) async -> Bool {
     let previousSelection = selectedApplicationID
     let previousApplications = applications
     pendingCheckedFlushTask?.cancel()
@@ -233,7 +255,19 @@ final class AppLibrary {
     phase = .scanning
     alertMessage = nil
 
+    if previousApplications.isEmpty {
+      let installedApplications = await scanner.scanInstalledApplications(
+        reusing: previousApplications
+      )
+      guard isCurrentRefresh(generation) else { return false }
+      if !installedApplications.isEmpty {
+        publish(installedApplications, selecting: previousSelection)
+        await Task.yield()
+      }
+    }
+
     let scannedApplications = await scanner.scan(reusing: previousApplications)
+    guard isCurrentRefresh(generation) else { return false }
 
     guard !scannedApplications.isEmpty else {
       applications = []
@@ -242,7 +276,7 @@ final class AppLibrary {
       phase = .idle
       lastCheckedAt = .now
       persistSnapshot()
-      return
+      return true
     }
 
     publish(
@@ -254,6 +288,7 @@ final class AppLibrary {
     await Task.yield()
 
     let enrichedApplications = await coordinator.enrich(applications, cachePolicy: cachePolicy)
+    guard isCurrentRefresh(generation) else { return false }
     publish(
       Self.mergeKeepingCheckResults(enrichedApplications, previous: applications),
       selecting: selectedApplicationID
@@ -264,11 +299,13 @@ final class AppLibrary {
       prioritizing: selectedApplicationID
     )
     checkingApplicationIDs = Set(applicationsToCheck.map(\.id))
-    await checkApplications(applicationsToCheck)
+    await checkApplications(applicationsToCheck, generation: generation)
+    guard isCurrentRefresh(generation) else { return false }
     flushPendingChecked()
     checkingApplicationIDs.removeAll(keepingCapacity: true)
 
     let claimedApplications = await coordinator.enrich(applications, cachePolicy: .allowed)
+    guard isCurrentRefresh(generation) else { return false }
     publish(
       Self.mergeKeepingCheckResults(claimedApplications, previous: applications),
       selecting: selectedApplicationID
@@ -277,9 +314,10 @@ final class AppLibrary {
     lastCheckedAt = .now
     phase = .idle
     persistSnapshot()
+    return true
   }
 
-  private func checkApplications(_ applications: [AppRecord]) async {
+  private func checkApplications(_ applications: [AppRecord], generation: Int) async {
     guard !applications.isEmpty else { return }
 
     let coordinator = coordinator
@@ -294,6 +332,10 @@ final class AppLibrary {
       }
 
       while let checked = await group.next() {
+        guard isCurrentRefresh(generation) else {
+          group.cancelAll()
+          return
+        }
         queueChecked(checked)
 
         if let application = iterator.next() {
@@ -303,6 +345,10 @@ final class AppLibrary {
         }
       }
     }
+  }
+
+  private func isCurrentRefresh(_ generation: Int) -> Bool {
+    generation == refreshGeneration && !Task.isCancelled
   }
 
   private static func checkableApplications(
@@ -477,11 +523,20 @@ final class AppLibrary {
     if merged.sourceIdentifier == nil, previous.source == merged.source {
       merged.sourceIdentifier = previous.sourceIdentifier
     }
+    if merged.alternateUpdateSource == nil {
+      merged.alternateUpdateSource = previous.alternateUpdateSource
+      merged.alternateSourceURL = previous.alternateSourceURL
+      merged.alternateSourceIdentifier = previous.alternateSourceIdentifier
+      merged.alternateHomepageURL = previous.alternateHomepageURL
+    }
     if merged.homebrewCaskToken == nil, merged.source != .appStore {
       merged.homebrewCaskToken = previous.homebrewCaskToken
     }
     if merged.appStoreCountryCode == nil, previous.source == merged.source {
       merged.appStoreCountryCode = previous.appStoreCountryCode
+    }
+    if merged.appStoreAccountCountryCode == nil, previous.source == merged.source {
+      merged.appStoreAccountCountryCode = previous.appStoreAccountCountryCode
     }
     if merged.releaseNotes == nil {
       merged.releaseNotes = previous.releaseNotes
@@ -516,9 +571,9 @@ final class AppLibrary {
 
     if application.needsUpdate,
       application.source == .appStore,
-      let sourceURL = application.sourceURL
+      application.sourceURL != nil
     {
-      return Self.nativeAppStoreURL(from: sourceURL)
+      return Self.nativeAppStoreUpdateURL(for: application)
     }
 
     return application.applicationURL
@@ -552,7 +607,6 @@ final class AppLibrary {
     if !failures.isEmpty {
       alertMessage = failures.joined(separator: "\n")
     }
-    await refresh()
   }
 
   func reportOpeningFailure(for url: URL) {
@@ -569,8 +623,6 @@ final class AppLibrary {
       failureMessage = error.localizedDescription
     }
 
-    await refreshIfNoUpdatesInFlight()
-
     if let selectionToRestore,
       applications.contains(where: { $0.id == selectionToRestore })
     {
@@ -581,11 +633,6 @@ final class AppLibrary {
     }
   }
 
-  private func refreshIfNoUpdatesInFlight() async {
-    guard updatingApplicationIDs.isEmpty else { return }
-    await refresh()
-  }
-
   @discardableResult
   private func performVisibleUpdate(_ application: AppRecord) async throws -> Bool {
     let applicationID = application.id
@@ -594,26 +641,26 @@ final class AppLibrary {
 
     do {
       try await performCoordinatorUpdate(application)
-      let diskRecord = await waitForInstalledDiskRecord(application)
       updateProgressByID[applicationID] = UpdateProgress(
         fractionCompleted: 1,
         status: "正在完成…"
       )
+      let diskRecord = await waitForInstalledDiskRecord(application)
+      guard let diskRecord else {
+        clearUpdateProgress(for: application)
+        return false
+      }
       try? await Task.sleep(for: .milliseconds(300))
       finishUpdating(application, diskRecord: diskRecord)
-      return diskRecord != nil
+      return true
     } catch {
       clearUpdateProgress(for: application)
       throw error
     }
   }
 
-  private func finishUpdating(_ application: AppRecord, diskRecord: AppRecord?) {
-    if let diskRecord {
-      applyInstalledDiskRecord(diskRecord, replacing: application)
-    } else {
-      rememberLocalInstall(of: application)
-    }
+  private func finishUpdating(_ application: AppRecord, diskRecord: AppRecord) {
+    applyInstalledDiskRecord(diskRecord, replacing: application)
     clearUpdateProgress(for: application)
   }
 
@@ -684,12 +731,17 @@ final class AppLibrary {
     record.source = application.source
     record.appStorePlatform = application.appStorePlatform
     record.appStoreCountryCode = application.appStoreCountryCode
+    record.appStoreAccountCountryCode = application.appStoreAccountCountryCode
     record.sourceURL = application.sourceURL
     record.homepageURL = application.homepageURL
     record.releaseNotes = application.releaseNotes
     record.releaseDate = application.releaseDate
     record.releaseNotesURL = application.releaseNotesURL
     record.sourceIdentifier = application.sourceIdentifier
+    record.alternateUpdateSource = application.alternateUpdateSource
+    record.alternateSourceURL = application.alternateSourceURL
+    record.alternateSourceIdentifier = application.alternateSourceIdentifier
+    record.alternateHomepageURL = application.alternateHomepageURL
     record.homebrewCaskToken = application.homebrewCaskToken
     record.packageByteCount = application.packageByteCount
     record.latestVersion = application.latestVersion
@@ -708,19 +760,6 @@ final class AppLibrary {
     persistSnapshot()
   }
 
-  private func rememberLocalInstall(of application: AppRecord) {
-    guard FileManager.default.fileExists(atPath: application.applicationURL.path),
-      let index = applications.firstIndex(where: {
-        $0.id == application.id || $0.bundleIdentifier == application.bundleIdentifier
-      })
-    else {
-      return
-    }
-
-    applications[index].lastInstalledAt = .now
-    persistSnapshot()
-  }
-
   private func persistIgnoredBundleIdentifiers() {
     userDefaults.set(
       ignoredBundleIdentifiers.sorted(),
@@ -730,6 +769,16 @@ final class AppLibrary {
 
   private static func ignoreIdentifier(for application: AppRecord) -> String {
     application.bundleIdentifier.lowercased()
+  }
+
+  private static func nativeAppStoreUpdateURL(for application: AppRecord) -> URL? {
+    if application.requiresAppStoreUpdatePageHandoff {
+      return URL(string: "macappstore://showUpdatesPage")
+    }
+    guard let sourceURL = application.sourceURL else {
+      return nil
+    }
+    return nativeAppStoreURL(from: sourceURL)
   }
 
   private static func nativeAppStoreURL(from sourceURL: URL) -> URL {

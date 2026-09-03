@@ -8,6 +8,8 @@ struct UpkeepRootView: View {
   @State private var searchText = ""
   @State private var uninstallingApplication: AppRecord?
   @State private var pendingUpdateAllRelaunch: [AppRecord] = []
+  @State private var manualRefreshTask: Task<Void, Never>?
+  @State private var isManualRefreshInProgress = false
   @State private var localApplicationChangeRefreshTask: Task<Void, Never>?
 
   private static let periodicRefreshInterval: TimeInterval = 10 * 60
@@ -114,12 +116,10 @@ struct UpkeepRootView: View {
         }
 
         Button {
-          Task {
-            await library.refresh()
-          }
+          beginManualRefresh()
         } label: {
           Group {
-            if library.isRefreshing {
+            if isManualRefreshInProgress {
               ProgressView()
                 .controlSize(.small)
                 .accessibilityHidden(true)
@@ -130,9 +130,9 @@ struct UpkeepRootView: View {
           .frame(width: 16, height: 16)
         }
         .keyboardShortcut("r", modifiers: .command)
-        .disabled(!library.updatingApplicationIDs.isEmpty)
-        .help(library.phase.title ?? "重新扫描并检查所有应用")
-        .accessibilityLabel(library.phase.title ?? "检查更新")
+        .disabled(!library.updatingApplicationIDs.isEmpty || manualRefreshTask != nil)
+        .help(isManualRefreshInProgress ? library.phase.title ?? "正在刷新…" : "重新扫描并检查所有应用")
+        .accessibilityLabel(isManualRefreshInProgress ? "正在检查更新" : "检查更新")
       }
     }
     .task {
@@ -152,6 +152,7 @@ struct UpkeepRootView: View {
       }
     }
     .onDisappear {
+      cancelManualRefresh()
       cancelRefreshAfterLocalApplicationChange()
     }
     .onChange(of: library.selectedApplicationID) { _, selectedID in
@@ -248,6 +249,28 @@ struct UpkeepRootView: View {
     Task {
       await library.updateAll()
     }
+  }
+
+  private func beginManualRefresh() {
+    guard manualRefreshTask == nil else { return }
+    manualRefreshTask = Task {
+      isManualRefreshInProgress = true
+      defer {
+        isManualRefreshInProgress = false
+        manualRefreshTask = nil
+      }
+
+      await library.restartRefresh()
+      while library.isRefreshing, !Task.isCancelled {
+        try? await Task.sleep(for: .milliseconds(100))
+      }
+    }
+  }
+
+  private func cancelManualRefresh() {
+    manualRefreshTask?.cancel()
+    manualRefreshTask = nil
+    isManualRefreshInProgress = false
   }
 
   private func scheduleRefreshAfterLocalApplicationChange() {

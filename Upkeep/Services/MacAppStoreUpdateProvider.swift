@@ -68,7 +68,7 @@ private enum MacAppStoreUpdateError: LocalizedError {
     case .unavailable:
       "当前系统不支持 Upkeep 的 App Store 更新能力。"
     case .unsupportedPlatform:
-      "安装在 Mac 上的 iPhone 或 iPad 应用暂不支持直接更新。"
+      "安装在 Mac 上的 iPhone 或 iPad 应用需要通过 App Store 的更新页安装。"
     }
   }
 }

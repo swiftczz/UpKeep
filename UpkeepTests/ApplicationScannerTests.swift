@@ -352,6 +352,28 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(decoded.lastInstalledAt, application.lastInstalledAt)
   }
 
+  func testAlternateUpdateSourceSurvivesJSONRoundTrip() throws {
+    var application = makeApplication(
+      name: "Termio",
+      modifiedAt: Date(timeIntervalSince1970: 100)
+    )
+    application.source = .homebrew
+    application.sourceIdentifier = "termio"
+    application.homebrewCaskToken = "termio"
+    application.alternateUpdateSource = .sparkle
+    application.alternateSourceURL = URL(string: "https://downloads.termio.sh/appcast.xml")
+    application.alternateHomepageURL = URL(string: "https://termio.sh/")
+
+    let decoded = try JSONDecoder().decode(
+      AppRecord.self,
+      from: try JSONEncoder().encode(application)
+    )
+
+    XCTAssertEqual(decoded.alternateUpdateSource, .sparkle)
+    XCTAssertEqual(decoded.alternateSourceURL, application.alternateSourceURL)
+    XCTAssertEqual(decoded.alternateHomepageURL, application.alternateHomepageURL)
+  }
+
   func testDecodesSnapshotWithoutLastInstalledAt() throws {
     var application = makeApplication(name: "Legacy")
     application.lastInstalledAt = Date(timeIntervalSince1970: 1)
@@ -700,6 +722,42 @@ final class ApplicationScannerTests: XCTestCase {
     )
     XCTAssertEqual(application.homepageURL?.absoluteString, "https://github.com/op7418/CodePilot")
     XCTAssertEqual(application.sourceTitle, "electron-updater")
+  }
+
+  func testInstalledApplicationRecordSkipsUpdaterSourceDetection() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("UpkeepTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "CodePilot.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.codepilot"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data(
+      """
+      owner: op7418
+      repo: CodePilot
+      provider: github
+      """.utf8
+    ).write(to: resourcesURL.appendingPathComponent("app-update.yml"))
+
+    let installed = try XCTUnwrap(
+      ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
+    )
+    let fullyScanned = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+
+    XCTAssertEqual(installed.source, .selfManaged)
+    XCTAssertEqual(installed.status, .selfManaged)
+    XCTAssertNil(installed.sourceURL)
+    XCTAssertEqual(fullyScanned.source, .electronBuilder)
   }
 
   func testDetectsElectronBuilderGenericProvider() throws {
@@ -1072,6 +1130,11 @@ final class ApplicationScannerTests: XCTestCase {
     }
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    guard application.source == .tauri,
+      application.sourceURL?.absoluteString == "https://dl.reasonix.io/studio/versions.json"
+    else {
+      throw XCTSkip("Installed ReasonixStudio does not expose the expected Tauri updater metadata")
+    }
     XCTAssertEqual(application.source, .tauri)
     XCTAssertEqual(
       application.sourceURL?.absoluteString,

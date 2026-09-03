@@ -57,7 +57,7 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.automaticUpdatesRequiringRelaunch().map(\.name), ["Running"])
   }
 
-  func testIPhoneAppStoreUpdateOpensItsStorePage() async throws {
+  func testIPhoneAppStoreUpdateOpensUpdatesPage() async throws {
     let application = AppRecord(
       name: "Minis",
       bundleIdentifier: "com.openminis.app",
@@ -70,17 +70,74 @@ final class AppLibraryUpdateTests: XCTestCase {
       sourceURL: URL(string: "https://apps.apple.com/cn/app/minis/id123456789"),
       canAutomaticallyUpdate: false
     )
-    let library = try makeLibrary(applications: [application], runningBundleIdentifiers: [])
+    let library = try makeLibrary(
+      applications: [application],
+      runningBundleIdentifiers: []
+    )
+
+    let destination = await library.performPrimaryAction(for: application.id)
+
+    XCTAssertEqual(destination?.scheme, "macappstore")
+    XCTAssertEqual(destination?.host, "showUpdatesPage")
+    XCTAssertTrue(library.automaticUpdates.isEmpty)
+  }
+
+  func testAppStoreUpdateOpensUpdatesPageWhenAppStoreCountryDiffersFromAccount() async throws {
+    let application = AppRecord(
+      name: "Clash",
+      bundleIdentifier: "com.hako.network",
+      applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
+      currentVersion: "1.0.6",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "us",
+      appStoreAccountCountryCode: "cn",
+      status: .updateAvailable,
+      latestVersion: "1.0.7",
+      sourceURL: URL(string: "https://apps.apple.com/us/app/clash/id6794257189"),
+      canAutomaticallyUpdate: false
+    )
+    let library = try makeLibrary(
+      applications: [application],
+      runningBundleIdentifiers: []
+    )
+
+    let destination = await library.performPrimaryAction(for: application.id)
+
+    XCTAssertEqual(destination?.scheme, "macappstore")
+    XCTAssertEqual(destination?.host, "showUpdatesPage")
+    XCTAssertTrue(library.automaticUpdates.isEmpty)
+  }
+
+  func testAppStoreUpdateOpensAppPageWhenAppStoreCountryMatchesAccount() async throws {
+    let application = AppRecord(
+      name: "Sequel Ace",
+      bundleIdentifier: "com.sequel-ace.sequel-ace",
+      applicationURL: URL(fileURLWithPath: "/Applications/Sequel Ace.app"),
+      currentVersion: "5.3.1",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "us",
+      appStoreAccountCountryCode: "USA",
+      status: .updateAvailable,
+      latestVersion: "5.4.0",
+      sourceURL: URL(string: "https://apps.apple.com/us/app/sequel-ace/id1518036000"),
+      canAutomaticallyUpdate: false
+    )
+    let library = try makeLibrary(
+      applications: [application],
+      runningBundleIdentifiers: []
+    )
 
     let destination = await library.performPrimaryAction(for: application.id)
 
     XCTAssertEqual(destination?.scheme, "macappstore")
     XCTAssertEqual(destination?.host, "apps.apple.com")
-    XCTAssertEqual(destination?.path, "/cn/app/minis/id123456789")
+    XCTAssertEqual(destination?.path, "/us/app/sequel-ace/id1518036000")
     XCTAssertTrue(library.automaticUpdates.isEmpty)
   }
 
-  func testFailedUpdateKeepsOriginalSelectionAndReportsFailureAfterRefresh() async throws {
+  func testFailedUpdateKeepsOriginalSelectionAndReportsFailure() async throws {
     let eudic = makeUpdateApplication(
       name: "欧路词典",
       bundleIdentifier: "com.eusoft.eudic"
@@ -108,8 +165,82 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.alertMessage, "模拟更新失败")
   }
 
+  func testSuccessfulUpdateDoesNotSettleBeforeInstalledVersionAppears() async throws {
+    let application = makeUpdateApplication(
+      name: "Settled",
+      bundleIdentifier: "com.example.settled"
+    )
+    let scanner = CountingUpdateScanner(applications: [application])
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let library = AppLibrary(
+      applications: [application],
+      scanner: scanner,
+      coordinator: SuccessfulUpdateCoordinator(),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    _ = await library.performPrimaryAction(for: application.id)
+    let scanCount = await scanner.numberOfScans()
+
+    XCTAssertEqual(library.availableUpdates.map(\.id), [application.id])
+    XCTAssertEqual(library.applications.first?.currentVersion, "1.0")
+    XCTAssertEqual(library.applications.first?.status, .updateAvailable)
+    XCTAssertTrue(library.applications.first?.canAutomaticallyUpdate ?? false)
+    XCTAssertNil(library.applications.first?.lastInstalledAt)
+    XCTAssertEqual(scanCount, 0)
+  }
+
+  func testSuccessfulUpdateSettlesAfterInstalledVersionAppearsWithoutScanning() async throws {
+    let applicationURL = try makeApplicationBundle(
+      name: "Installed",
+      bundleIdentifier: "com.example.installed",
+      version: "1.0"
+    )
+    let application = AppRecord(
+      name: "Installed",
+      bundleIdentifier: "com.example.installed",
+      applicationURL: applicationURL,
+      currentVersion: "1.0",
+      buildVersion: "1",
+      source: .sparkle,
+      status: .updateAvailable,
+      latestVersion: "2.0",
+      latestBuildVersion: "2",
+      canAutomaticallyUpdate: true
+    )
+    let scanner = CountingUpdateScanner(applications: [application])
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let library = AppLibrary(
+      applications: [application],
+      scanner: scanner,
+      coordinator: InstallingUpdateCoordinator(
+        applicationURL: applicationURL,
+        version: "2.0",
+        buildVersion: "2"
+      ),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    _ = await library.performPrimaryAction(for: application.id)
+    let scanCount = await scanner.numberOfScans()
+
+    XCTAssertTrue(library.availableUpdates.isEmpty)
+    XCTAssertEqual(library.applications.first?.currentVersion, "2.0")
+    XCTAssertEqual(library.applications.first?.status, .upToDate)
+    XCTAssertFalse(library.applications.first?.canAutomaticallyUpdate ?? true)
+    XCTAssertNotNil(library.applications.first?.lastInstalledAt)
+    XCTAssertEqual(scanCount, 0)
+  }
+
   private func makeLibrary(
     applications: [AppRecord],
+    coordinator: any UpdateCoordinating = UpdateCoordinator(),
     runningBundleIdentifiers: Set<String>
   ) throws -> AppLibrary {
     let suiteName = "UpkeepTests.\(UUID().uuidString)"
@@ -120,6 +251,8 @@ final class AppLibraryUpdateTests: XCTestCase {
 
     return AppLibrary(
       applications: applications,
+      scanner: UpdateSelectionScanner(applications: applications),
+      coordinator: coordinator,
       process: ApplicationProcessClient(
         isRunning: { runningBundleIdentifiers.contains($0.bundleIdentifier) },
         quit: { _ in },
@@ -145,6 +278,30 @@ final class AppLibraryUpdateTests: XCTestCase {
       canAutomaticallyUpdate: true
     )
   }
+
+  private func makeApplicationBundle(
+    name: String,
+    bundleIdentifier: String,
+    version: String
+  ) throws -> URL {
+    let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "UpkeepTests-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    let applicationURL = rootURL.appendingPathComponent("\(name).app", isDirectory: true)
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    try FileManager.default.createDirectory(at: contentsURL, withIntermediateDirectories: true)
+    try InstallingUpdateCoordinator.writeInfoPlist(
+      at: applicationURL,
+      bundleIdentifier: bundleIdentifier,
+      version: version,
+      buildVersion: "1"
+    )
+    addTeardownBlock {
+      try? FileManager.default.removeItem(at: rootURL)
+    }
+    return applicationURL
+  }
 }
 
 private struct UpdateSelectionScanner: ApplicationScanning {
@@ -169,5 +326,93 @@ private struct FailingUpdateCoordinator: UpdateCoordinating {
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
     throw ProcessRunnerError.failed(status: 1, message: "模拟更新失败")
+  }
+}
+
+private struct SuccessfulUpdateCoordinator: UpdateCoordinating {
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+    applications
+  }
+
+  func check(_ application: AppRecord) async -> AppRecord {
+    application
+  }
+
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {
+    progress(UpdateProgress(fractionCompleted: 1, status: "正在完成…"))
+  }
+}
+
+private struct InstallingUpdateCoordinator: UpdateCoordinating {
+  let applicationURL: URL
+  let version: String
+  let buildVersion: String
+
+  func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+    applications
+  }
+
+  func check(_ application: AppRecord) async -> AppRecord {
+    application
+  }
+
+  func update(
+    _ application: AppRecord,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
+  ) async throws {
+    try Self.writeInfoPlist(
+      at: applicationURL,
+      bundleIdentifier: application.bundleIdentifier,
+      version: version,
+      buildVersion: buildVersion
+    )
+    progress(UpdateProgress(fractionCompleted: 1, status: "正在完成…"))
+  }
+
+  static func writeInfoPlist(
+    at applicationURL: URL,
+    bundleIdentifier: String,
+    version: String,
+    buildVersion: String
+  ) throws {
+    let info: [String: Any] = [
+      "CFBundleIdentifier": bundleIdentifier,
+      "CFBundleDisplayName": applicationURL.deletingPathExtension().lastPathComponent,
+      "CFBundleName": applicationURL.deletingPathExtension().lastPathComponent,
+      "CFBundleShortVersionString": version,
+      "CFBundleVersion": buildVersion,
+      "CFBundleExecutable": "TestApplication",
+      "CFBundlePackageType": "APPL",
+    ]
+    let data = try PropertyListSerialization.data(
+      fromPropertyList: info,
+      format: .xml,
+      options: 0
+    )
+    try data.write(
+      to: applicationURL.appendingPathComponent("Contents/Info.plist"),
+      options: .atomic
+    )
+  }
+}
+
+private actor CountingUpdateScanner: ApplicationScanning {
+  let applications: [AppRecord]
+  private var scanCount = 0
+
+  init(applications: [AppRecord]) {
+    self.applications = applications
+  }
+
+  func scan() async -> [AppRecord] {
+    scanCount += 1
+    return applications
+  }
+
+  func numberOfScans() -> Int {
+    scanCount
   }
 }

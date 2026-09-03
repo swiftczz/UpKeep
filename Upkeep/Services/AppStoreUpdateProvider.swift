@@ -1,6 +1,16 @@
 import Foundation
+import StoreKit
 
 struct AppStoreUpdateProvider: Sendable {
+  private let currentStorefrontCountryCode: @Sendable () async -> String?
+
+  init(
+    currentStorefrontCountryCode: @escaping @Sendable () async -> String? =
+      AppStoreStorefront.currentCountryCode
+  ) {
+    self.currentStorefrontCountryCode = currentStorefrontCountryCode
+  }
+
   func check(_ application: AppRecord) async -> AppRecord {
     var application = application
 
@@ -17,34 +27,47 @@ struct AppStoreUpdateProvider: Sendable {
       var sawNetworkFailure = false
 
       for country in countries {
-        guard
-          let url = Self.lookupURL(
-            bundleIdentifier: application.bundleIdentifier,
-            storeIdentifier: application.sourceIdentifier,
-            country: country,
-            platform: platform
-          )
-        else {
-          continue
-        }
+        var countryMatches: [AppStoreLookupResult] = []
 
-        guard let data = try await UpdateHTTP.successfulData(from: url) else {
-          sawNetworkFailure = true
-          continue
-        }
-
-        sawReachableCatalog = true
-        let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
-        if let result = lookup.result(
-          matching: application.bundleIdentifier,
+        for candidate in Self.lookupCandidates(
+          storeIdentifier: application.sourceIdentifier,
           platform: platform
         ) {
+          guard
+            let url = Self.lookupURL(
+              bundleIdentifier: application.bundleIdentifier,
+              storeIdentifier: candidate.storeIdentifier,
+              country: country,
+              platform: platform,
+              includesEntity: candidate.includesEntity
+            )
+          else {
+            continue
+          }
+
+          guard let data = try await UpdateHTTP.successfulData(from: url) else {
+            sawNetworkFailure = true
+            continue
+          }
+
+          sawReachableCatalog = true
+          let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
+          if let result = lookup.result(
+            matching: application.bundleIdentifier,
+            platform: platform,
+            includesPlatformEntity: candidate.includesEntity
+          ) {
+            countryMatches.append(result)
+          }
+        }
+
+        if let result = Self.newestResult(in: countryMatches) {
           matched = (country, result)
           break
         }
       }
 
-      guard var matched else {
+      guard let matched else {
         application.status =
           sawReachableCatalog
           ? .unavailable("在 App Store 中找不到对应的平台版本。")
@@ -54,19 +77,10 @@ struct AppStoreUpdateProvider: Sendable {
         return application
       }
 
-      // Lookup-by-bundleId can lag hours behind the live catalog that App Store
-      // itself uses. Once we have an Adam ID, query again by `id`.
-      if (application.sourceIdentifier ?? "").isEmpty, let trackID = matched.result.trackID {
-        matched.result =
-          try await Self.fetchLookupResult(
-            bundleIdentifier: application.bundleIdentifier,
-            storeIdentifier: String(trackID),
-            country: matched.country,
-            platform: platform
-          ) ?? matched.result
-      }
-
       let result = matched.result
+      application.appStoreAccountCountryCode = AppStoreCountryCode.normalized(
+        await currentStorefrontCountryCode()
+      )
       application.appStoreCountryCode = matched.country
       application.appStorePlatform = result.appStorePlatform ?? platform
       application.latestVersion = result.version
@@ -77,7 +91,8 @@ struct AppStoreUpdateProvider: Sendable {
       application.sourceIdentifier = result.trackID.map(String.init)
       application.packageByteCount = result.packageByteCount
       application.canAutomaticallyUpdate =
-        application.appStorePlatform == .mac
+        !application.requiresAppStoreUpdatePageHandoff
+        && application.appStorePlatform == .mac
         && MacAppStoreUpdateProvider.isAvailable
         && MacAppStoreUpdateProvider.adamIdentifier(for: application) != nil
       application.status =
@@ -98,7 +113,7 @@ struct AppStoreUpdateProvider: Sendable {
     var seen = Set<String>()
 
     func add(_ raw: String?) {
-      guard let code = normalizedCountryCode(raw), seen.insert(code).inserted else {
+      guard let code = AppStoreCountryCode.normalized(raw), seen.insert(code).inserted else {
         return
       }
       countries.append(code)
@@ -112,35 +127,27 @@ struct AppStoreUpdateProvider: Sendable {
     return countries
   }
 
-  private static func normalizedCountryCode(_ raw: String?) -> String? {
-    guard let raw else { return nil }
-    var code = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if let separator = code.firstIndex(where: { $0 == "-" || $0 == "_" }) {
-      let suffix = String(code[code.index(after: separator)...])
-      code = suffix.count == 2 ? suffix : String(code[..<separator])
-    }
-    guard code.count == 2, code.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) })
-    else {
-      return nil
-    }
-    return code
-  }
-
   static func lookupURL(
     bundleIdentifier: String,
     storeIdentifier: String? = nil,
     country: String,
-    platform: AppStorePlatform = .mac
+    platform: AppStorePlatform = .mac,
+    includesEntity: Bool = true
   ) -> URL? {
     var components = URLComponents(string: "https://itunes.apple.com/lookup")
     var queryItems = [
       URLQueryItem(name: "media", value: "software"),
-      URLQueryItem(
-        name: "entity",
-        value: platform.usesDesktopStoreLookup ? "desktopSoftware" : "software"
-      ),
       URLQueryItem(name: "country", value: country.lowercased()),
     ]
+    if includesEntity {
+      queryItems.insert(
+        URLQueryItem(
+          name: "entity",
+          value: platform.usesDesktopStoreLookup ? "desktopSoftware" : "software"
+        ),
+        at: 1
+      )
+    }
     if let storeIdentifier, !storeIdentifier.isEmpty {
       queryItems.insert(URLQueryItem(name: "id", value: storeIdentifier), at: 0)
     } else {
@@ -150,29 +157,125 @@ struct AppStoreUpdateProvider: Sendable {
     return components?.url
   }
 
-  private static func fetchLookupResult(
-    bundleIdentifier: String,
-    storeIdentifier: String,
-    country: String,
+  static func lookupCandidates(
+    storeIdentifier: String?,
     platform: AppStorePlatform
-  ) async throws -> AppStoreLookupResult? {
+  ) -> [AppStoreLookupCandidate] {
+    var candidates: [AppStoreLookupCandidate] = [
+      AppStoreLookupCandidate(storeIdentifier: nil, includesEntity: true),
+      AppStoreLookupCandidate(storeIdentifier: nil, includesEntity: false),
+    ]
+
+    if let storeIdentifier, !storeIdentifier.isEmpty {
+      candidates.append(
+        AppStoreLookupCandidate(storeIdentifier: storeIdentifier, includesEntity: true)
+      )
+      candidates.append(
+        AppStoreLookupCandidate(storeIdentifier: storeIdentifier, includesEntity: false)
+      )
+    }
+
+    return platform.usesDesktopStoreLookup
+      ? candidates
+      : candidates.filter(\.includesEntity)
+  }
+
+  static func newestResult(
+    in results: [AppStoreLookupResult]
+  ) -> AppStoreLookupResult? {
+    results.reduce(nil) { newest, candidate in
+      guard let newest else { return candidate }
+      return VersionComparator.isNewer(candidate.version, than: newest.version)
+        ? candidate
+        : newest
+    }
+  }
+}
+
+struct AppStoreLookupCandidate: Equatable, Sendable {
+  let storeIdentifier: String?
+  let includesEntity: Bool
+}
+
+enum AppStoreStorefront {
+  static func currentCountryCode() async -> String? {
+    if #available(macOS 12.0, *),
+      let storefront = await Storefront.current
+    {
+      if let countryCode = AppStoreCountryCode.normalized(storefront.countryCode) {
+        return countryCode
+      }
+      if let countryCode = cachedCountryCode(forStorefrontID: storefront.id) {
+        return countryCode
+      }
+    }
+
+    return cachedCountryCode(forStorefrontID: nil)
+  }
+
+  static func cachedCountryCode(forStorefrontID storefrontID: String?) -> String? {
+    let cacheURL = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Caches/com.apple.appstoreagent", isDirectory: true)
+      .appendingPathComponent("storefront-to-country-code.plist")
+
     guard
-      let url = lookupURL(
-        bundleIdentifier: bundleIdentifier,
-        storeIdentifier: storeIdentifier,
-        country: country,
-        platform: platform
+      let data = try? Data(contentsOf: cacheURL),
+      let propertyList = try? PropertyListSerialization.propertyList(
+        from: data,
+        options: [],
+        format: nil
       )
     else {
       return nil
     }
 
-    guard let data = try await UpdateHTTP.successfulData(from: url) else {
-      return nil
+    return countryCode(fromStorefrontCountryCodeCache: propertyList, storefrontID: storefrontID)
+  }
+
+  static func countryCode(
+    fromStorefrontCountryCodeCache propertyList: Any,
+    storefrontID: String?
+  ) -> String? {
+    if let array = propertyList as? [Any] {
+      guard let storefrontID else {
+        return firstCountryCode(in: array)
+      }
+      return arrayContainsStorefrontID(array, storefrontID)
+        ? firstCountryCode(in: array)
+        : nil
     }
 
-    let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
-    return lookup.result(matching: bundleIdentifier, platform: platform)
+    if let dictionary = propertyList as? [String: Any] {
+      if let storefrontID,
+        let value = dictionary[storefrontID] ?? dictionary[normalizedStorefrontID(storefrontID)]
+      {
+        return AppStoreCountryCode.normalized(value as? String)
+      }
+      return firstCountryCode(in: Array(dictionary.values))
+    }
+
+    return nil
+  }
+
+  private static func firstCountryCode(in values: [Any]) -> String? {
+    values.lazy.compactMap { AppStoreCountryCode.normalized($0 as? String) }.first
+  }
+
+  private static func arrayContainsStorefrontID(_ values: [Any], _ storefrontID: String) -> Bool {
+    let normalized = normalizedStorefrontID(storefrontID)
+    return values.contains {
+      if let string = $0 as? String {
+        return normalizedStorefrontID(string) == normalized
+      }
+      if let number = $0 as? NSNumber {
+        return number.stringValue == normalized
+      }
+      return false
+    }
+  }
+
+  private static func normalizedStorefrontID(_ storefrontID: String) -> String {
+    storefrontID.split(separator: "-").first.map(String.init) ?? storefrontID
   }
 }
 
@@ -181,12 +284,13 @@ struct AppStoreLookupResponse: Decodable, Sendable {
 
   func result(
     matching bundleIdentifier: String,
-    platform: AppStorePlatform
+    platform: AppStorePlatform,
+    includesPlatformEntity: Bool = true
   ) -> AppStoreLookupResult? {
-    results.first {
+    AppStoreUpdateProvider.newestResult(in: results.filter {
       $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
-        && $0.supports(platform)
-    }
+        && $0.supports(platform, includesPlatformEntity: includesPlatformEntity)
+    })
   }
 }
 
@@ -199,6 +303,7 @@ struct AppStoreLookupResult: Decodable, Sendable {
   let trackViewURL: String?
   let supportedDevices: [String]?
   let packageByteCount: Int64?
+  let kind: String?
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -210,6 +315,7 @@ struct AppStoreLookupResult: Decodable, Sendable {
     trackViewURL = try container.decodeIfPresent(String.self, forKey: .trackViewURL)
     supportedDevices = try container.decodeIfPresent([String].self, forKey: .supportedDevices)
     packageByteCount = JSONByteCount.decode(container, forKey: .fileSizeBytes)
+    kind = try container.decodeIfPresent(String.self, forKey: .kind)
   }
 
   var supportsMacDesktop: Bool {
@@ -235,9 +341,19 @@ struct AppStoreLookupResult: Decodable, Sendable {
     return supportsIPad ? .iPad : nil
   }
 
-  func supports(_ platform: AppStorePlatform) -> Bool {
+  func supports(
+    _ platform: AppStorePlatform,
+    includesPlatformEntity: Bool = true
+  ) -> Bool {
     switch platform {
     case .mac:
+      if !includesPlatformEntity {
+        if kind?.caseInsensitiveCompare("mac-software") == .orderedSame {
+          return true
+        }
+        return supportsMacDesktop && !supportsIPhone && !supportsIPad
+      }
+
       // The desktopSoftware lookup occasionally omits supportedDevices entirely.
       // Its exact Bundle ID match is still safe to use unless Apple explicitly
       // identifies the result as belonging to another platform.
@@ -259,5 +375,6 @@ struct AppStoreLookupResult: Decodable, Sendable {
     case trackViewURL = "trackViewUrl"
     case supportedDevices
     case fileSizeBytes
+    case kind
   }
 }

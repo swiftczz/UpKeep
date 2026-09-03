@@ -65,9 +65,9 @@ struct HomebrewUpdateProvider: Sendable {
     return existing
   }
 
-  /// Prefer Homebrew when brew itself has an update. Otherwise keep a working
-  /// first-party protocol, and only fall back to Homebrew if that check failed
-  /// or the app has no other protocol.
+  /// Prefer Homebrew when brew itself has an update. Otherwise keep a known
+  /// first-party update that is already available. For installed apps, show
+  /// Homebrew while retaining first-party metadata for release notes and checks.
   static func shouldClaimInstalledCask(
     source: UpdateSource,
     status: UpdateStatus,
@@ -82,20 +82,59 @@ struct HomebrewUpdateProvider: Sendable {
     }
 
     switch status {
-    case .checking:
-      switch source {
-      case .sparkle:
-        return !hasCheckableFeed
-      case .homebrew, .selfManaged:
-        return true
-      case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
-        return false
-      }
-    case .unavailable, .selfManaged:
-      return true
-    case .updateAvailable, .upToDate:
+    case .updateAvailable where source.canBeAlternateUpdateSource && hasCheckableFeed:
       return false
+    case .checking, .unavailable, .selfManaged, .upToDate, .updateAvailable:
+      return true
     }
+  }
+
+  static func keepsKnownFirstPartyInstall(_ application: AppRecord, brewHasUpdate: Bool) -> Bool {
+    application.lastInstalledAt != nil
+      && application.source.canBeAlternateUpdateSource
+      && !application.needsUpdate
+      && !brewHasUpdate
+  }
+
+  static func mergeAlternateCheckResult(
+    _ checked: AppRecord,
+    intoHomebrew application: AppRecord
+  ) -> AppRecord {
+    var merged = application
+    merged.rememberAlternateUpdateSource(from: checked)
+    if merged.homepageURL == nil {
+      merged.homepageURL = checked.homepageURL
+    }
+
+    if checked.needsUpdate && !application.needsUpdate {
+      var alternate = checked
+      alternate.homebrewCaskToken = application.homebrewManagedCaskToken
+      alternate.lastInstalledAt = application.lastInstalledAt
+      return alternate
+    }
+
+    if checked.latestVersion == nil || checked.latestVersion == application.latestVersion {
+      if checked.releaseNotes != nil {
+        merged.releaseNotes = checked.releaseNotes
+      }
+      if checked.releaseNotesURL != nil {
+        merged.releaseNotesURL = checked.releaseNotesURL
+      }
+      if checked.releaseDate != nil {
+        merged.releaseDate = checked.releaseDate
+      }
+    }
+
+    if merged.latestVersion == nil {
+      merged.latestVersion = checked.latestVersion
+    }
+    if merged.latestBuildVersion == nil {
+      merged.latestBuildVersion = checked.latestBuildVersion
+    }
+    if merged.packageByteCount == nil {
+      merged.packageByteCount = checked.packageByteCount
+    }
+    return merged
   }
 
   static func applicationPaths(inPackageFileList fileList: String) -> [String] {
@@ -313,8 +352,14 @@ struct HomebrewSnapshot {
         build: application.buildVersion
       )
 
+    let detectedApplication = application
     var application = application
+    application.rememberAlternateUpdateSource(from: detectedApplication)
     application.homebrewCaskToken = cask.token
+
+    if HomebrewUpdateProvider.keepsKnownFirstPartyInstall(application, brewHasUpdate: brewHasUpdate) {
+      return application
+    }
 
     guard
       HomebrewUpdateProvider.shouldClaimInstalledCask(

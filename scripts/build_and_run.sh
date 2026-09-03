@@ -4,6 +4,8 @@ set -euo pipefail
 MODE="${1:-run}"
 APP_NAME="Upkeep"
 BUNDLE_ID="com.chengzhong.Upkeep"
+HELPER_NAME="UpkeepPrivilegedHelper"
+HELPER_LABEL="com.chengzhong.Upkeep.PrivilegedHelper"
 MIN_SYSTEM_VERSION="26.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,8 +14,11 @@ APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+APP_LAUNCH_DAEMONS="$APP_CONTENTS/Library/LaunchDaemons"
 APP_BINARY="$APP_MACOS/$APP_NAME"
+HELPER_BINARY="$APP_MACOS/$HELPER_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+HELPER_PLIST="$APP_LAUNCH_DAEMONS/$HELPER_LABEL.plist"
 ICON_SOURCE="$ROOT_DIR/Resources/AppIcon.icns"
 THIRD_PARTY_NOTICES_SOURCE="$ROOT_DIR/THIRD_PARTY_NOTICES.md"
 STAGING_DIR=""
@@ -88,6 +93,30 @@ PLIST
   plutil -lint "$INFO_PLIST" >/dev/null
 }
 
+write_helper_plist() {
+  cat >"$HELPER_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$HELPER_LABEL</string>
+  <key>BundleProgram</key>
+  <string>Contents/MacOS/$HELPER_NAME</string>
+  <key>MachServices</key>
+  <dict>
+    <key>$HELPER_LABEL</key>
+    <true/>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
+  plutil -lint "$HELPER_PLIST" >/dev/null
+}
+
 development_signing_identity() {
   if [[ -n "${DEVELOPMENT_SIGN_IDENTITY:-}" ]]; then
     echo "$DEVELOPMENT_SIGN_IDENTITY"
@@ -116,6 +145,7 @@ sign_development_app() {
 
 package_app_from_binary() {
   local build_binary="$1"
+  local helper_build_binary="$2"
 
   case "$APP_BUNDLE" in
     "$DIST_DIR"/*.app) ;;
@@ -123,9 +153,11 @@ package_app_from_binary() {
   esac
 
   rm -rf "$APP_BUNDLE"
-  mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+  mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_LAUNCH_DAEMONS"
   ditto "$build_binary" "$APP_BINARY"
   chmod +x "$APP_BINARY"
+  ditto "$helper_build_binary" "$HELPER_BINARY"
+  chmod +x "$HELPER_BINARY"
 
   if [[ -f "$ICON_SOURCE" ]]; then
     ditto "$ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
@@ -136,6 +168,7 @@ package_app_from_binary() {
   fi
 
   write_info_plist
+  write_helper_plist
   sign_development_app
 }
 
@@ -213,12 +246,15 @@ build_only() {
 
   echo "==> 编译 ${APP_NAME}（${arch}，版本 ${APP_VERSION}，构建 ${APP_BUILD}）"
   swift build --package-path "$ROOT_DIR" --product "$APP_NAME" "${RELEASE_BUILD_ARGS[@]}"
+  swift build --package-path "$ROOT_DIR" --product "$HELPER_NAME" "${RELEASE_BUILD_ARGS[@]}"
 
   local build_dir
   local build_binary
+  local helper_build_binary
   build_dir="$(swift build --package-path "$ROOT_DIR" --show-bin-path "${RELEASE_BUILD_ARGS[@]}")"
   build_binary="$build_dir/$APP_NAME"
-  package_app_from_binary "$build_binary"
+  helper_build_binary="$build_dir/$HELPER_NAME"
+  package_app_from_binary "$build_binary" "$helper_build_binary"
 
   if [[ $should_sign -eq 1 ]]; then
     sign_app
@@ -234,10 +270,11 @@ build_only() {
 build_debug_app() {
   mkdir -p "$DIST_DIR"
   swift build --package-path "$ROOT_DIR" --product "$APP_NAME"
+  swift build --package-path "$ROOT_DIR" --product "$HELPER_NAME"
 
   local build_dir
   build_dir="$(swift build --package-path "$ROOT_DIR" --show-bin-path)"
-  package_app_from_binary "$build_dir/$APP_NAME"
+  package_app_from_binary "$build_dir/$APP_NAME" "$build_dir/$HELPER_NAME"
 }
 
 quit_running_app() {

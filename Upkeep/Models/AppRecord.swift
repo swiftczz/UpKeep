@@ -5,13 +5,14 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   let name: String
   let bundleIdentifier: String
   let applicationURL: URL
-  let currentVersion: String
-  let buildVersion: String?
+  var currentVersion: String
+  var buildVersion: String?
   let applicationModificationDate: Date?
 
   var source: UpdateSource
   var appStorePlatform: AppStorePlatform?
   var appStoreCountryCode: String?
+  var appStoreAccountCountryCode: String?
   var status: UpdateStatus
   var latestVersion: String?
   var latestBuildVersion: String?
@@ -21,6 +22,10 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var homepageURL: URL?
   var releaseNotesURL: URL?
   var sourceIdentifier: String?
+  var alternateUpdateSource: UpdateSource?
+  var alternateSourceURL: URL?
+  var alternateSourceIdentifier: String?
+  var alternateHomepageURL: URL?
   var homebrewCaskToken: String?
   var packageByteCount: Int64?
   var canAutomaticallyUpdate: Bool
@@ -36,6 +41,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     source: UpdateSource = .selfManaged,
     appStorePlatform: AppStorePlatform? = nil,
     appStoreCountryCode: String? = nil,
+    appStoreAccountCountryCode: String? = nil,
     status: UpdateStatus = .checking,
     latestVersion: String? = nil,
     latestBuildVersion: String? = nil,
@@ -45,6 +51,10 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     homepageURL: URL? = nil,
     releaseNotesURL: URL? = nil,
     sourceIdentifier: String? = nil,
+    alternateUpdateSource: UpdateSource? = nil,
+    alternateSourceURL: URL? = nil,
+    alternateSourceIdentifier: String? = nil,
+    alternateHomepageURL: URL? = nil,
     homebrewCaskToken: String? = nil,
     packageByteCount: Int64? = nil,
     canAutomaticallyUpdate: Bool = false,
@@ -60,6 +70,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.source = source
     self.appStorePlatform = appStorePlatform
     self.appStoreCountryCode = appStoreCountryCode
+    self.appStoreAccountCountryCode = appStoreAccountCountryCode
     self.status = status
     self.latestVersion = latestVersion
     self.latestBuildVersion = latestBuildVersion
@@ -69,6 +80,10 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.homepageURL = homepageURL
     self.releaseNotesURL = releaseNotesURL
     self.sourceIdentifier = sourceIdentifier
+    self.alternateUpdateSource = alternateUpdateSource
+    self.alternateSourceURL = alternateSourceURL
+    self.alternateSourceIdentifier = alternateSourceIdentifier
+    self.alternateHomepageURL = alternateHomepageURL
     self.homebrewCaskToken = homebrewCaskToken
     self.packageByteCount = packageByteCount
     self.canAutomaticallyUpdate = canAutomaticallyUpdate
@@ -87,6 +102,7 @@ extension AppRecord: Codable {
     case source
     case appStorePlatform
     case appStoreCountryCode
+    case appStoreAccountCountryCode
     case status
     case latestVersion
     case latestBuildVersion
@@ -96,6 +112,10 @@ extension AppRecord: Codable {
     case homepageURL
     case releaseNotesURL
     case sourceIdentifier
+    case alternateUpdateSource
+    case alternateSourceURL
+    case alternateSourceIdentifier
+    case alternateHomepageURL
     case homebrewCaskToken
     case packageByteCount
     case canAutomaticallyUpdate
@@ -117,6 +137,10 @@ extension AppRecord: Codable {
       source: try container.decode(UpdateSource.self, forKey: .source),
       appStorePlatform: try container.decodeIfPresent(AppStorePlatform.self, forKey: .appStorePlatform),
       appStoreCountryCode: try container.decodeIfPresent(String.self, forKey: .appStoreCountryCode),
+      appStoreAccountCountryCode: try container.decodeIfPresent(
+        String.self,
+        forKey: .appStoreAccountCountryCode
+      ),
       status: try container.decode(UpdateStatus.self, forKey: .status),
       latestVersion: try container.decodeIfPresent(String.self, forKey: .latestVersion),
       latestBuildVersion: try container.decodeIfPresent(String.self, forKey: .latestBuildVersion),
@@ -126,6 +150,16 @@ extension AppRecord: Codable {
       homepageURL: try container.decodeIfPresent(URL.self, forKey: .homepageURL),
       releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
       sourceIdentifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
+      alternateUpdateSource: try container.decodeIfPresent(
+        UpdateSource.self,
+        forKey: .alternateUpdateSource
+      ),
+      alternateSourceURL: try container.decodeIfPresent(URL.self, forKey: .alternateSourceURL),
+      alternateSourceIdentifier: try container.decodeIfPresent(
+        String.self,
+        forKey: .alternateSourceIdentifier
+      ),
+      alternateHomepageURL: try container.decodeIfPresent(URL.self, forKey: .alternateHomepageURL),
       homebrewCaskToken: try container.decodeIfPresent(String.self, forKey: .homebrewCaskToken),
       packageByteCount: try container.decodeIfPresent(Int64.self, forKey: .packageByteCount),
       canAutomaticallyUpdate: try container.decodeIfPresent(
@@ -144,13 +178,52 @@ extension AppRecord {
       return true
     case .sparkle:
       return sourceURL != nil
-    case .homebrew, .selfManaged:
+    case .homebrew:
+      return alternateUpdateCheckRecord != nil
+    case .selfManaged:
       return false
     }
   }
 
   var homebrewManagedCaskToken: String? {
     homebrewCaskToken ?? (source == .homebrew ? sourceIdentifier : nil)
+  }
+
+  var alternateUpdateCheckRecord: AppRecord? {
+    guard let alternateUpdateSource,
+      alternateUpdateSource != .homebrew,
+      alternateUpdateSource != .selfManaged,
+      alternateUpdateSource != .appStore
+    else {
+      return nil
+    }
+
+    switch alternateUpdateSource {
+    case .sparkle where alternateSourceURL == nil:
+      return nil
+    default:
+      break
+    }
+
+    var application = self
+    application.source = alternateUpdateSource
+    application.sourceURL = alternateSourceURL
+    application.sourceIdentifier = alternateSourceIdentifier
+    application.homepageURL = alternateHomepageURL ?? homepageURL
+    application.status = .checking
+    application.latestVersion = nil
+    application.latestBuildVersion = nil
+    application.packageByteCount = nil
+    application.canAutomaticallyUpdate = false
+    return application
+  }
+
+  mutating func rememberAlternateUpdateSource(from application: AppRecord) {
+    guard application.source.canBeAlternateUpdateSource else { return }
+    alternateUpdateSource = application.source
+    alternateSourceURL = application.sourceURL
+    alternateSourceIdentifier = application.sourceIdentifier
+    alternateHomepageURL = application.homepageURL
   }
 
   var needsUpdate: Bool {
@@ -162,6 +235,18 @@ extension AppRecord {
     case .upToDate, .selfManaged:
       return false
     }
+  }
+
+  var requiresAppStoreUpdatePageHandoff: Bool {
+    guard source == .appStore else { return false }
+    if appStorePlatform != .mac { return true }
+    guard
+      let applicationCountryCode = AppStoreCountryCode.normalized(appStoreCountryCode),
+      let accountCountryCode = AppStoreCountryCode.normalized(appStoreAccountCountryCode)
+    else {
+      return false
+    }
+    return applicationCountryCode != accountCountryCode
   }
 
   var sourceTitle: String {
@@ -196,12 +281,13 @@ extension AppRecord {
   }
 
   private func matchesSourceSearch(_ query: String) -> Bool {
-    let terms: [String]
+    let primaryTerms: [String]
     if source == .appStore {
-      terms = [source.title, sourceTitle]
+      primaryTerms = [source.title, sourceTitle]
     } else {
-      terms = source.searchTerms
+      primaryTerms = source.searchTerms
     }
+    let terms = primaryTerms + (alternateUpdateSource?.searchTerms ?? [])
     return terms.contains { UpdateSource.searchTerm($0, matches: query) }
   }
 
@@ -332,6 +418,45 @@ enum AppStorePlatform: String, Hashable, Sendable, Codable {
   }
 }
 
+enum AppStoreCountryCode {
+  static func normalized(_ raw: String?) -> String? {
+    guard let raw else { return nil }
+    var code = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if let separator = code.firstIndex(where: { $0 == "-" || $0 == "_" }) {
+      let suffix = String(code[code.index(after: separator)...])
+      code = suffix.count == 2 ? suffix : String(code[..<separator])
+    }
+
+    guard code.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) }) else {
+      return nil
+    }
+    if code.count == 2 {
+      return code
+    }
+    if code.count == 3 {
+      return alpha2CountryCode(forAlpha3: code)
+    }
+    return nil
+  }
+
+  private static func alpha2CountryCode(forAlpha3 code: String) -> String? {
+    let locale = Locale(identifier: "en_US_POSIX")
+    guard let alpha3Name = locale.localizedString(forRegionCode: code.uppercased()) else {
+      return nil
+    }
+
+    return Locale.Region.isoRegions.lazy.map(\.identifier).first { identifier in
+      guard identifier.count == 2,
+        identifier.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) }),
+        let name = locale.localizedString(forRegionCode: identifier)
+      else {
+        return false
+      }
+      return name.caseInsensitiveCompare(alpha3Name) == .orderedSame
+    }?.lowercased()
+  }
+}
+
 enum UpdateSource: String, Hashable, Sendable, Codable, CaseIterable {
   case appStore
   case homebrew
@@ -391,6 +516,15 @@ enum UpdateSource: String, Hashable, Sendable, Codable, CaseIterable {
       ["GitHub", "GitHub Releases"]
     case .selfManaged:
       ["未知", "Unknown"]
+    }
+  }
+
+  var canBeAlternateUpdateSource: Bool {
+    switch self {
+    case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
+      return true
+    case .appStore, .homebrew, .selfManaged:
+      return false
     }
   }
 

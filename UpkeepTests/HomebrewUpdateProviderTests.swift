@@ -79,18 +79,18 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertTrue(claim(.githubReleases, .upToDate, feed: true, brew: true))
   }
 
-  func testKeepsWorkingFirstPartyProtocolWhenBrewHasNoUpdate() {
-    XCTAssertFalse(claim(.electronBuilder, .checking, feed: true, brew: false))
+  func testClaimsInstalledCaskWhenBrewHasNoUpdate() {
+    XCTAssertTrue(claim(.electronBuilder, .checking, feed: true, brew: false))
     XCTAssertFalse(claim(.electronBuilder, .updateAvailable, feed: true, brew: false))
-    XCTAssertFalse(claim(.vscodeUpdater, .checking, feed: true, brew: false))
+    XCTAssertTrue(claim(.vscodeUpdater, .checking, feed: true, brew: false))
     XCTAssertFalse(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: false))
-    XCTAssertFalse(claim(.sparkle, .upToDate, feed: true, brew: false))
-    XCTAssertFalse(claim(.tauri, .checking, feed: true, brew: false))
+    XCTAssertTrue(claim(.sparkle, .upToDate, feed: true, brew: false))
+    XCTAssertTrue(claim(.tauri, .checking, feed: true, brew: false))
     XCTAssertFalse(claim(.releaseJSON, .updateAvailable, feed: true, brew: false))
-    XCTAssertFalse(claim(.githubReleases, .checking, feed: true, brew: false))
+    XCTAssertTrue(claim(.githubReleases, .checking, feed: true, brew: false))
   }
 
-  func testRecordsCaskTokenWithoutClaimingWorkingSparkleFeed() throws {
+  func testClaimsCaskAndRetainsSparkleFeedForChecks() throws {
     let info = try JSONDecoder().decode(
       BrewInfoResponse.self,
       from: Data(
@@ -135,9 +135,124 @@ final class HomebrewUpdateProviderTests: XCTestCase {
 
     let enriched = snapshot.applying(to: application)
 
-    XCTAssertEqual(enriched.source, .sparkle)
-    XCTAssertNil(enriched.sourceIdentifier)
+    XCTAssertEqual(enriched.source, .homebrew)
+    XCTAssertEqual(enriched.sourceIdentifier, "screendrop")
+    XCTAssertEqual(enriched.alternateUpdateSource, .sparkle)
+    XCTAssertEqual(enriched.alternateSourceURL, URL(string: "https://example.com/appcast.xml"))
     XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
+  }
+
+  func testKeepsFirstPartyUpdateAvailableWhenBrewHasNoUpdate() throws {
+    let info = try JSONDecoder().decode(
+      BrewInfoResponse.self,
+      from: Data(
+        """
+        {
+          "casks": [
+            {
+              "token": "screendrop",
+              "version": "0.31.3",
+              "homepage": "https://example.com/screendrop",
+              "url": null,
+              "artifacts": [
+                {
+                  "app": ["Screendrop.app"],
+                  "target": "/Applications/Screendrop.app"
+                }
+              ]
+            }
+          ]
+        }
+        """.utf8
+      )
+    )
+    let outdated = try JSONDecoder().decode(
+      BrewOutdatedResponse.self,
+      from: Data(#"{"casks":[]}"#.utf8)
+    )
+    let snapshot = HomebrewSnapshot(
+      info: info,
+      outdated: outdated,
+      packageApplicationPaths: [:]
+    )
+    let application = AppRecord(
+      name: "Screendrop",
+      bundleIdentifier: "com.fayazahmed.Screendrop",
+      applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
+      currentVersion: "0.31.3",
+      source: .sparkle,
+      status: .updateAvailable,
+      latestVersion: "0.32.0",
+      sourceURL: URL(string: "https://example.com/appcast.xml")
+    )
+
+    let enriched = snapshot.applying(to: application)
+
+    XCTAssertEqual(enriched.source, .sparkle)
+    XCTAssertEqual(enriched.latestVersion, "0.32.0")
+    XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
+  }
+
+  func testMergesReleaseNotesFromAlternateSourceIntoHomebrewRecord() {
+    var homebrew = AppRecord(
+      name: "Termio",
+      bundleIdentifier: "sh.termio.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+      currentVersion: "0.48.0",
+      source: .homebrew,
+      status: .upToDate,
+      latestVersion: "0.48.0",
+      sourceIdentifier: "termio",
+      homebrewCaskToken: "termio"
+    )
+    homebrew.alternateUpdateSource = .sparkle
+    homebrew.alternateSourceURL = URL(string: "https://downloads.termio.sh/appcast.xml")
+
+    var checked = homebrew.alternateUpdateCheckRecord!
+    checked.status = .upToDate
+    checked.latestVersion = "0.48.0"
+    checked.releaseNotes = "Termio release notes"
+    checked.releaseNotesURL = URL(string: "https://example.com/releases/0.48.0")
+
+    let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(checked, intoHomebrew: homebrew)
+
+    XCTAssertEqual(merged.source, .homebrew)
+    XCTAssertEqual(merged.releaseNotes, "Termio release notes")
+    XCTAssertEqual(merged.releaseNotesURL, URL(string: "https://example.com/releases/0.48.0"))
+    XCTAssertEqual(merged.alternateUpdateSource, .sparkle)
+  }
+
+  func testAlternateUpdateWinsWhenBrewIsCurrent() {
+    let homebrew = AppRecord(
+      name: "Termio",
+      bundleIdentifier: "sh.termio.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+      currentVersion: "0.48.0",
+      source: .homebrew,
+      status: .upToDate,
+      latestVersion: "0.48.0",
+      sourceIdentifier: "termio",
+      homebrewCaskToken: "termio"
+    )
+    var checked = AppRecord(
+      name: "Termio",
+      bundleIdentifier: "sh.termio.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+      currentVersion: "0.48.0",
+      source: .sparkle,
+      status: .updateAvailable,
+      latestVersion: "0.49.0",
+      sourceURL: URL(string: "https://downloads.termio.sh/appcast.xml"),
+      canAutomaticallyUpdate: true
+    )
+    checked.releaseNotes = "New first-party release"
+
+    let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(checked, intoHomebrew: homebrew)
+
+    XCTAssertEqual(merged.source, .sparkle)
+    XCTAssertEqual(merged.latestVersion, "0.49.0")
+    XCTAssertEqual(merged.homebrewCaskToken, "termio")
+    XCTAssertEqual(merged.releaseNotes, "New first-party release")
   }
 
   func testFallsBackToHomebrewWhenFirstPartyCheckFails() {

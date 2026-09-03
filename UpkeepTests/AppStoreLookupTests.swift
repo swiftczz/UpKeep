@@ -28,7 +28,7 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertEqual(query["country"], "cn")
   }
 
-  func testLookupURLPrefersStoreIdentifierForMacDesktopSoftware() throws {
+  func testLookupURLCanRequestMacDesktopSoftwareByStoreIdentifier() throws {
     let url = try XCTUnwrap(
       AppStoreUpdateProvider.lookupURL(
         bundleIdentifier: "tech.baye.OpenCat",
@@ -48,6 +48,56 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertNil(query["bundleId"])
     XCTAssertEqual(query["entity"], "desktopSoftware")
     XCTAssertEqual(query["country"], "cn")
+  }
+
+  func testLookupURLCanOmitEntityForGenericFallback() throws {
+    let url = try XCTUnwrap(
+      AppStoreUpdateProvider.lookupURL(
+        bundleIdentifier: "com.tencent.tenvideo",
+        country: "CN",
+        platform: .mac,
+        includesEntity: false
+      )
+    )
+    let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let query = Dictionary(
+      uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+        item.value.map { (item.name, $0) }
+      }
+    )
+
+    XCTAssertEqual(query["bundleId"], "com.tencent.tenvideo")
+    XCTAssertEqual(query["media"], "software")
+    XCTAssertNil(query["entity"])
+    XCTAssertEqual(query["country"], "cn")
+  }
+
+  func testMacLookupCandidatesPreferBundleIdentifierBeforeStoreIdentifier() {
+    XCTAssertEqual(
+      AppStoreUpdateProvider.lookupCandidates(
+        storeIdentifier: "1231336508",
+        platform: .mac
+      ),
+      [
+        AppStoreLookupCandidate(storeIdentifier: nil, includesEntity: true),
+        AppStoreLookupCandidate(storeIdentifier: nil, includesEntity: false),
+        AppStoreLookupCandidate(storeIdentifier: "1231336508", includesEntity: true),
+        AppStoreLookupCandidate(storeIdentifier: "1231336508", includesEntity: false),
+      ]
+    )
+  }
+
+  func testWrappedAppLookupCandidatesStayPlatformSpecific() {
+    XCTAssertEqual(
+      AppStoreUpdateProvider.lookupCandidates(
+        storeIdentifier: "698570469",
+        platform: .iPhone
+      ),
+      [
+        AppStoreLookupCandidate(storeIdentifier: nil, includesEntity: true),
+        AppStoreLookupCandidate(storeIdentifier: "698570469", includesEntity: true),
+      ]
+    )
   }
 
   func testLookupURLRequestsIPhoneSoftwareByStoreIdentifier() throws {
@@ -103,6 +153,118 @@ final class AppStoreLookupTests: XCTestCase {
 
     XCTAssertEqual(result.version, "8.7.0")
     XCTAssertTrue(result.supportsMacDesktop)
+  }
+
+  func testSelectsNewestReleaseAcrossInconsistentCatalogResponses() throws {
+    let staleResponse = try JSONDecoder().decode(
+      AppStoreLookupResponse.self,
+      from: Data(
+        """
+        {
+          "results": [
+            {
+              "bundleId": "com.rainbow.quill",
+              "trackId": 6670330650,
+              "version": "2.0.0",
+              "supportedDevices": ["MacDesktop-MacDesktop"]
+            }
+          ]
+        }
+        """.utf8
+      )
+    )
+    let currentResponse = try JSONDecoder().decode(
+      AppStoreLookupResponse.self,
+      from: Data(
+        """
+        {
+          "results": [
+            {
+              "bundleId": "com.rainbow.quill",
+              "trackId": 6670330650,
+              "version": "2.0.1",
+              "kind": "mac-software",
+              "supportedDevices": ["MacDesktop-MacDesktop"]
+            }
+          ]
+        }
+        """.utf8
+      )
+    )
+
+    let stale = try XCTUnwrap(
+      staleResponse.result(matching: "com.rainbow.quill", platform: .mac)
+    )
+    let current = try XCTUnwrap(
+      currentResponse.result(
+        matching: "com.rainbow.quill",
+        platform: .mac,
+        includesPlatformEntity: false
+      )
+    )
+
+    XCTAssertEqual(
+      AppStoreUpdateProvider.newestResult(in: [stale, current])?.version,
+      "2.0.1"
+    )
+  }
+
+  func testGenericLookupRejectsIOSReleaseThatAlsoListsMacDesktop() throws {
+    let data = Data(
+      """
+      {
+        "results": [
+          {
+            "bundleId": "com.baidu.netdisk",
+            "trackId": 547166701,
+            "version": "13.32.2",
+            "kind": "software",
+            "supportedDevices": [
+              "MacDesktop-MacDesktop",
+              "iPhone17-iPhone17",
+              "iPadA16-iPadA16"
+            ]
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let response = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
+
+    XCTAssertNil(
+      response.result(
+        matching: "com.baidu.netdisk",
+        platform: .mac,
+        includesPlatformEntity: false
+      )
+    )
+  }
+
+  func testGenericLookupAcceptsNativeMacReleaseWithoutSupportedDevices() throws {
+    let data = Data(
+      """
+      {
+        "results": [
+          {
+            "bundleId": "com.rainbow.quill",
+            "trackId": 6670330650,
+            "version": "2.0.1",
+            "kind": "mac-software"
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let response = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
+    let result = response.result(
+      matching: "com.rainbow.quill",
+      platform: .mac,
+      includesPlatformEntity: false
+    )
+
+    XCTAssertEqual(result?.version, "2.0.1")
   }
 
   func testRejectsIOSOnlyResult() throws {
@@ -203,6 +365,67 @@ final class AppStoreLookupTests: XCTestCase {
     )
 
     XCTAssertEqual(AppStoreUpdateProvider.lookupCountries(for: application).first, "us")
+  }
+
+  func testAppStoreCountryMismatchUsesUpdatePageHandoff() {
+    let application = AppRecord(
+      name: "Clash",
+      bundleIdentifier: "com.hako.network",
+      applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
+      currentVersion: "1.0.6",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "us",
+      appStoreAccountCountryCode: "CHN",
+      status: .updateAvailable,
+      latestVersion: "1.0.7",
+      sourceIdentifier: "6794257189"
+    )
+
+    XCTAssertTrue(application.requiresAppStoreUpdatePageHandoff)
+  }
+
+  func testAppStoreCountryMatchDoesNotUseUpdatePageHandoff() {
+    let application = AppRecord(
+      name: "Sequel Ace",
+      bundleIdentifier: "com.sequel-ace.sequel-ace",
+      applicationURL: URL(fileURLWithPath: "/Applications/Sequel Ace.app"),
+      currentVersion: "5.3.1",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "us",
+      appStoreAccountCountryCode: "USA",
+      status: .updateAvailable,
+      latestVersion: "5.4.0",
+      sourceIdentifier: "1518036000"
+    )
+
+    XCTAssertFalse(application.requiresAppStoreUpdatePageHandoff)
+  }
+
+  func testNormalizesStoreKitAlpha3CountryCode() {
+    XCTAssertEqual(AppStoreCountryCode.normalized("USA"), "us")
+    XCTAssertEqual(AppStoreCountryCode.normalized("CHN"), "cn")
+  }
+
+  func testStorefrontCacheReadsArrayCountryCode() {
+    XCTAssertEqual(
+      AppStoreStorefront.countryCode(
+        fromStorefrontCountryCodeCache: [143465, "cn"],
+        storefrontID: nil
+      ),
+      "cn"
+    )
+  }
+
+  func testStorefrontCacheMatchesStorefrontIDWithoutSuffix() {
+    XCTAssertEqual(
+      AppStoreStorefront.countryCode(
+        fromStorefrontCountryCodeCache: ["143441": "us"],
+        storefrontID: "143441-1,29"
+      ),
+      "us"
+    )
   }
 
   func testSelectsIPhoneReleaseForWrappedApplication() throws {

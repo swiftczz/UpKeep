@@ -80,6 +80,20 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
   }
 
   func check(_ application: AppRecord) async -> AppRecord {
+    if application.source == .homebrew,
+      let alternate = application.alternateUpdateCheckRecord
+    {
+      let checked = await checkDirectSource(alternate)
+      return HomebrewUpdateProvider.mergeAlternateCheckResult(
+        checked,
+        intoHomebrew: application
+      )
+    }
+
+    return await checkDirectSource(application)
+  }
+
+  private func checkDirectSource(_ application: AppRecord) async -> AppRecord {
     switch application.source {
     case .appStore:
       return await appStore.check(application)

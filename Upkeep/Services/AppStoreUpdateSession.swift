@@ -11,6 +11,9 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     PrivateFrameworks.load() != nil
   }
 
+  private static let fallbackInstallLock = NSLock()
+  nonisolated(unsafe) private static var fallbackInstallAuthorization: AuthorizationRef?
+
   private var adamID: UInt64 = 0
   private var applicationURL: URL?
   private var progressHandler: (@Sendable (UpdateProgress) -> Void)?
@@ -22,6 +25,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
   private var receiptHardLinkURL: URL?
   private var selfRetainer: AppStoreUpdateSession?
   private var isFinished = false
+  private var purchaseHasCompleted = false
   private let finishLock = NSLock()
 
   func startUpdate(
@@ -57,6 +61,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     completionHandler = completion
     selfRetainer = self
     isFinished = false
+    purchaseHasCompleted = false
 
     guard let queueClass = NSClassFromString("CKDownloadQueue"),
       let queue = ObjC.call(queueClass, "sharedDownloadQueue")
@@ -97,12 +102,14 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       }
 
       let downloads = (response as? NSObject)?.value(forKey: "downloads") as? [Any]
-      if downloads?.isEmpty != false {
+      guard downloads?.isEmpty == false else {
         self.complete(
           installedPath: nil,
           error: Self.bridgeError(4, "App Store 没有开始下载此更新。")
         )
+        return
       }
+      self.purchaseHasCompleted = true
     }
     ObjC.performPurchase(controller, purchase: purchase, completion: purchaseCompletion)
   }
@@ -186,7 +193,19 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
   private func downloadMatchesSession(_ download: Any) -> Bool {
     let metadata = (download as AnyObject).value(forKey: "metadata") as? NSObject
     let itemIdentifier = metadata?.value(forKey: "itemIdentifier") as? NSNumber
-    return itemIdentifier?.uint64Value == adamID
+    return Self.downloadEventMatchesSession(
+      purchaseHasCompleted: purchaseHasCompleted,
+      expectedAdamID: adamID,
+      itemIdentifier: itemIdentifier?.uint64Value
+    )
+  }
+
+  static func downloadEventMatchesSession(
+    purchaseHasCompleted: Bool,
+    expectedAdamID: UInt64,
+    itemIdentifier: UInt64?
+  ) -> Bool {
+    purchaseHasCompleted && itemIdentifier == expectedAdamID
   }
 
   private func refreshArtifactHardLinks() {
@@ -266,7 +285,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     }
 
     let hardLinkURL = temporaryDirectory.appendingPathComponent(
-      "\(adamID)-\(sourceURL.lastPathComponent)"
+      Self.retainedArtifactFileName(for: sourceURL)
     )
     do {
       try FileManager.default.linkItem(at: sourceURL, to: hardLinkURL)
@@ -275,6 +294,10 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       try? FileManager.default.removeItem(at: temporaryDirectory)
       return nil
     }
+  }
+
+  static func retainedArtifactFileName(for sourceURL: URL) -> String {
+    sourceURL.lastPathComponent
   }
 
   private func complete(installedPath: String?, error: NSError?) {
@@ -325,35 +348,26 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     receiptURL: URL,
     applicationURL: URL
   ) -> NSError? {
-    var authorization: AuthorizationRef?
-    var status = AuthorizationCreate(nil, nil, [], &authorization)
-    guard status == errAuthorizationSuccess, let authorization else {
-      return bridgeError(Int(status), "无法创建管理员授权请求。")
-    }
-    defer { AuthorizationFree(authorization, []) }
-
-    status = kAuthorizationRightExecute.withCString { name in
-      var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
-      return withUnsafeMutablePointer(to: &item) { itemPointer in
-        var rights = AuthorizationRights(count: 1, items: itemPointer)
-        return AuthorizationCopyRights(
-          authorization,
-          &rights,
-          nil,
-          [.interactionAllowed, .preAuthorize, .extendRights],
-          nil
-        )
-      }
+    switch AppStorePrivilegedInstaller.installDownloadedPackage(
+      packageURL: packageURL,
+      receiptURL: receiptURL,
+      applicationURL: applicationURL
+    ) {
+    case .installed:
+      return nil
+    case .failed(let error):
+      return error
+    case .unavailable:
+      break
     }
 
-    if status != errAuthorizationSuccess {
-      let message =
-        status == errAuthorizationCanceled
-        ? "已取消管理员授权。"
-        : "未获得安装更新所需的管理员权限。"
-      return bridgeError(Int(status), message)
-    }
+    fallbackInstallLock.lock()
+    defer { fallbackInstallLock.unlock() }
 
+    let authorizationResult = cachedFallbackInstallAuthorization()
+    guard let authorization = authorizationResult.authorization else {
+      return authorizationResult.error
+    }
     guard let execute = authorizationExecuteWithPrivileges else {
       return bridgeError(1, "当前系统不支持 Upkeep 的 App Store 更新能力。")
     }
@@ -381,7 +395,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     ]
 
     var output = ""
-    status = withCArgumentVector(arguments) { argv in
+    let status = withCArgumentVector(arguments) { argv in
       var pipe: UnsafeMutablePointer<FILE>?
       let result = "/bin/sh".withCString { path in
         execute(authorization, path, [], argv, &pipe)
@@ -400,6 +414,64 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       return bridgeError(3, message)
     }
     return nil
+  }
+
+  private static func cachedFallbackInstallAuthorization() -> (
+    authorization: AuthorizationRef?, error: NSError?
+  ) {
+    if let authorization = fallbackInstallAuthorization {
+      let status = copyExecuteRight(
+        for: authorization,
+        flags: [.extendRights]
+      )
+      if status == errAuthorizationSuccess {
+        return (authorization, nil)
+      }
+      AuthorizationFree(authorization, [])
+      fallbackInstallAuthorization = nil
+    }
+
+    var authorization: AuthorizationRef?
+    var status = AuthorizationCreate(nil, nil, [], &authorization)
+    guard status == errAuthorizationSuccess, let authorization else {
+      return (nil, bridgeError(Int(status), "无法创建管理员授权请求。"))
+    }
+
+    status = copyExecuteRight(
+      for: authorization,
+      flags: [.interactionAllowed, .preAuthorize, .extendRights]
+    )
+
+    if status != errAuthorizationSuccess {
+      AuthorizationFree(authorization, [])
+      let message =
+        status == errAuthorizationCanceled
+        ? "已取消管理员授权。"
+        : "未获得安装更新所需的管理员权限。"
+      return (nil, bridgeError(Int(status), message))
+    }
+
+    fallbackInstallAuthorization = authorization
+    return (authorization, nil)
+  }
+
+  private static func copyExecuteRight(
+    for authorization: AuthorizationRef,
+    flags: AuthorizationFlags
+  ) -> OSStatus {
+    kAuthorizationRightExecute.withCString { name in
+      var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
+      return withUnsafeMutablePointer(to: &item) { itemPointer in
+        var rights = AuthorizationRights(count: 1, items: itemPointer)
+        return AuthorizationCopyRights(
+          authorization,
+          &rights,
+          nil,
+          flags,
+          nil
+        )
+      }
+    }
   }
 
   private static func bridgeError(

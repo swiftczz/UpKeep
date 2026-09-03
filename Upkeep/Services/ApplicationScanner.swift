@@ -2,13 +2,23 @@ import Foundation
 
 protocol ApplicationScanning: Sendable {
   func scan() async -> [AppRecord]
+  func scanInstalledApplications(reusing previousApplications: [AppRecord]) async -> [AppRecord]
   func scan(reusing previousApplications: [AppRecord]) async -> [AppRecord]
 }
 
 extension ApplicationScanning {
+  func scanInstalledApplications(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
+    await scan(reusing: previousApplications)
+  }
+
   func scan(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
     await scan()
   }
+}
+
+private enum SourceDetectionMode {
+  case installedOnly
+  case full
 }
 
 struct ApplicationScanner: ApplicationScanning {
@@ -16,7 +26,18 @@ struct ApplicationScanner: ApplicationScanning {
     await scan(reusing: [])
   }
 
+  func scanInstalledApplications(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
+    await scan(reusing: previousApplications, sourceDetection: .installedOnly)
+  }
+
   func scan(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
+    await scan(reusing: previousApplications, sourceDetection: .full)
+  }
+
+  private func scan(
+    reusing previousApplications: [AppRecord],
+    sourceDetection: SourceDetectionMode
+  ) async -> [AppRecord] {
     let ownBundleIdentifier = Bundle.main.bundleIdentifier
     let previousByPath = Dictionary(
       previousApplications.map { ($0.applicationURL.standardizedFileURL.path, $0) },
@@ -26,14 +47,16 @@ struct ApplicationScanner: ApplicationScanning {
     return await Task.detached(priority: .userInitiated) {
       Self.scanSynchronously(
         excludingBundleIdentifier: ownBundleIdentifier,
-        reusing: previousByPath
+        reusing: previousByPath,
+        sourceDetection: sourceDetection
       )
     }.value
   }
 
   private static func scanSynchronously(
     excludingBundleIdentifier: String?,
-    reusing previousByPath: [String: AppRecord] = [:]
+    reusing previousByPath: [String: AppRecord] = [:],
+    sourceDetection: SourceDetectionMode = .full
   ) -> [AppRecord] {
     let fileManager = FileManager.default
     let locations = [
@@ -68,7 +91,12 @@ struct ApplicationScanner: ApplicationScanning {
         enumerator.skipDescendants()
         let path = applicationURL.standardizedFileURL.path
         guard seenPaths.insert(path).inserted,
-          let record = makeRecord(from: applicationURL, reusing: previousByPath[path]),
+          let record = makeRecord(
+            from: applicationURL,
+            reusing: previousByPath[path],
+            preferredLanguages: Locale.preferredLanguages,
+            sourceDetection: sourceDetection
+          ),
           record.bundleIdentifier != excludingBundleIdentifier
         else {
           continue
@@ -92,10 +120,36 @@ struct ApplicationScanner: ApplicationScanning {
     )
   }
 
+  static func makeInstalledApplicationRecord(
+    from applicationURL: URL,
+    preferredLanguages: [String] = Locale.preferredLanguages
+  ) -> AppRecord? {
+    makeRecord(
+      from: applicationURL,
+      reusing: nil,
+      preferredLanguages: preferredLanguages,
+      sourceDetection: .installedOnly
+    )
+  }
+
   static func makeRecord(
     from applicationURL: URL,
     reusing previous: AppRecord?,
     preferredLanguages: [String] = Locale.preferredLanguages
+  ) -> AppRecord? {
+    makeRecord(
+      from: applicationURL,
+      reusing: previous,
+      preferredLanguages: preferredLanguages,
+      sourceDetection: .full
+    )
+  }
+
+  private static func makeRecord(
+    from applicationURL: URL,
+    reusing previous: AppRecord?,
+    preferredLanguages: [String],
+    sourceDetection: SourceDetectionMode
   ) -> AppRecord? {
     guard let bundle = resolvedBundle(from: applicationURL) else {
       return nil
@@ -132,6 +186,19 @@ struct ApplicationScanner: ApplicationScanning {
       )
     {
       return previous
+    }
+
+    if sourceDetection == .installedOnly {
+      return AppRecord(
+        name: name,
+        bundleIdentifier: bundleIdentifier,
+        applicationURL: applicationURL,
+        currentVersion: currentVersion,
+        buildVersion: buildVersion,
+        applicationModificationDate: applicationModificationDate,
+        source: .selfManaged,
+        status: .selfManaged
+      )
     }
 
     let contentsURL = bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true)

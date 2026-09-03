@@ -231,9 +231,8 @@ struct AppDetailView: View {
   private var informationItems: [(label: String, value: String, action: (() -> Void)?)] {
     var items: [(label: String, value: String, action: (() -> Void)?)] = [
       ("状态", isUpdateIgnored ? "已忽略更新" : statusTitle, nil),
-      ("当前版本", application.versionSummary, nil),
       ("更新来源", application.sourceTitle, nil),
-      ("Bundle ID", application.bundleIdentifier, nil),
+      ("当前版本", application.versionSummary, nil),
     ]
     if let latestVersionSummary = application.latestVersionSummary {
       items.append(("最新版本", latestVersionSummary, nil))
@@ -241,6 +240,7 @@ struct AppDetailView: View {
     if let releaseDate = application.releaseDate {
       items.append(("发布日期", releaseDate.formatted(date: .abbreviated, time: .omitted), nil))
     }
+    items.append(("Bundle ID", application.bundleIdentifier, nil))
     if let packageSize = application.packageSizeDescription {
       items.append(("更新包", packageSize, nil))
     }
@@ -356,9 +356,12 @@ struct AppDetailView: View {
     if usesUpdatePrimaryAction {
       switch application.source {
       case .appStore:
-        return usesAppStoreUpdateHandoff
-          ? "在 App Store 中打开此应用并更新"
-          : "使用当前 App Store 账号下载并安装此更新"
+        if usesAppStoreUpdateHandoff {
+          return application.requiresAppStoreUpdatePageHandoff
+            ? "在 App Store 更新页安装此更新"
+            : "在 App Store 中打开此应用并更新"
+        }
+        return "使用当前 App Store 账号下载并安装此更新"
       case .homebrew:
         return "使用 Homebrew 下载并安装此更新"
       case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON,
