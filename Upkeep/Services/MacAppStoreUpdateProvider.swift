@@ -1,8 +1,34 @@
 import Foundation
 
 struct MacAppStoreUpdateProvider: Sendable {
+  typealias StartUpdate = @Sendable (
+    _ adamID: UInt64,
+    _ applicationURL: URL,
+    _ progress: (@Sendable (UpdateProgress) -> Void)?,
+    _ completion: @escaping @Sendable (String?, NSError?) -> Void
+  ) -> Void
+
+  private let availability: @Sendable () -> Bool
+  private let startUpdate: StartUpdate
+
   static var isAvailable: Bool {
     AppStoreUpdateSession.isAvailable
+  }
+
+  init(
+    availability: @escaping @Sendable () -> Bool = { Self.isAvailable },
+    startUpdate: @escaping StartUpdate = { adamID, applicationURL, progress, completion in
+      let session = AppStoreUpdateSession()
+      session.startUpdate(
+        adamID: adamID,
+        applicationURL: applicationURL,
+        progress: progress,
+        completion: completion
+      )
+    }
+  ) {
+    self.availability = availability
+    self.startUpdate = startUpdate
   }
 
   func upgrade(
@@ -15,27 +41,27 @@ struct MacAppStoreUpdateProvider: Sendable {
     guard let adamID = Self.adamIdentifier(for: application) else {
       throw MacAppStoreUpdateError.missingStoreIdentifier
     }
-    guard Self.isAvailable else {
+    guard availability() else {
       throw MacAppStoreUpdateError.unavailable
     }
 
     progress(.indeterminate("正在准备更新…"))
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-      let session = AppStoreUpdateSession()
-      session.startUpdate(
-        adamID: adamID,
-        applicationURL: application.applicationURL,
-        progress: { updateProgress in
+      startUpdate(
+        adamID,
+        application.applicationURL,
+        { updateProgress in
           progress(updateProgress)
+        },
+        { _, error in
+          if let error {
+            continuation.resume(throwing: error)
+          } else {
+            progress(UpdateProgress(fractionCompleted: 1, status: "正在完成…"))
+            continuation.resume(returning: ())
+          }
         }
-      ) { _, error in
-        if let error {
-          continuation.resume(throwing: error)
-        } else {
-          progress(UpdateProgress(fractionCompleted: 1, status: "正在完成…"))
-          continuation.resume(returning: ())
-        }
-      }
+      )
     }
   }
 

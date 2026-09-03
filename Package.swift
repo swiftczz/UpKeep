@@ -41,5 +41,10 @@ let package = Package(
       dependencies: ["Upkeep"],
       path: "UpkeepTests"
     ),
+    .testTarget(
+      name: "UpkeepPrivilegedHelperTests",
+      dependencies: ["UpkeepPrivilegedHelper"],
+      path: "UpkeepPrivilegedHelperTests"
+    ),
   ]
 )

@@ -25,7 +25,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
   private var receiptHardLinkURL: URL?
   private var selfRetainer: AppStoreUpdateSession?
   private var isFinished = false
-  private var purchaseHasCompleted = false
+  private var purchaseGate = AppStorePurchaseGate()
   private let finishLock = NSLock()
 
   func startUpdate(
@@ -61,7 +61,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     completionHandler = completion
     selfRetainer = self
     isFinished = false
-    purchaseHasCompleted = false
+    purchaseGate.reset()
 
     guard let queueClass = NSClassFromString("CKDownloadQueue"),
       let queue = ObjC.call(queueClass, "sharedDownloadQueue")
@@ -109,7 +109,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
         )
         return
       }
-      self.purchaseHasCompleted = true
+      _ = self.purchaseGate.completePurchase(downloadCount: downloads?.count ?? 0)
     }
     ObjC.performPurchase(controller, purchase: purchase, completion: purchaseCompletion)
   }
@@ -156,12 +156,20 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     let cancelled = (status?.value(forKey: "cancelled") as? NSNumber)?.boolValue ?? false
     let installedPath = (download as AnyObject).value(forKey: "installPath") as? String
 
-    if error?.domain == "PKInstallErrorDomain",
-      error?.code == 201,
-      let packageHardLinkURL,
-      let receiptHardLinkURL,
-      let applicationURL
-    {
+    let canFallbackInstall =
+      packageHardLinkURL != nil && receiptHardLinkURL != nil && applicationURL != nil
+    switch Self.downloadCompletionDisposition(
+      error: error,
+      failed: failed,
+      cancelled: cancelled,
+      installedPath: installedPath,
+      canFallbackInstall: canFallbackInstall
+    ) {
+    case .fallbackInstall:
+      guard let packageHardLinkURL, let receiptHardLinkURL, let applicationURL else {
+        complete(installedPath: nil, error: Self.bridgeError(5, "App Store 下载更新失败。"))
+        return
+      }
       progressHandler?(UpdateProgress(fractionCompleted: 0.95, status: "正在安装…"))
       DispatchQueue.global(qos: .userInitiated).async {
         let installError = Self.installDownloadedPackage(
@@ -177,24 +185,46 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
         }
       }
       return
+    case .complete(let installedPath, let error):
+      complete(installedPath: installedPath, error: error)
     }
+  }
 
-    if let error {
-      complete(installedPath: nil, error: error)
-    } else if failed {
-      complete(installedPath: nil, error: Self.bridgeError(5, "App Store 下载更新失败。"))
-    } else if cancelled {
-      complete(installedPath: nil, error: Self.bridgeError(6, "App Store 更新已取消。"))
-    } else {
-      complete(installedPath: installedPath, error: nil)
+  static func downloadCompletionDisposition(
+    error: NSError?,
+    failed: Bool,
+    cancelled: Bool,
+    installedPath: String?,
+    canFallbackInstall: Bool
+  ) -> AppStoreDownloadCompletionDisposition {
+    if error?.domain == "PKInstallErrorDomain",
+      error?.code == 201,
+      canFallbackInstall
+    {
+      return .fallbackInstall
     }
+    if let error {
+      return .complete(installedPath: nil, error: error)
+    }
+    if failed {
+      return .complete(
+        installedPath: nil,
+        error: bridgeError(5, "App Store 下载更新失败。")
+      )
+    }
+    if cancelled {
+      return .complete(
+        installedPath: nil,
+        error: bridgeError(6, "App Store 更新已取消。")
+      )
+    }
+    return .complete(installedPath: installedPath, error: nil)
   }
 
   private func downloadMatchesSession(_ download: Any) -> Bool {
     let metadata = (download as AnyObject).value(forKey: "metadata") as? NSObject
     let itemIdentifier = metadata?.value(forKey: "itemIdentifier") as? NSNumber
-    return Self.downloadEventMatchesSession(
-      purchaseHasCompleted: purchaseHasCompleted,
+    return purchaseGate.matches(
       expectedAdamID: adamID,
       itemIdentifier: itemIdentifier?.uint64Value
     )
@@ -485,6 +515,36 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     }
     return NSError(domain: "Upkeep.AppStoreBridge", code: code, userInfo: userInfo)
   }
+}
+
+struct AppStorePurchaseGate {
+  private(set) var purchaseHasCompleted = false
+
+  mutating func reset() {
+    purchaseHasCompleted = false
+  }
+
+  @discardableResult
+  mutating func completePurchase(downloadCount: Int) -> Bool {
+    guard downloadCount > 0 else {
+      return false
+    }
+    purchaseHasCompleted = true
+    return true
+  }
+
+  func matches(expectedAdamID: UInt64, itemIdentifier: UInt64?) -> Bool {
+    AppStoreUpdateSession.downloadEventMatchesSession(
+      purchaseHasCompleted: purchaseHasCompleted,
+      expectedAdamID: expectedAdamID,
+      itemIdentifier: itemIdentifier
+    )
+  }
+}
+
+enum AppStoreDownloadCompletionDisposition {
+  case fallbackInstall
+  case complete(installedPath: String?, error: NSError?)
 }
 
 private struct PrivateFrameworks: @unchecked Sendable {

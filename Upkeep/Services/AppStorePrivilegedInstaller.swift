@@ -58,22 +58,51 @@ enum AppStorePrivilegedInstaller {
     registrationLock.lock()
     defer { registrationLock.unlock() }
 
-    guard bundledLaunchDaemonPlistExists,
-      let helperFingerprint = bundledHelperFingerprint
+    let service = SMAppService.daemon(
+      plistName: UpkeepPrivilegedHelperConstants.launchDaemonPlistName
+    )
+    return registerBundledHelper(
+      using: PrivilegedHelperRegistrationDependencies(
+        bundledLaunchDaemonPlistExists: bundledLaunchDaemonPlistExists,
+        bundledHelperFingerprint: bundledHelperFingerprint,
+        registeredFingerprint: {
+          UserDefaults.standard.string(forKey: registeredHelperFingerprintKey)
+        },
+        setRegisteredFingerprint: {
+          UserDefaults.standard.set($0, forKey: registeredHelperFingerprintKey)
+        },
+        serviceStatus: {
+          switch service.status {
+          case .enabled: .enabled
+          case .requiresApproval: .requiresApproval
+          default: .disabled
+          }
+        },
+        unregister: { completion in
+          service.unregister(completionHandler: completion)
+        },
+        register: {
+          try service.register()
+        }
+      )
+    )
+  }
+
+  static func registerBundledHelper(
+    using dependencies: PrivilegedHelperRegistrationDependencies,
+    unregisterTimeout: TimeInterval = 15
+  ) -> PrivilegedHelperRegistrationResult {
+    guard dependencies.bundledLaunchDaemonPlistExists,
+      let helperFingerprint = dependencies.bundledHelperFingerprint
     else {
       return .unavailable
     }
 
     do {
-      let service = SMAppService.daemon(
-        plistName: UpkeepPrivilegedHelperConstants.launchDaemonPlistName
-      )
-      let registeredFingerprint = UserDefaults.standard.string(
-        forKey: registeredHelperFingerprintKey
-      )
-      let status = service.status
+      let registeredFingerprint = dependencies.registeredFingerprint()
+      let status = dependencies.serviceStatus()
       if status == .requiresApproval {
-        UserDefaults.standard.set(helperFingerprint, forKey: registeredHelperFingerprintKey)
+        dependencies.setRegisteredFingerprint(helperFingerprint)
         return .failed(helperApprovalRequiredError)
       }
 
@@ -83,11 +112,11 @@ enum AppStorePrivilegedInstaller {
       {
         let semaphore = DispatchSemaphore(value: 0)
         let unregisterResult = LockedBox<Error?>(nil)
-        service.unregister { error in
+        dependencies.unregister { error in
           unregisterResult.value = error
           semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now() + 15) == .success else {
+        guard semaphore.wait(timeout: .now() + unregisterTimeout) == .success else {
           return .failed(
             NSError(
               domain: "Upkeep.PrivilegedInstaller",
@@ -103,13 +132,13 @@ enum AppStorePrivilegedInstaller {
       }
 
       if shouldRegister {
-        try service.register()
-        UserDefaults.standard.set(helperFingerprint, forKey: registeredHelperFingerprintKey)
+        try dependencies.register()
+        dependencies.setRegisteredFingerprint(helperFingerprint)
       }
-      guard service.status == .enabled else {
+      guard dependencies.serviceStatus() == .enabled else {
         return .failed(helperApprovalRequiredError)
       }
-      UserDefaults.standard.set(helperFingerprint, forKey: registeredHelperFingerprintKey)
+      dependencies.setRegisteredFingerprint(helperFingerprint)
       return .enabled
     } catch {
       return .failed(
@@ -266,10 +295,26 @@ enum PrivilegedInstallResult {
   case failed(NSError)
 }
 
-private enum PrivilegedHelperRegistrationResult {
+enum PrivilegedHelperRegistrationResult {
   case enabled
   case unavailable
   case failed(NSError)
+}
+
+enum PrivilegedHelperServiceStatus: Equatable {
+  case enabled
+  case requiresApproval
+  case disabled
+}
+
+struct PrivilegedHelperRegistrationDependencies {
+  let bundledLaunchDaemonPlistExists: Bool
+  let bundledHelperFingerprint: String?
+  let registeredFingerprint: () -> String?
+  let setRegisteredFingerprint: (String) -> Void
+  let serviceStatus: () -> PrivilegedHelperServiceStatus
+  let unregister: (@escaping @Sendable (Error?) -> Void) -> Void
+  let register: () throws -> Void
 }
 
 private final class LockedBox<Value>: @unchecked Sendable {

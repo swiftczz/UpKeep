@@ -123,6 +123,205 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertEqual(query["country"], "cn")
   }
 
+  func testCheckSelectsNewestNativeMacResultAcrossLookupVariants() async throws {
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { url in
+        let entity = Self.queryValue("entity", in: url)
+        return Self.lookupResponse(
+          bundleIdentifier: "com.rainbow.quill",
+          trackID: 6_670_330_650,
+          version: entity == "desktopSoftware" ? "2.0.0" : "2.0.1",
+          kind: entity == "desktopSoftware" ? "software" : "mac-software",
+          supportedDevices: entity == "desktopSoftware" ? ["MacDesktop-MacDesktop"] : nil
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "Arc PDF",
+      bundleIdentifier: "com.rainbow.quill",
+      applicationURL: URL(fileURLWithPath: "/Applications/Arc PDF.app"),
+      currentVersion: "2.0.0",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking,
+      sourceIdentifier: "6670330650"
+    )
+
+    let checked = await provider.check(application)
+
+    XCTAssertEqual(checked.latestVersion, "2.0.1")
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(checked.appStorePlatform, .mac)
+    XCTAssertEqual(checked.appStoreCountryCode, "cn")
+    XCTAssertEqual(checked.appStoreAccountCountryCode, "cn")
+  }
+
+  func testCheckRejectsNewerMobileReleaseForNativeMacApplication() async throws {
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { url in
+        let entity = Self.queryValue("entity", in: url)
+        return Self.lookupResponse(
+          bundleIdentifier: "com.baidu.netdisk",
+          trackID: 547_166_701,
+          version: entity == "desktopSoftware" ? "8.7.9" : "13.32.2",
+          kind: "software",
+          supportedDevices: entity == "desktopSoftware"
+            ? ["MacDesktop-MacDesktop"]
+            : ["MacDesktop-MacDesktop", "iPhone17-iPhone17", "iPadA16-iPadA16"]
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "百度网盘",
+      bundleIdentifier: "com.baidu.netdisk",
+      applicationURL: URL(fileURLWithPath: "/Applications/BaiduNetdisk.app"),
+      currentVersion: "8.7.9",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking,
+      sourceIdentifier: "547166701"
+    )
+
+    let checked = await provider.check(application)
+
+    XCTAssertEqual(checked.latestVersion, "8.7.9")
+    XCTAssertEqual(checked.status, .upToDate)
+    XCTAssertEqual(checked.appStorePlatform, .mac)
+  }
+
+  func testCheckUsesMobileCatalogForInstalledIPhoneApplication() async throws {
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "USA" },
+      lookupData: { url in
+        XCTAssertEqual(Self.queryValue("entity", in: url), "software")
+        return Self.lookupResponse(
+          bundleIdentifier: "com.example.mobile",
+          trackID: 123_456,
+          version: "2.0",
+          kind: "software",
+          supportedDevices: ["iPhone17-iPhone17", "iPadA16-iPadA16"]
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "Mobile App",
+      bundleIdentifier: "com.example.mobile",
+      applicationURL: URL(fileURLWithPath: "/Applications/Mobile App.app"),
+      currentVersion: "1.0",
+      source: .appStore,
+      appStorePlatform: .iPhone,
+      appStoreCountryCode: "us",
+      status: .checking,
+      sourceIdentifier: "123456"
+    )
+
+    let checked = await provider.check(application)
+
+    XCTAssertEqual(checked.latestVersion, "2.0")
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(checked.appStorePlatform, .iPhone)
+    XCTAssertFalse(checked.canAutomaticallyUpdate)
+  }
+
+  func testCheckFallsBackToNextStorefrontWhenKnownStorefrontHasNoMatch() async throws {
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "USA" },
+      lookupData: { url in
+        guard Self.queryValue("country", in: url) == "us" else {
+          return Data(#"{"results":[]}"#.utf8)
+        }
+        return Self.lookupResponse(
+          bundleIdentifier: "com.example.mac",
+          trackID: 789,
+          version: "3.0",
+          kind: "mac-software",
+          supportedDevices: nil
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "Example",
+      bundleIdentifier: "com.example.mac",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
+      currentVersion: "2.0",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking
+    )
+
+    let checked = await provider.check(application)
+
+    XCTAssertEqual(checked.latestVersion, "3.0")
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(checked.appStoreCountryCode, "us")
+  }
+
+  func testCheckContinuesAfterOneLookupVariantFails() async throws {
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { url in
+        if Self.queryValue("entity", in: url) == "desktopSoftware" {
+          throw URLError(.timedOut)
+        }
+        return Self.lookupResponse(
+          bundleIdentifier: "com.rainbow.quill",
+          trackID: 6_670_330_650,
+          version: "2.0.1",
+          kind: "mac-software",
+          supportedDevices: nil
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "Arc PDF",
+      bundleIdentifier: "com.rainbow.quill",
+      applicationURL: URL(fileURLWithPath: "/Applications/Arc PDF.app"),
+      currentVersion: "2.0.0",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking,
+      sourceIdentifier: "6670330650"
+    )
+
+    let checked = await provider.check(application)
+
+    XCTAssertEqual(checked.latestVersion, "2.0.1")
+    XCTAssertEqual(checked.status, .updateAvailable)
+  }
+
+  func testCheckDistinguishesUnreachableCatalogFromMissingApplication() async {
+    let application = AppRecord(
+      name: "Example",
+      bundleIdentifier: "com.example.missing",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
+      currentVersion: "1.0",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking
+    )
+    let unreachable = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { _ in nil }
+    )
+    let missing = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { _ in Data(#"{"results":[]}"#.utf8) }
+    )
+
+    let unreachableResult = await unreachable.check(application)
+    let missingResult = await missing.check(application)
+
+    XCTAssertEqual(unreachableResult.status, .unavailable("App Store 暂时无法访问。"))
+    XCTAssertEqual(missingResult.status, .unavailable("在 App Store 中找不到对应的平台版本。"))
+  }
+
   func testSelectsMacReleaseWhenBundleIdentifierIsSharedAcrossPlatforms() throws {
     let data = Data(
       """
@@ -454,5 +653,28 @@ final class AppStoreLookupTests: XCTestCase {
 
     XCTAssertEqual(result.version, "5.11.3")
     XCTAssertEqual(result.appStorePlatform, .iPhone)
+  }
+
+  private static func queryValue(_ name: String, in url: URL) -> String? {
+    URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+      .first(where: { $0.name == name })?.value
+  }
+
+  private static func lookupResponse(
+    bundleIdentifier: String,
+    trackID: UInt64,
+    version: String,
+    kind: String,
+    supportedDevices: [String]?
+  ) -> Data {
+    var result: [String: Any] = [
+      "bundleId": bundleIdentifier,
+      "trackId": trackID,
+      "version": version,
+      "kind": kind,
+      "trackViewUrl": "https://apps.apple.com/app/id\(trackID)",
+    ]
+    result["supportedDevices"] = supportedDevices
+    return try! JSONSerialization.data(withJSONObject: ["results": [result]])
   }
 }

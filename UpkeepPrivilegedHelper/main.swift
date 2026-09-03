@@ -86,7 +86,11 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
   }
 
   private static func hostApplicationURL() -> URL? {
-    guard var url = executableURL() else {
+    hostApplicationURL(from: executableURL())
+  }
+
+  static func hostApplicationURL(from executableURL: URL?) -> URL? {
+    guard var url = executableURL else {
       return nil
     }
 
@@ -126,7 +130,23 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
     receiptPath: String,
     applicationPath: String
   ) -> String? {
-    guard getuid() == 0 else {
+    installAppStorePackage(
+      packagePath: packagePath,
+      receiptPath: receiptPath,
+      applicationPath: applicationPath,
+      isRoot: getuid() == 0,
+      runCommand: run
+    )
+  }
+
+  static func installAppStorePackage(
+    packagePath: String,
+    receiptPath: String,
+    applicationPath: String,
+    isRoot: Bool,
+    runCommand: (_ launchPath: String, _ arguments: [String]) -> String?
+  ) -> String? {
+    guard isRoot else {
       return "安装助手没有管理员权限。"
     }
 
@@ -149,9 +169,9 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
       return "应用路径不正确。"
     }
 
-    let installError = run(
+    let installError = runCommand(
       "/usr/sbin/installer",
-      arguments: ["-dumplog", "-pkg", packageURL.path, "-target", "/"]
+      ["-dumplog", "-pkg", packageURL.path, "-target", "/"]
     )
     if let installError {
       return installError
@@ -176,34 +196,62 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
       return "无法写入 App Store 收据：\(error.localizedDescription)"
     }
 
-    return run("/usr/bin/mdimport", arguments: [applicationURL.path])
+    return runCommand("/usr/bin/mdimport", [applicationURL.path])
   }
 
-  private static func run(_ launchPath: String, arguments: [String]) -> String? {
+  static func run(_ launchPath: String, arguments: [String]) -> String? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: launchPath)
     process.arguments = arguments
 
     let pipe = Pipe()
+    let output = HelperDataBuffer()
     process.standardOutput = pipe
     process.standardError = pipe
+    pipe.fileHandleForReading.readabilityHandler = { handle in
+      let data = handle.availableData
+      if !data.isEmpty {
+        output.append(data)
+      }
+    }
 
     do {
       try process.run()
       process.waitUntilExit()
     } catch {
+      pipe.fileHandleForReading.readabilityHandler = nil
       return "\(URL(fileURLWithPath: launchPath).lastPathComponent) 无法启动：\(error.localizedDescription)"
     }
 
+    pipe.fileHandleForReading.readabilityHandler = nil
+    if let remaining = try? pipe.fileHandleForReading.readToEnd(), !remaining.isEmpty {
+      output.append(remaining)
+    }
+
     guard process.terminationStatus == 0 else {
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-      return output?.isEmpty == false
-        ? output
+      let message = String(data: output.data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      return message?.isEmpty == false
+        ? message
         : "\(URL(fileURLWithPath: launchPath).lastPathComponent) 执行失败。"
     }
 
     return nil
+  }
+}
+
+private final class HelperDataBuffer: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = Data()
+
+  var data: Data {
+    lock.withLock { storage }
+  }
+
+  func append(_ data: Data) {
+    lock.withLock {
+      storage.append(data)
+    }
   }
 }
 

@@ -3,12 +3,16 @@ import StoreKit
 
 struct AppStoreUpdateProvider: Sendable {
   private let currentStorefrontCountryCode: @Sendable () async -> String?
+  private let lookupData: @Sendable (URL) async throws -> Data?
 
   init(
     currentStorefrontCountryCode: @escaping @Sendable () async -> String? =
-      AppStoreStorefront.currentCountryCode
+      AppStoreStorefront.currentCountryCode,
+    lookupData: @escaping @Sendable (URL) async throws -> Data? =
+      { try await UpdateHTTP.successfulData(from: $0) }
   ) {
     self.currentStorefrontCountryCode = currentStorefrontCountryCode
+    self.lookupData = lookupData
   }
 
   func check(_ application: AppRecord) async -> AppRecord {
@@ -45,19 +49,26 @@ struct AppStoreUpdateProvider: Sendable {
             continue
           }
 
-          guard let data = try await UpdateHTTP.successfulData(from: url) else {
+          do {
+            guard let data = try await lookupData(url) else {
+              sawNetworkFailure = true
+              continue
+            }
+
+            sawReachableCatalog = true
+            let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
+            if let result = lookup.result(
+              matching: application.bundleIdentifier,
+              platform: platform,
+              includesPlatformEntity: candidate.includesEntity
+            ) {
+              countryMatches.append(result)
+            }
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
             sawNetworkFailure = true
             continue
-          }
-
-          sawReachableCatalog = true
-          let lookup = try JSONDecoder().decode(AppStoreLookupResponse.self, from: data)
-          if let result = lookup.result(
-            matching: application.bundleIdentifier,
-            platform: platform,
-            includesPlatformEntity: candidate.includesEntity
-          ) {
-            countryMatches.append(result)
           }
         }
 
