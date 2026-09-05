@@ -20,10 +20,50 @@ struct AppStoreUpdateProvider: Sendable {
 
     do {
       let platform = application.appStorePlatform ?? .mac
-      let countries = Self.lookupCountries(for: application)
+      let accountCountryCode = AppStoreCountryCode.normalized(
+        await currentStorefrontCountryCode()
+      )
+      let countries = Self.lookupCountries(
+        for: application,
+        accountCountryCode: accountCountryCode
+      )
       guard !countries.isEmpty else {
         application.status = .unavailable("无法创建 App Store 查询地址。")
         return application
+      }
+
+      if platform == .mac,
+        let adamID = MacAppStoreUpdateProvider.adamIdentifier(for: application),
+        let country = countries.first,
+        let productPageURL = Self.productPageURL(trackID: adamID, country: country)
+      {
+        do {
+          if let data = try await lookupData(productPageURL),
+            let release = AppStoreProductPageRelease.parse(data)
+          {
+            application.appStoreAccountCountryCode = accountCountryCode
+            application.appStoreCountryCode = country
+            application.appStorePlatform = .mac
+            application.latestVersion = release.version
+            application.releaseNotes = release.releaseNotes?.nonBlankValue
+            application.releaseDate = release.releaseDate
+            application.sourceURL = productPageURL
+            application.homepageURL = productPageURL
+            application.sourceIdentifier = String(adamID)
+            application.canAutomaticallyUpdate =
+              !application.requiresAppStoreUpdatePageHandoff
+              && MacAppStoreUpdateProvider.isAvailable
+            application.status =
+              VersionComparator.isNewer(release.version, than: application.currentVersion)
+              ? .updateAvailable
+              : .upToDate
+            return application
+          }
+        } catch is CancellationError {
+          throw CancellationError()
+        } catch {
+          // Fall through to the stable lookup API when the product page is unavailable.
+        }
       }
 
       var matched: (country: String, result: AppStoreLookupResult)?
@@ -89,9 +129,7 @@ struct AppStoreUpdateProvider: Sendable {
       }
 
       let result = matched.result
-      application.appStoreAccountCountryCode = AppStoreCountryCode.normalized(
-        await currentStorefrontCountryCode()
-      )
+      application.appStoreAccountCountryCode = accountCountryCode
       application.appStoreCountryCode = matched.country
       application.appStorePlatform = result.appStorePlatform ?? platform
       application.latestVersion = result.version
@@ -119,7 +157,10 @@ struct AppStoreUpdateProvider: Sendable {
     return application
   }
 
-  static func lookupCountries(for application: AppRecord) -> [String] {
+  static func lookupCountries(
+    for application: AppRecord,
+    accountCountryCode: String? = nil
+  ) -> [String] {
     var countries: [String] = []
     var seen = Set<String>()
 
@@ -130,6 +171,7 @@ struct AppStoreUpdateProvider: Sendable {
       countries.append(code)
     }
 
+    add(accountCountryCode)
     add(application.appStoreCountryCode)
     add(Locale.current.region?.identifier)
     for code in ["us", "cn", "hk", "tw", "mo", "jp", "sg", "gb", "au", "ca", "de", "kr"] {
@@ -168,6 +210,17 @@ struct AppStoreUpdateProvider: Sendable {
     return components?.url
   }
 
+  static func productPageURL(trackID: UInt64, country: String) -> URL? {
+    guard let country = AppStoreCountryCode.normalized(country) else {
+      return nil
+    }
+    var components = URLComponents(
+      string: "https://apps.apple.com/\(country)/app/id\(trackID)"
+    )
+    components?.queryItems = [URLQueryItem(name: "platform", value: "mac")]
+    return components?.url
+  }
+
   static func lookupCandidates(
     storeIdentifier: String?,
     platform: AppStorePlatform
@@ -200,6 +253,76 @@ struct AppStoreUpdateProvider: Sendable {
         ? candidate
         : newest
     }
+  }
+}
+
+struct AppStoreProductPageRelease: Equatable, Sendable {
+  let version: String
+  let releaseNotes: String?
+  let releaseDate: Date?
+
+  static func parse(_ data: Data) -> AppStoreProductPageRelease? {
+    guard let html = String(data: data, encoding: .utf8),
+      let markerRange = html.range(of: #"id="serialized-server-data""#),
+      let openingBracket = html[markerRange.upperBound...].firstIndex(of: ">"),
+      let closingTag = html.range(of: "</script>", range: openingBracket..<html.endIndex)
+    else {
+      return nil
+    }
+
+    let jsonStart = html.index(after: openingBracket)
+    let jsonData = Data(html[jsonStart..<closingTag.lowerBound].utf8)
+    guard
+      let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+      let entries = root["data"] as? [[String: Any]]
+    else {
+      return nil
+    }
+
+    for entry in entries {
+      guard
+        let pageData = entry["data"] as? [String: Any],
+        let shelfMapping = pageData["shelfMapping"] as? [String: Any],
+        let mostRecentVersion = shelfMapping["mostRecentVersion"] as? [String: Any],
+        let items = mostRecentVersion["items"] as? [[String: Any]],
+        let item = items.first,
+        let subtitle = item["primarySubtitle"] as? String,
+        let version = version(in: subtitle)
+      else {
+        continue
+      }
+
+      return AppStoreProductPageRelease(
+        version: version,
+        releaseNotes: item["text"] as? String,
+        releaseDate: (item["secondarySubtitle"] as? String).flatMap(releaseDate(from:))
+      )
+    }
+    return nil
+  }
+
+  private static func version(in value: String) -> String? {
+    guard let expression = try? NSRegularExpression(
+      pattern: #"\d+(?:[._-]\d+)+(?:[A-Za-z0-9._-]*)?"#
+    ) else {
+      return nil
+    }
+    let range = NSRange(value.startIndex..., in: value)
+    guard let match = expression.firstMatch(in: value, range: range),
+      let matchRange = Range(match.range, in: value)
+    else {
+      return nil
+    }
+    return String(value[matchRange])
+  }
+
+  private static func releaseDate(from value: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "EEE MMM dd yyyy HH:mm:ss 'GMT+0000 (Coordinated Universal Time)'"
+    return formatter.date(from: value)
   }
 }
 

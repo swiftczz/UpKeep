@@ -557,9 +557,48 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
     XCTAssertNil(payload.notes)
     XCTAssertEqual(payload.timestamp, Date(timeIntervalSince1970: 1_787_078_154.886))
-    XCTAssertTrue(payload.shouldOfferUpdate(against: "1.133.0"))
-    XCTAssertTrue(payload.shouldOfferUpdate(against: "1.134.0"))
-    XCTAssertFalse(payload.shouldOfferUpdate(against: "1.135.0"))
+    XCTAssertTrue(
+      payload.shouldOfferUpdate(
+        against: "1.133.0",
+        currentCommit: "110a328ea54b42367b803ec53ee0bf52ef26b419",
+        currentBuildVersion: "110a328"
+      )
+    )
+    XCTAssertTrue(
+      payload.shouldOfferUpdate(
+        against: "1.134.0",
+        currentCommit: "220a328ea54b42367b803ec53ee0bf52ef26b419",
+        currentBuildVersion: "220a328"
+      )
+    )
+    XCTAssertFalse(
+      payload.shouldOfferUpdate(
+        against: "1.134.0",
+        currentCommit: "110a328ea54b42367b803ec53ee0bf52ef26b419",
+        currentBuildVersion: nil
+      )
+    )
+    XCTAssertFalse(
+      payload.shouldOfferUpdate(
+        against: "1.134.0",
+        currentCommit: "110a328",
+        currentBuildVersion: nil
+      )
+    )
+    XCTAssertFalse(
+      payload.shouldOfferUpdate(
+        against: "1.135.0",
+        currentCommit: "220a328ea54b42367b803ec53ee0bf52ef26b419",
+        currentBuildVersion: "220a328"
+      )
+    )
+    XCTAssertFalse(
+      payload.shouldOfferUpdate(
+        against: "1.134.0",
+        currentCommit: "220a328ea54b42367b803ec53ee0bf52ef26b419",
+        currentBuildVersion: "110a328"
+      )
+    )
   }
 
   func testReconstructsStableReleaseJSONURLSplitByBinaryBytes() throws {

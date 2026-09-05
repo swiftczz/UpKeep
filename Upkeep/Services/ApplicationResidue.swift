@@ -39,10 +39,66 @@ struct ApplicationResidueItem: Identifiable, Hashable, Sendable {
   let displayName: String
   let category: Category
   let byteCount: Int64
+  var matchReason: ApplicationResidueMatchReason = .nameOnly
+
+  var isSelectedByDefault: Bool { matchReason.isSelectedByDefault }
+
+  static func defaultSelection(in items: [ApplicationResidueItem]) -> Set<String> {
+    Set(items.filter(\.isSelectedByDefault).map(\.id))
+  }
 
   var formattedSize: String {
     byteCount.formatted(.byteCount(style: .file))
   }
+}
+
+enum ApplicationResidueMatchReason: Hashable, Sendable {
+  case application
+  case bundleIdentifier
+  case declaredUpdaterCache
+  case homebrewCask
+  case declaredGroupContainer
+  case possibleBundleVariant
+  case nameOnly
+  case undeclaredGroupContainer
+  case unverifiedGroupContainer
+  case sharedWith([String])
+
+  var isSelectedByDefault: Bool {
+    switch self {
+    case .application, .bundleIdentifier, .declaredUpdaterCache, .homebrewCask,
+      .declaredGroupContainer:
+      true
+    case .possibleBundleVariant, .nameOnly, .undeclaredGroupContainer,
+      .unverifiedGroupContainer, .sharedWith:
+      false
+    }
+  }
+
+  var explanation: String {
+    switch self {
+    case .application: "所选应用程序"
+    case .bundleIdentifier: "完整 Bundle ID 匹配"
+    case .declaredUpdaterCache: "应用声明的更新缓存"
+    case .homebrewCask: "Homebrew 安装记录"
+    case .declaredGroupContainer: "应用声明的容器，未发现其他已安装应用使用"
+    case .possibleBundleVariant: "仅 Bundle ID 前缀相同，可能属于独立测试版或其他应用；默认保留"
+    case .nameOnly: "仅名称相似，归属未确认；默认保留"
+    case .undeclaredGroupContainer: "名称相关，但未找到应用的容器声明；默认保留"
+    case .unverifiedGroupContainer: "应用声明的容器，但未能完整核对其他应用；默认保留"
+    case .sharedWith(let names): "也被 \(names.joined(separator: "、")) 使用；默认保留"
+    }
+  }
+}
+
+enum ApplicationResidueLocation: Sendable {
+  case containers
+  case groupContainers
+  case applicationScripts
+  case preferences
+  case byHostPreferences
+  case caches
+  case other
 }
 
 struct ApplicationResidueIdentity: Equatable, Sendable {
@@ -86,74 +142,96 @@ struct ApplicationResidueIdentity: Equatable, Sendable {
   }
 
   func matches(leaf: String) -> Bool {
+    match(leaf: leaf, location: .other) != nil
+  }
+
+  func match(
+    leaf: String,
+    location: ApplicationResidueLocation
+  ) -> ApplicationResidueMatchReason? {
     let trimmed = leaf.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return false }
+    guard !trimmed.isEmpty, !bundleIdentifier.isEmpty else { return nil }
 
     let stripped = Self.stripKnownSuffixes(trimmed)
-    if matchesBundleIdentifier(trimmed) || matchesBundleIdentifier(stripped) {
-      return true
+    if Self.matchesExactBundleIdentifier(bundleIdentifier, leaf: trimmed, location: location) {
+      return .bundleIdentifier
+    }
+
+    if let updaterCacheDirName, trimmed == updaterCacheDirName, location == .caches {
+      return .declaredUpdaterCache
+    }
+
+    let lowered = trimmed.lowercased()
+    let bundle = bundleIdentifier.lowercased()
+    if lowered.hasPrefix(bundle + ".") || lowered.hasPrefix(bundle + "-") {
+      return .possibleBundleVariant
     }
 
     if let updaterCacheDirName, trimmed == updaterCacheDirName {
-      return true
+      return .nameOnly
     }
 
     if names.contains(where: {
       $0.caseInsensitiveCompare(trimmed) == .orderedSame
         || $0.caseInsensitiveCompare(stripped) == .orderedSame
     }) {
-      return true
+      return .nameOnly
     }
 
     if names.contains(where: { name in
       name.count >= 3
         && (trimmed.hasPrefix(name + "_") || trimmed.hasPrefix(name + "-"))
     }) {
-      return true
+      return .nameOnly
     }
 
     if let teamIdentifier, trimmed.lowercased().hasPrefix(teamIdentifier.lowercased() + ".") {
       let suffix = String(trimmed.dropFirst(teamIdentifier.count + 1))
       let strippedSuffix = Self.stripKnownSuffixes(suffix)
-      if matchesBundleIdentifier(suffix)
-        || matchesBundleIdentifier(strippedSuffix)
+      if suffix.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        || strippedSuffix.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
         || matchesLastComponent(suffix)
         || matchesLastComponent(strippedSuffix)
-        || suffix.lowercased().hasSuffix("." + bundleLastComponent.lowercased())
       {
-        return true
+        return .undeclaredGroupContainer
       }
     }
 
     guard !Self.genericLastComponents.contains(bundleLastComponent.lowercased()) else {
-      return false
+      return nil
     }
 
-    return matchesLastComponent(trimmed)
-      || matchesLastComponent(stripped)
-      || trimmed.lowercased().hasSuffix("." + bundleLastComponent.lowercased())
+    return matchesLastComponent(trimmed) || matchesLastComponent(stripped) ? .nameOnly : nil
   }
 
-  private func matchesBundleIdentifier(_ value: String) -> Bool {
-    let lowered = value.lowercased()
-    let bundle = bundleIdentifier.lowercased()
-    return lowered == bundle
-      || lowered.hasPrefix(bundle + ".")
-      || lowered.hasPrefix(bundle + "-")
+  static func matchesExactBundleIdentifier(
+    _ identifier: String,
+    leaf: String,
+    location: ApplicationResidueLocation
+  ) -> Bool {
+    let bundle = identifier.lowercased()
+    let leaf = leaf.lowercased()
+    guard !bundle.isEmpty else { return false }
+
+    switch location {
+    case .preferences:
+      return leaf == bundle + ".plist" || leaf == bundle + ".plist.lockfile"
+    case .byHostPreferences:
+      guard leaf.hasPrefix(bundle + ".") else { return false }
+      let suffix = String(leaf.dropFirst(bundle.count + 1))
+      for ending in [".plist.lockfile", ".plist"] where suffix.hasSuffix(ending) {
+        return UUID(uuidString: String(suffix.dropLast(ending.count))) != nil
+      }
+      return false
+    case .containers, .groupContainers, .applicationScripts, .caches:
+      return leaf == bundle
+    case .other:
+      return leaf == bundle || stripKnownSuffixes(leaf) == bundle
+    }
   }
 
   private func matchesLastComponent(_ value: String) -> Bool {
     value.caseInsensitiveCompare(bundleLastComponent) == .orderedSame
-  }
-
-  func matches(url: URL) -> Bool {
-    if let homebrewToken {
-      let marker = "/Caskroom/\(homebrewToken)"
-      if url.path.contains(marker + "/") || url.path.hasSuffix(marker) {
-        return true
-      }
-    }
-    return matches(leaf: url.lastPathComponent)
   }
 
   private static let genericLastComponents: Set<String> = [
@@ -174,7 +252,7 @@ struct ApplicationResidueIdentity: Equatable, Sendable {
   ]
 
   private static func stripKnownSuffixes(_ leaf: String) -> String {
-    for suffix in knownSuffixes where leaf.hasSuffix(suffix) {
+    for suffix in knownSuffixes where leaf.lowercased().hasSuffix(suffix.lowercased()) {
       return String(leaf.dropLast(suffix.count))
     }
     return leaf

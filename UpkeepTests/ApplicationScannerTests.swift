@@ -423,6 +423,72 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.sourcePlatformSystemImage, "macwindow")
   }
 
+  func testInstalledApplicationRecordDetectsNativeMacAppStoreReceipt() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("UpkeepTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "TestFlight.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(
+      at: receiptURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.apple.TestFlight"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data("receipt".utf8).write(to: receiptURL)
+
+    let application = try XCTUnwrap(
+      ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
+    )
+
+    XCTAssertEqual(application.source, .appStore)
+    XCTAssertEqual(application.appStorePlatform, .mac)
+    XCTAssertEqual(application.status, .upToDate)
+  }
+
+  func testDoesNotReuseUnknownSourceWhenMacAppStoreReceiptExists() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appendingPathComponent("UpkeepTests-\(UUID().uuidString)", isDirectory: true)
+    let applicationURL = temporaryDirectory.appendingPathComponent(
+      "TestFlight.app",
+      isDirectory: true
+    )
+    let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+    let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try fileManager.createDirectory(
+      at: receiptURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.apple.TestFlight"),
+      to: contentsURL.appendingPathComponent("Info.plist")
+    )
+    try Data("receipt".utf8).write(to: receiptURL)
+
+    var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    cached.source = .selfManaged
+    cached.appStorePlatform = nil
+    cached.status = .selfManaged
+
+    let rescanned = try XCTUnwrap(
+      ApplicationScanner.makeRecord(from: applicationURL, reusing: cached)
+    )
+
+    XCTAssertEqual(rescanned.source, .appStore)
+    XCTAssertEqual(rescanned.appStorePlatform, .mac)
+  }
+
   func testReadsAdamIdentifierFromInstalledMacAppStoreApplication() throws {
     let applicationURL = URL(fileURLWithPath: "/Applications/OpenCat.app")
     guard FileManager.default.fileExists(atPath: applicationURL.path) else {

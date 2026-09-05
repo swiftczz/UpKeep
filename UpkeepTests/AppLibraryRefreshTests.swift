@@ -349,6 +349,334 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(scanner.scanCount, 1)
   }
 
+  func testCancelledLocalScanReturnsToIdleAndAllowsNextScan() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    var updated = seed
+    updated.currentVersion = "2.0"
+    let step = ControlledScan(result: [updated])
+    let scanner = ControlledRefreshScanner(local: [step], fallback: [seed])
+    let library = makeScanLibrary(seed: seed, scanner: scanner)
+    let task = Task { await library.refreshInstalledApplications() }
+    await step.started.wait()
+    task.cancel()
+    await step.release.open()
+    await task.value
+
+    XCTAssertEqual(library.phase, .idle)
+    XCTAssertEqual(library.applications.first?.currentVersion, "1.0")
+    await library.refreshInstalledApplications()
+    let counts = await scanner.counts
+    XCTAssertEqual(counts.local, 2)
+    XCTAssertEqual(counts.full, 0)
+    XCTAssertEqual(library.phase, .idle)
+  }
+
+  func testLocalChangesDuringScanCoalesceAndNeverCheckUpdates() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    var updated = seed
+    updated.currentVersion = "2.0"
+    let first = ControlledScan(result: [seed])
+    let second = ControlledScan(result: [updated])
+    let scanner = ControlledRefreshScanner(local: [first, second], fallback: [updated])
+    let recorder = CheckedApplicationRecorder()
+    let library = makeScanLibrary(
+      seed: seed, scanner: scanner, coordinator: RecordingCoordinator(recorder: recorder)
+    )
+    let lastCheckedAt = library.lastCheckedAt
+    let task = Task { await library.refreshInstalledApplications() }
+    await first.started.wait()
+    for _ in 0..<5 { await library.refreshInstalledApplications() }
+    await first.release.open()
+    await second.started.wait()
+    XCTAssertEqual(library.phase, .scanning)
+    await second.release.open()
+    await task.value
+
+    let counts = await scanner.counts
+    let names = await recorder.names()
+    XCTAssertEqual(counts.local, 2)
+    XCTAssertEqual(counts.full, 0)
+    XCTAssertTrue(names.isEmpty)
+    XCTAssertEqual(library.lastCheckedAt, lastCheckedAt)
+    XCTAssertEqual(library.applications.first?.currentVersion, "2.0")
+    XCTAssertEqual(library.phase, .idle)
+  }
+
+  func testManualScanTakesOverLocalScanAndPreservesLaterChanges() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    var updated = seed
+    updated.currentVersion = "2.0"
+    let local = ControlledScan(result: [])
+    let full = ControlledScan(result: [seed])
+    let scanner = ControlledRefreshScanner(local: [local], full: [full], fallback: [updated])
+    let library = makeScanLibrary(seed: seed, scanner: scanner)
+    let oldTask = Task { await library.refreshInstalledApplications() }
+    await local.started.wait()
+    // This pending request is covered by the manual scan.
+    await library.refreshInstalledApplications()
+    let manualTask = Task { await library.restartRefresh() }
+    await full.started.wait()
+    await local.release.open()
+    await oldTask.value
+    XCTAssertEqual(library.phase, .scanning)
+    XCTAssertFalse(library.applications.isEmpty)
+    // Changes arriving after the manual scan starts still need a local follow-up.
+    for _ in 0..<3 { await library.refreshInstalledApplications() }
+    await full.release.open()
+    await manualTask.value
+
+    let counts = await scanner.counts
+    XCTAssertEqual(counts.local, 2)
+    XCTAssertEqual(counts.full, 1)
+    XCTAssertEqual(library.applications.first?.currentVersion, "2.0")
+    XCTAssertEqual(library.phase, .idle)
+  }
+
+  func testManualScanAbsorbsPreviouslyQueuedLocalScan() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    let local = ControlledScan(result: [])
+    let scanner = ControlledRefreshScanner(local: [local], fallback: [seed])
+    let library = makeScanLibrary(seed: seed, scanner: scanner)
+    let oldTask = Task { await library.refreshInstalledApplications() }
+    await local.started.wait()
+    await library.refreshInstalledApplications()
+    await library.restartRefresh()
+    await local.release.open()
+    await oldTask.value
+
+    let counts = await scanner.counts
+    XCTAssertEqual(counts.local, 1)
+    XCTAssertEqual(counts.full, 1)
+    XCTAssertEqual(library.phase, .idle)
+    XCTAssertFalse(library.applications.isEmpty)
+  }
+
+  func testCancelledFullScanReturnsToIdle() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    let full = ControlledScan(result: [])
+    let scanner = ControlledRefreshScanner(full: [full], fallback: [seed])
+    let library = makeScanLibrary(seed: seed, scanner: scanner)
+    let task = Task { await library.restartRefresh() }
+    await full.started.wait()
+    task.cancel()
+    await full.release.open()
+    await task.value
+    XCTAssertEqual(library.phase, .idle)
+    XCTAssertFalse(library.applications.isEmpty)
+    await library.refreshInstalledApplications()
+    let counts = await scanner.counts
+    XCTAssertEqual(counts.local, 1)
+  }
+
+  func testCancelledUpdateCheckClearsBusyState() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    let started = AsyncGate()
+    let release = AsyncGate()
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      await started.open()
+      await release.wait()
+      return application
+    }
+    let scanner = ControlledRefreshScanner(fallback: [seed])
+    let library = makeScanLibrary(seed: seed, scanner: scanner, coordinator: coordinator)
+    let task = Task { await library.restartRefresh() }
+    await started.wait()
+    XCTAssertEqual(library.phase, .checking)
+    task.cancel()
+    await release.open()
+    await task.value
+    XCTAssertEqual(library.phase, .idle)
+    XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
+  }
+
+  func testAutomaticFullRefreshReplaysLocalChangesWithoutExtraUpdateChecks() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    let full = ControlledScan(result: [seed])
+    let scanner = ControlledRefreshScanner(full: [full], fallback: [seed])
+    let recorder = CheckedApplicationRecorder()
+    let library = makeScanLibrary(
+      seed: seed, scanner: scanner, coordinator: RecordingCoordinator(recorder: recorder)
+    )
+    let task = Task { await library.refreshIfStale(after: 0) }
+    await full.started.wait()
+    for _ in 0..<3 { await library.refreshInstalledApplications() }
+    await full.release.open()
+    await task.value
+
+    let counts = await scanner.counts
+    let names = await recorder.names()
+    XCTAssertEqual(counts.local, 1)
+    XCTAssertEqual(counts.full, 1)
+    XCTAssertEqual(names, ["Example"])
+    XCTAssertEqual(library.phase, .idle)
+  }
+
+  func testAlreadyCancelledManualRefreshDoesNotInvalidateActiveScan() async {
+    let seed = makeApplication(name: "Example", status: .upToDate)
+    let local = ControlledScan(result: [seed])
+    let scanner = ControlledRefreshScanner(local: [local], fallback: [seed])
+    let library = makeScanLibrary(seed: seed, scanner: scanner)
+    let task = Task { await library.refreshInstalledApplications() }
+    await local.started.wait()
+    let release = AsyncGate()
+    let cancelledTask = Task {
+      await release.wait()
+      await library.restartRefresh()
+    }
+    cancelledTask.cancel()
+    await release.open()
+    await cancelledTask.value
+    XCTAssertEqual(library.phase, .scanning)
+    await local.release.open()
+    await task.value
+    let counts = await scanner.counts
+    XCTAssertEqual(counts.full, 0)
+    XCTAssertEqual(library.phase, .idle)
+  }
+
+  private func makeScanLibrary(
+    seed: AppRecord,
+    scanner: any ApplicationScanning,
+    coordinator: any UpdateCoordinating = StubCoordinator()
+  ) -> AppLibrary {
+    AppLibrary(
+      applications: [seed], scanner: scanner, coordinator: coordinator,
+      userDefaults: UserDefaults(suiteName: "UpkeepTests.\(UUID().uuidString)")!,
+      libraryStore: .memory()
+    )
+  }
+
+  func testInstalledApplicationRefreshMovesExternalUpdateWithoutCheckingSources() async throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let known = makeApplication(
+      name: "Example",
+      status: .updateAvailable,
+      latestVersion: "2.0"
+    )
+    var installed = makeApplication(name: "Example", status: .selfManaged)
+    installed.currentVersion = "2.0"
+    installed.source = .selfManaged
+    installed.sourceURL = nil
+    installed.latestVersion = nil
+    let scanner = InstalledOnlyCountingScanner(installedApplications: [installed])
+    let recorder = CheckedApplicationRecorder()
+    let lastCheckedAt = Date(timeIntervalSince1970: 1_777_000_000)
+    let library = AppLibrary(
+      applications: [known],
+      scanner: scanner,
+      coordinator: RecordingCoordinator(recorder: recorder),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+    library.lastCheckedAt = lastCheckedAt
+
+    await library.refreshInstalledApplications()
+
+    let checkedNames = await recorder.names()
+    XCTAssertEqual(scanner.installedScanCount, 1)
+    XCTAssertEqual(scanner.fullScanCount, 0)
+    XCTAssertEqual(checkedNames, [])
+    XCTAssertEqual(library.lastCheckedAt, lastCheckedAt)
+    XCTAssertEqual(library.applications.first?.currentVersion, "2.0")
+    XCTAssertEqual(library.applications.first?.latestVersion, "2.0")
+    XCTAssertEqual(library.applications.first?.source, .sparkle)
+    XCTAssertEqual(library.applications.first?.status, .upToDate)
+    XCTAssertNotNil(library.applications.first?.lastInstalledAt)
+    XCTAssertTrue(library.availableUpdates.isEmpty)
+    XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
+    XCTAssertEqual(library.phase, .idle)
+  }
+
+  func testInstalledApplicationRefreshKeepsUpdateWhenExternalVersionIsStillBehind() async throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let known = makeApplication(
+      name: "Example",
+      status: .updateAvailable,
+      latestVersion: "3.0"
+    )
+    var installed = makeApplication(name: "Example", status: .selfManaged)
+    installed.currentVersion = "2.0"
+    installed.source = .selfManaged
+    installed.sourceURL = nil
+    installed.latestVersion = nil
+    let scanner = InstalledOnlyCountingScanner(installedApplications: [installed])
+    let recorder = CheckedApplicationRecorder()
+    let library = AppLibrary(
+      applications: [known],
+      scanner: scanner,
+      coordinator: RecordingCoordinator(recorder: recorder),
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    await library.refreshInstalledApplications()
+
+    let checkedNames = await recorder.names()
+    XCTAssertEqual(scanner.installedScanCount, 1)
+    XCTAssertEqual(scanner.fullScanCount, 0)
+    XCTAssertEqual(checkedNames, [])
+    XCTAssertEqual(library.applications.first?.currentVersion, "2.0")
+    XCTAssertEqual(library.applications.first?.latestVersion, "3.0")
+    XCTAssertEqual(library.applications.first?.status, .updateAvailable)
+    XCTAssertEqual(library.availableUpdates.map(\.name), ["Example"])
+    XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
+  }
+
+  func testInstalledApplicationMergeRefreshesDetectedVSCodeCommit() {
+    var previous = makeApplication(
+      name: "Code",
+      status: .updateAvailable,
+      latestVersion: "1.136.1"
+    )
+    previous.source = .vscodeUpdater
+    previous.currentVersion = "1.136.0"
+    previous.buildVersion = "520fb30"
+    previous.latestBuildVersion = "a44adf7"
+    previous.sourceIdentifier = "stable/520fb30b2d3d324b4cb2342f6e88e2cd93751de1"
+
+    var installed = previous
+    installed.currentVersion = "1.136.1"
+    installed.buildVersion = "a44adf7"
+    installed.sourceIdentifier = "stable/a44adf7f53e00964ab890f9f8758a334f1fc15bc"
+
+    let merged = AppLibrary.mergeInstalledApplicationChanges([installed], previous: [previous])
+
+    XCTAssertEqual(
+      merged.first?.sourceIdentifier,
+      "stable/a44adf7f53e00964ab890f9f8758a334f1fc15bc"
+    )
+    XCTAssertEqual(merged.first?.status, .upToDate)
+  }
+
+  func testInstalledApplicationMergeAcceptsNewlyDetectedAppStoreSource() {
+    var previous = makeApplication(name: "TestFlight", status: .selfManaged)
+    previous.source = .selfManaged
+    previous.sourceURL = nil
+
+    var detected = previous
+    detected.source = .appStore
+    detected.appStorePlatform = .mac
+    detected.sourceIdentifier = "899247664"
+    detected.status = .upToDate
+
+    let merged = AppLibrary.mergeInstalledApplicationChanges(
+      [detected],
+      previous: [previous]
+    )
+
+    XCTAssertEqual(merged.first?.source, .appStore)
+    XCTAssertEqual(merged.first?.appStorePlatform, .mac)
+    XCTAssertEqual(merged.first?.sourceIdentifier, "899247664")
+    XCTAssertEqual(merged.first?.status, .upToDate)
+  }
+
   func testMergeKeepsKnownUpdateWhenScanReturnsChecking() {
     let previous = makeApplication(name: "Example", status: .updateAvailable, latestVersion: "2.0")
     let scanned = makeApplication(name: "Example", status: .checking)
@@ -713,6 +1041,105 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(library.applications.first?.status, .upToDate)
   }
 
+  func testLateReleaseMetadataDoesNotUndoExternalVersionUpdate() async throws {
+    try await assertLateReleaseMetadataPreservesExternalUpdate(installedVersion: "2.0")
+  }
+
+  func testLateReleaseMetadataDoesNotUndoExternalBuildUpdate() async throws {
+    try await assertLateReleaseMetadataPreservesExternalUpdate(installedVersion: "1.0")
+  }
+
+  func testCancelledReleaseMetadataRequestDoesNotPublishResult() async throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let application = makeApplication(name: "Example", status: .upToDate)
+    let requestStarted = AsyncGate()
+    let responseReady = AsyncGate()
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      await requestStarted.open()
+      await responseReady.wait()
+      var checked = application
+      checked.releaseNotes = "已取消请求的更新说明"
+      return checked
+    }
+    let library = AppLibrary(
+      applications: [application],
+      coordinator: coordinator,
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+
+    let metadataTask = Task {
+      await library.refreshReleaseMetadataIfNeeded(for: application.id)
+    }
+    await requestStarted.wait()
+    metadataTask.cancel()
+    await responseReady.open()
+    await metadataTask.value
+
+    XCTAssertEqual(library.applications, [application])
+  }
+
+  private func assertLateReleaseMetadataPreservesExternalUpdate(
+    installedVersion: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) async throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    var application = makeApplication(
+      name: "Example",
+      status: .updateAvailable,
+      latestVersion: installedVersion
+    )
+    application.buildVersion = "100"
+    application.latestBuildVersion = "200"
+    application.canAutomaticallyUpdate = true
+    var installed = application
+    installed.currentVersion = installedVersion
+    installed.buildVersion = "200"
+
+    let requestStarted = AsyncGate()
+    let responseReady = AsyncGate()
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { application in
+      await requestStarted.open()
+      await responseReady.wait()
+      var checked = application
+      checked.releaseNotes = "迟到的更新说明"
+      return checked
+    }
+    let library = AppLibrary(
+      applications: [application],
+      scanner: StubScanner(applications: [installed]),
+      coordinator: coordinator,
+      userDefaults: defaults,
+      libraryStore: .memory()
+    )
+    let applicationID = application.id
+
+    let metadataTask = Task {
+      await library.refreshReleaseMetadataIfNeeded(for: applicationID)
+    }
+    await requestStarted.wait()
+    await library.refreshInstalledApplications()
+    let current = try XCTUnwrap(library.applications.first, file: file, line: line)
+    XCTAssertEqual(current.currentVersion, installedVersion, file: file, line: line)
+    XCTAssertEqual(current.buildVersion, "200", file: file, line: line)
+    XCTAssertEqual(current.status, .upToDate, file: file, line: line)
+    XCTAssertFalse(current.canAutomaticallyUpdate, file: file, line: line)
+
+    await responseReady.open()
+    await metadataTask.value
+
+    XCTAssertEqual(library.applications, [current], file: file, line: line)
+  }
+
   private func makeApplication(
     name: String,
     status: UpdateStatus,
@@ -830,6 +1257,26 @@ private final class CountingScanner: ApplicationScanning, @unchecked Sendable {
   }
 }
 
+private final class InstalledOnlyCountingScanner: ApplicationScanning, @unchecked Sendable {
+  let installedApplications: [AppRecord]
+  private(set) var installedScanCount = 0
+  private(set) var fullScanCount = 0
+
+  init(installedApplications: [AppRecord]) {
+    self.installedApplications = installedApplications
+  }
+
+  func scanInstalledApplications(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
+    installedScanCount += 1
+    return installedApplications
+  }
+
+  func scan() async -> [AppRecord] {
+    fullScanCount += 1
+    return installedApplications
+  }
+}
+
 private final class StubCoordinator: UpdateCoordinating, @unchecked Sendable {
   var checkHandler: (@Sendable (AppRecord) async -> AppRecord)?
 
@@ -916,4 +1363,43 @@ private struct ConcurrencyTrackingCoordinator: UpdateCoordinating {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {}
+}
+
+private struct ControlledScan: Sendable {
+  let result: [AppRecord]
+  let started = AsyncGate()
+  let release = AsyncGate()
+
+  func run() async -> [AppRecord] {
+    await started.open()
+    await release.wait()
+    return result
+  }
+}
+
+private actor ControlledRefreshScanner: ApplicationScanning {
+  let local: [ControlledScan]
+  let full: [ControlledScan]
+  let fallback: [AppRecord]
+  private(set) var counts = (local: 0, full: 0)
+
+  init(local: [ControlledScan] = [], full: [ControlledScan] = [], fallback: [AppRecord]) {
+    self.local = local
+    self.full = full
+    self.fallback = fallback
+  }
+
+  func scanInstalledApplications(reusing previousApplications: [AppRecord]) async -> [AppRecord] {
+    let index = counts.local
+    counts.local += 1
+    guard index < local.count else { return fallback }
+    return await local[index].run()
+  }
+
+  func scan() async -> [AppRecord] {
+    let index = counts.full
+    counts.full += 1
+    guard index < full.count else { return fallback }
+    return await full[index].run()
+  }
 }

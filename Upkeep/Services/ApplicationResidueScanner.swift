@@ -13,6 +13,9 @@ struct ApplicationResidueScanner: @unchecked Sendable {
   var updaterCacheDirName: @Sendable (URL) -> String?
   var systemManagedDarwinItem: @Sendable (URL) -> Bool = Self.isSystemManagedDarwinItem(_:)
 
+  var ownershipInventory: @Sendable () -> ApplicationResidueOwnershipInventory = { .init() }
+  var applicationGroups: @Sendable (URL) -> Set<String>? = { _ in nil }
+
   static var live: ApplicationResidueScanner {
     let fileManager = FileManager.default
     let homeDirectory = fileManager.homeDirectoryForCurrentUser
@@ -35,7 +38,19 @@ struct ApplicationResidueScanner: @unchecked Sendable {
       ],
       teamIdentifier: { ApplicationCodeSigning.teamIdentifier(at: $0) },
       bundleName: { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleName") as? String },
-      updaterCacheDirName: Self.updaterCacheDirName(in:)
+      updaterCacheDirName: Self.updaterCacheDirName(in:),
+      ownershipInventory: {
+        ApplicationResidueOwnershipInventory.scan(
+          applicationDirectories: [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            homeDirectory.appendingPathComponent("Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Library/CoreServices", isDirectory: true),
+          ],
+          updaterCacheDirName: Self.updaterCacheDirName(in:)
+        )
+      },
+      applicationGroups: { ApplicationCodeSigning.applicationGroups(at: $0) }
     )
   }
 
@@ -47,9 +62,19 @@ struct ApplicationResidueScanner: @unchecked Sendable {
       updaterCacheDirName: updaterCacheDirName(application.applicationURL)
     )
 
+    let inventory = ownershipInventory()
+    let matcher = inventory.matcher(
+      identity: identity,
+      applicationURL: application.applicationURL,
+      declaredGroups: applicationGroups(application.applicationURL) ?? []
+    )
     var found: [URL: ApplicationResidueItem] = [:]
 
-    func add(_ url: URL, category: ApplicationResidueItem.Category) {
+    func add(
+      _ url: URL,
+      category: ApplicationResidueItem.Category,
+      reason: ApplicationResidueMatchReason
+    ) {
       let standardized = url.standardizedFileURL
       guard found[standardized] == nil, fileManager.fileExists(atPath: standardized.path) else {
         return
@@ -58,129 +83,120 @@ struct ApplicationResidueScanner: @unchecked Sendable {
         url: standardized,
         displayName: displayName(for: standardized),
         category: category,
-        byteCount: allocatedSize(of: standardized)
+        byteCount: allocatedSize(of: standardized),
+        matchReason: reason
       )
     }
 
-    add(application.applicationURL, category: .application)
+    func collect(
+      in directory: URL,
+      category: ApplicationResidueItem.Category,
+      location: ApplicationResidueLocation = .other,
+      skipsSystemManagedItems: Bool = false
+    ) {
+      let children =
+        (try? fileManager.contentsOfDirectory(
+          at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: []
+        )) ?? []
+      for child in children {
+        guard let reason = matcher.match(leaf: child.lastPathComponent, location: location) else {
+          continue
+        }
+        if skipsSystemManagedItems, systemManagedDarwinItem(child) { continue }
+        add(child, category: category, reason: reason)
+      }
+    }
+
+    add(application.applicationURL, category: .application, reason: .application)
 
     for libraryDirectory in libraryDirectories {
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Containers", isDirectory: true),
-        identity: identity,
         category: .containers,
-        into: add
+        location: .containers
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Group Containers", isDirectory: true),
-        identity: identity,
         category: .containers,
-        into: add
+        location: .groupContainers
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Application Support", isDirectory: true),
-        identity: identity,
-        category: .applicationSupport,
-        into: add
+        category: .applicationSupport
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Preferences", isDirectory: true),
-        identity: identity,
         category: .preferences,
-        into: add
+        location: .preferences
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Preferences/ByHost", isDirectory: true),
-        identity: identity,
         category: .preferences,
-        into: add
+        location: .byHostPreferences
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Caches", isDirectory: true),
-        identity: identity,
         category: .caches,
-        into: add
+        location: .caches
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Logs", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("HTTPStorages", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Cookies", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("WebKit", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Saved Application State", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Application Scripts", isDirectory: true),
-        identity: identity,
         category: .other,
-        into: add
+        location: .applicationScripts
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("LaunchAgents", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("LaunchDaemons", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
-      addMatches(
+      collect(
         in: libraryDirectory.appendingPathComponent("Services", isDirectory: true),
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
     }
 
     if let receiptsDirectory {
-      addMatches(
+      collect(
         in: receiptsDirectory,
-        identity: identity,
-        category: .other,
-        into: add
+        category: .other
       )
     }
 
     for directory in darwinDirectories {
       let category: ApplicationResidueItem.Category =
         directory.lastPathComponent == "C" ? .caches : .other
-      addMatches(
+      collect(
         in: directory,
-        identity: identity,
         category: category,
-        skipsSystemManagedItems: true,
-        into: add
+        location: category == .caches ? .caches : .other,
+        skipsSystemManagedItems: true
       )
     }
 
@@ -188,7 +204,8 @@ struct ApplicationResidueScanner: @unchecked Sendable {
       for caskroom in caskroomDirectories {
         add(
           caskroom.appendingPathComponent(token, isDirectory: true),
-          category: .other
+          category: .other,
+          reason: .homebrewCask
         )
       }
     }
@@ -201,28 +218,6 @@ struct ApplicationResidueScanner: @unchecked Sendable {
         return lhs.byteCount > rhs.byteCount
       }
       return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
-    }
-  }
-
-  private func addMatches(
-    in directory: URL,
-    identity: ApplicationResidueIdentity,
-    category: ApplicationResidueItem.Category,
-    skipsSystemManagedItems: Bool = false,
-    into add: (URL, ApplicationResidueItem.Category) -> Void
-  ) {
-    let children =
-      (try? fileManager.contentsOfDirectory(
-        at: directory,
-        includingPropertiesForKeys: [.isDirectoryKey],
-        options: []
-      )) ?? []
-
-    for child in children where identity.matches(url: child) {
-      if skipsSystemManagedItems, systemManagedDarwinItem(child) {
-        continue
-      }
-      add(child, category)
     }
   }
 

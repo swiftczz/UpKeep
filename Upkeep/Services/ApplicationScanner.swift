@@ -177,18 +177,53 @@ struct ApplicationScanner: ApplicationScanning {
       of: applicationURL,
       bundle: bundle
     )
+    let contentsURL = bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true)
+    let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
+    let hasAppStoreReceipt = FileManager.default.fileExists(atPath: receiptURL.path)
+    let iOSAppStoreMetadata = iOSAppStoreMetadata(at: applicationURL, bundleInfo: info)
     if let previous,
       canReuse(
         previous,
         bundleIdentifier: bundleIdentifier,
         currentVersion: currentVersion,
-        applicationModificationDate: applicationModificationDate
+        applicationModificationDate: applicationModificationDate,
+        hasAppStoreReceipt: hasAppStoreReceipt,
+        iOSAppStoreMetadata: iOSAppStoreMetadata
       )
     {
       return previous
     }
 
     if sourceDetection == .installedOnly {
+      if hasAppStoreReceipt {
+        return AppRecord(
+          name: name,
+          bundleIdentifier: bundleIdentifier,
+          applicationURL: applicationURL,
+          currentVersion: currentVersion,
+          buildVersion: buildVersion,
+          applicationModificationDate: applicationModificationDate,
+          source: .appStore,
+          appStorePlatform: .mac,
+          status: .upToDate,
+          sourceIdentifier: appStoreAdamIdentifier(at: applicationURL)
+        )
+      }
+      if let iOSAppStoreMetadata {
+        return AppRecord(
+          name: name,
+          bundleIdentifier: bundleIdentifier,
+          applicationURL: applicationURL,
+          currentVersion: currentVersion,
+          buildVersion: buildVersion,
+          applicationModificationDate: applicationModificationDate,
+          source: .appStore,
+          appStorePlatform: iOSAppStoreMetadata.platform,
+          appStoreCountryCode: iOSAppStoreMetadata.countryCode,
+          status: .upToDate,
+          sourceIdentifier: iOSAppStoreMetadata.storeIdentifier
+        )
+      }
       return AppRecord(
         name: name,
         bundleIdentifier: bundleIdentifier,
@@ -201,12 +236,8 @@ struct ApplicationScanner: ApplicationScanning {
       )
     }
 
-    let contentsURL = bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true)
-    let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
     let sparkleURL = contentsURL.appendingPathComponent(
       "Frameworks/Sparkle.framework", isDirectory: true)
-    let hasAppStoreReceipt = FileManager.default.fileExists(atPath: receiptURL.path)
-    let iOSAppStoreMetadata = iOSAppStoreMetadata(at: applicationURL, bundleInfo: info)
     let hasSparkle = FileManager.default.fileExists(atPath: sparkleURL.path)
     let feedURL = (info["SUFeedURL"] as? String).flatMap(SecureUpdateURL.https(string:))
 
@@ -350,7 +381,9 @@ struct ApplicationScanner: ApplicationScanning {
     _ previous: AppRecord,
     bundleIdentifier: String,
     currentVersion: String,
-    applicationModificationDate: Date?
+    applicationModificationDate: Date?,
+    hasAppStoreReceipt: Bool,
+    iOSAppStoreMetadata: IOSAppStoreMetadata?
   ) -> Bool {
     guard previous.bundleIdentifier == bundleIdentifier,
       previous.currentVersion == currentVersion,
@@ -360,7 +393,18 @@ struct ApplicationScanner: ApplicationScanning {
       return false
     }
 
-    return abs(previousDate.timeIntervalSince(applicationModificationDate)) < 0.001
+    guard abs(previousDate.timeIntervalSince(applicationModificationDate)) < 0.001 else {
+      return false
+    }
+
+    if hasAppStoreReceipt {
+      return previous.source == .appStore && previous.appStorePlatform == .mac
+    }
+    if let iOSAppStoreMetadata {
+      return previous.source == .appStore
+        && previous.appStorePlatform == iOSAppStoreMetadata.platform
+    }
+    return previous.source != .appStore
   }
 
   private static func resolvedName(

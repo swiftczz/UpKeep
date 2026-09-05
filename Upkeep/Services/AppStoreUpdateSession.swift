@@ -1,6 +1,7 @@
 // The App Store transaction flow in this file is derived from mas-cli/mas.
 // Copyright (c) 2015 Andrew Naylor, Ross Goldberg. Licensed under MIT.
 
+import CoreServices
 import Darwin
 import Foundation
 import ObjectiveC
@@ -357,9 +358,29 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     downloadQueue = nil
     observerToken = nil
 
+    if let registrationURL = Self.launchServicesRegistrationURL(
+      installedPath: installedPath,
+      applicationURL: applicationURL,
+      error: error
+    ) {
+      LSRegisterURL(registrationURL as NSURL, true)
+    }
+
     completion?(installedPath, error)
     cleanupHardLinks()
     selfRetainer = nil
+  }
+
+  static func launchServicesRegistrationURL(
+    installedPath: String?,
+    applicationURL: URL?,
+    error: NSError?
+  ) -> URL? {
+    guard error == nil else { return nil }
+    if let installedPath, !installedPath.isEmpty {
+      return URL(fileURLWithPath: installedPath).standardizedFileURL
+    }
+    return applicationURL?.standardizedFileURL
   }
 
   private func cleanupHardLinks() {

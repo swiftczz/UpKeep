@@ -41,11 +41,40 @@ struct VSCodeUpdatePayload: Equatable, Sendable {
     return downloadURL
   }
 
-  func shouldOfferUpdate(against currentVersion: String) -> Bool {
+  func shouldOfferUpdate(
+    against currentVersion: String,
+    currentCommit: String?,
+    currentBuildVersion: String?
+  ) -> Bool {
     if VersionComparator.isNewer(productVersion, than: currentVersion) {
       return true
     }
-    return productVersion.localizedCaseInsensitiveCompare(currentVersion) == .orderedSame
+    guard productVersion.localizedCaseInsensitiveCompare(currentVersion) == .orderedSame,
+      let remoteCommit = commit?.nonBlankValue,
+      let currentCommit = currentCommit?.nonBlankValue
+    else {
+      return false
+    }
+    if Self.commitsMatch(remoteCommit, currentCommit) {
+      return false
+    }
+    if let currentBuildVersion,
+      Self.commitsMatch(remoteCommit, currentBuildVersion)
+    {
+      return false
+    }
+    return true
+  }
+
+  private static func commitsMatch(_ first: String, _ second: String) -> Bool {
+    let first = first.lowercased()
+    let second = second.lowercased()
+    guard (7...40).contains(first.count), (7...40).contains(second.count),
+      first.allSatisfy(\.isHexDigit), second.allSatisfy(\.isHexDigit)
+    else {
+      return false
+    }
+    return first.hasPrefix(second) || second.hasPrefix(first)
   }
 
   private static func versionLikeValue(_ value: String?) -> String? {
@@ -94,7 +123,11 @@ struct VSCodeUpdateProvider: Sendable {
     }
 
     do {
-      switch try await fetchPayload(request, currentVersion: application.currentVersion) {
+      switch try await fetchPayload(
+        request,
+        currentVersion: application.currentVersion,
+        currentBuildVersion: application.buildVersion
+      ) {
       case .upToDate:
         application.latestVersion = application.currentVersion
         application.status = .upToDate
@@ -139,7 +172,8 @@ struct VSCodeUpdateProvider: Sendable {
     guard
       case .update(let payload) = try await fetchPayload(
         request,
-        currentVersion: application.currentVersion
+        currentVersion: application.currentVersion,
+        currentBuildVersion: application.buildVersion
       ),
       let packageURL = payload.packageURL
     else {
@@ -179,7 +213,8 @@ struct VSCodeUpdateProvider: Sendable {
 
   private func fetchPayload(
     _ request: UpdateRequest,
-    currentVersion: String
+    currentVersion: String,
+    currentBuildVersion: String?
   ) async throws -> FetchResult {
     var sawNotFound = false
     var sawOtherFailure = false
@@ -205,7 +240,11 @@ struct VSCodeUpdateProvider: Sendable {
         return .upToDate
       }
       if response.statusCode == 200, let payload = VSCodeUpdatePayload.parse(response.data) {
-        return payload.shouldOfferUpdate(against: currentVersion) ? .update(payload) : .upToDate
+        return payload.shouldOfferUpdate(
+          against: currentVersion,
+          currentCommit: request.commit,
+          currentBuildVersion: currentBuildVersion
+        ) ? .update(payload) : .upToDate
       }
       if response.statusCode == 404 {
         sawNotFound = true

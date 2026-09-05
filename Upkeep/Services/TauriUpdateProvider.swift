@@ -60,9 +60,8 @@ struct TauriUpdateManifest: Equatable, Sendable {
       }
     }
 
-    return platforms.first(where: { key, platform in
-      key.lowercased().contains("darwin") && Self.isInstallable(platform.url)
-    })?.value
+    // A Darwin target alone does not establish CPU compatibility.
+    return nil
   }
 
   static func parse(_ data: Data) -> TauriUpdateManifest? {

@@ -72,6 +72,16 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertEqual(query["country"], "cn")
   }
 
+  func testProductPageURLUsesMatchingMacStorefront() throws {
+    let url = try XCTUnwrap(
+      AppStoreUpdateProvider.productPageURL(trackID: 595_615_424, country: "CHN")
+    )
+
+    XCTAssertEqual(url.host, "apps.apple.com")
+    XCTAssertEqual(url.path, "/cn/app/id595615424")
+    XCTAssertEqual(Self.queryValue("platform", in: url), "mac")
+  }
+
   func testMacLookupCandidatesPreferBundleIdentifierBeforeStoreIdentifier() {
     XCTAssertEqual(
       AppStoreUpdateProvider.lookupCandidates(
@@ -156,6 +166,128 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertEqual(checked.appStorePlatform, .mac)
     XCTAssertEqual(checked.appStoreCountryCode, "cn")
     XCTAssertEqual(checked.appStoreAccountCountryCode, "cn")
+  }
+
+  func testCheckUsesNewerReleaseFromMatchingStorefrontProductPage() async throws {
+    let requests = AppStoreRequestRecorder()
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { url in
+        await requests.append(url)
+        if url.host == "apps.apple.com" {
+          return Self.productPageResponse(
+            version: "11.9.1",
+            releaseNotes: "新增刷歌电台动态封面功能",
+            releaseDate: "Fri Sep 04 2026 02:20:26 GMT+0000 (Coordinated Universal Time)"
+          )
+        }
+        return Self.lookupResponse(
+          bundleIdentifier: "com.tencent.QQMusicMac",
+          trackID: 595_615_424,
+          version: "11.9.0",
+          kind: "mac-software",
+          supportedDevices: nil
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "QQ音乐",
+      bundleIdentifier: "com.tencent.QQMusicMac",
+      applicationURL: URL(fileURLWithPath: "/Applications/QQMusic.app"),
+      currentVersion: "11.9.0",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking,
+      sourceIdentifier: "595615424"
+    )
+
+    let checked = await provider.check(application)
+    let requestedURLs = await requests.urls()
+
+    XCTAssertEqual(checked.latestVersion, "11.9.1")
+    XCTAssertEqual(checked.releaseNotes, "新增刷歌电台动态封面功能")
+    XCTAssertNotNil(checked.releaseDate)
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(checked.appStoreCountryCode, "cn")
+    XCTAssertEqual(checked.appStoreAccountCountryCode, "cn")
+    XCTAssertEqual(requestedURLs.count, 1)
+    XCTAssertEqual(requestedURLs.first?.host, "apps.apple.com")
+  }
+
+  func testCheckFallsBackToLookupWhenProductPageCannotBeParsed() async throws {
+    let requests = AppStoreRequestRecorder()
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { url in
+        await requests.append(url)
+        if url.host == "apps.apple.com" {
+          return Data("<html>Changed product page</html>".utf8)
+        }
+        return Self.lookupResponse(
+          bundleIdentifier: "com.example.mac",
+          trackID: 123_456,
+          version: "2.0",
+          kind: "mac-software",
+          supportedDevices: nil
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "Example",
+      bundleIdentifier: "com.example.mac",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
+      currentVersion: "1.0",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking,
+      sourceIdentifier: "123456"
+    )
+
+    let checked = await provider.check(application)
+    let requestedURLs = await requests.urls()
+
+    XCTAssertEqual(checked.latestVersion, "2.0")
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(requestedURLs.first?.host, "apps.apple.com")
+    XCTAssertTrue(requestedURLs.dropFirst().allSatisfy { $0.host == "itunes.apple.com" })
+  }
+
+  func testCheckWithoutStoreIDFallsBackToLookupAPI() async throws {
+    let requests = AppStoreRequestRecorder()
+    let provider = AppStoreUpdateProvider(
+      currentStorefrontCountryCode: { "CHN" },
+      lookupData: { url in
+        await requests.append(url)
+        return Self.lookupResponse(
+          bundleIdentifier: "com.example.mac",
+          trackID: 123_456,
+          version: "2.0",
+          kind: "mac-software",
+          supportedDevices: nil
+        )
+      }
+    )
+    let application = AppRecord(
+      name: "Example",
+      bundleIdentifier: "com.example.mac",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
+      currentVersion: "1.0",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "cn",
+      status: .checking
+    )
+
+    let checked = await provider.check(application)
+    let requestedURLs = await requests.urls()
+
+    XCTAssertEqual(checked.latestVersion, "2.0")
+    XCTAssertEqual(checked.sourceIdentifier, "123456")
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(requestedURLs.count, 2)
+    XCTAssertTrue(requestedURLs.allSatisfy { $0.host == "itunes.apple.com" })
   }
 
   func testCheckRejectsNewerMobileReleaseForNativeMacApplication() async throws {
@@ -551,6 +683,26 @@ final class AppStoreLookupTests: XCTestCase {
     XCTAssertTrue(countries.allSatisfy { $0.count == 2 })
   }
 
+  func testLookupCountriesPrioritizesCurrentAccountStorefront() {
+    let application = AppRecord(
+      name: "Clash",
+      bundleIdentifier: "com.hako.network",
+      applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
+      currentVersion: "1.0.4",
+      source: .appStore,
+      appStorePlatform: .mac,
+      appStoreCountryCode: "us",
+      status: .checking
+    )
+
+    let countries = AppStoreUpdateProvider.lookupCountries(
+      for: application,
+      accountCountryCode: "CHN"
+    )
+
+    XCTAssertEqual(Array(countries.prefix(2)), ["cn", "us"])
+  }
+
   func testLookupCountriesNormalizesLocaleStyleCodes() {
     let application = AppRecord(
       name: "Clash",
@@ -676,5 +828,47 @@ final class AppStoreLookupTests: XCTestCase {
     ]
     result["supportedDevices"] = supportedDevices
     return try! JSONSerialization.data(withJSONObject: ["results": [result]])
+  }
+
+  private static func productPageResponse(
+    version: String,
+    releaseNotes: String,
+    releaseDate: String
+  ) -> Data {
+    Data(
+      """
+      <html><body>
+      <script type="application/json" id="serialized-server-data">
+      {
+        "data": [{
+          "data": {
+            "shelfMapping": {
+              "mostRecentVersion": {
+                "items": [{
+                  "primarySubtitle": "版本 \(version)",
+                  "secondarySubtitle": "\(releaseDate)",
+                  "text": "\(releaseNotes)"
+                }]
+              }
+            }
+          }
+        }]
+      }
+      </script>
+      </body></html>
+      """.utf8
+    )
+  }
+}
+
+private actor AppStoreRequestRecorder {
+  private var storage: [URL] = []
+
+  func append(_ url: URL) {
+    storage.append(url)
+  }
+
+  func urls() -> [URL] {
+    storage
   }
 }

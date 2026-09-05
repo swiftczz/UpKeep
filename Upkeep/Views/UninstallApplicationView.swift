@@ -155,6 +155,7 @@ struct UninstallApplicationView: View {
       )
       .toggleStyle(.checkbox)
       .labelsHidden()
+      .accessibilityLabel("\(item.displayName)，\(item.matchReason.explanation)")
 
       AppIconView(applicationURL: item.url, size: 28)
 
@@ -167,6 +168,11 @@ struct UninstallApplicationView: View {
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .help(item.url.path)
+        Text(item.matchReason.explanation)
+          .font(.caption)
+          .foregroundStyle(item.isSelectedByDefault ? Color.secondary : Color.orange)
+          .lineLimit(2)
+          .help(item.matchReason.explanation)
       }
 
       Spacer(minLength: 12)
@@ -247,7 +253,7 @@ struct UninstallApplicationView: View {
       scanner.items(for: application)
     }.value
     items = scanned
-    selectedIDs = Set(scanned.map(\.id))
+    selectedIDs = ApplicationResidueItem.defaultSelection(in: scanned)
     isScanning = false
   }
 

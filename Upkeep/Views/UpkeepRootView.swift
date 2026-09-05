@@ -278,7 +278,9 @@ struct UpkeepRootView: View {
     localApplicationChangeRefreshTask = Task {
       try? await Task.sleep(for: Self.localApplicationChangeDebounce)
       guard !Task.isCancelled else { return }
-      await library.refreshIfStale(after: 0)
+      // Only the debounce delay is cancellable by the next file notification.
+      localApplicationChangeRefreshTask = nil
+      await library.refreshInstalledApplications()
     }
   }
 

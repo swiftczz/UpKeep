@@ -25,6 +25,7 @@ final class AppLibrary {
   @ObservationIgnored private var refreshGeneration = 0
   private var hasLoaded: Bool
   private var refreshRequested = false
+  private var installedApplicationRefreshRequested = false
 
   private static let ignoredBundleIdentifiersKey = "ignoredUpdateBundleIdentifiers"
   private static let maximumConcurrentChecks = 30
@@ -168,6 +169,57 @@ final class AppLibrary {
     await refresh(cachePolicy: .allowed)
   }
 
+  func refreshInstalledApplications() async {
+    guard !Task.isCancelled, hasLoaded, updatingApplicationIDs.isEmpty else { return }
+    installedApplicationRefreshRequested = true
+    guard phase == .idle else { return }
+
+    // Each scan owns its state, including when a manual refresh supersedes it.
+    refreshGeneration += 1
+    let generation = refreshGeneration
+    defer { finishRefresh(generation: generation) }
+
+    repeat {
+      installedApplicationRefreshRequested = false
+      let previousSelection = selectedApplicationID
+      let previousApplications = applications
+      phase = .scanning
+
+      let installedApplications = await scanner.scanInstalledApplications(
+        reusing: previousApplications
+      )
+      guard isCurrentRefresh(generation) else { return }
+
+      publish(
+        Self.mergeInstalledApplicationChanges(
+          installedApplications,
+          previous: previousApplications
+        ),
+        selecting: previousSelection
+      )
+      phase = .idle
+      persistSnapshot()
+    } while installedApplicationRefreshRequested
+
+    if refreshRequested {
+      await refresh(cachePolicy: requestedRefreshCachePolicy)
+    }
+  }
+
+  private func refreshPendingInstalledApplications() async {
+    guard installedApplicationRefreshRequested else { return }
+    await refreshInstalledApplications()
+  }
+
+  private func finishRefresh(generation: Int) {
+    guard generation == refreshGeneration else { return }
+    pendingCheckedFlushTask?.cancel()
+    pendingCheckedFlushTask = nil
+    pendingCheckedApplications.removeAll(keepingCapacity: true)
+    checkingApplicationIDs.removeAll(keepingCapacity: true)
+    phase = .idle
+  }
+
   func refreshReleaseMetadataIfNeeded(for applicationID: AppRecord.ID) async {
     guard phase == .idle,
       !updatingApplicationIDs.contains(applicationID),
@@ -192,8 +244,11 @@ final class AppLibrary {
     }
 
     let checked = await coordinator.check(application)
-    guard !updatingApplicationIDs.contains(applicationID),
-      let currentIndex = applications.firstIndex(where: { $0.id == applicationID })
+    // A scan or another check may have replaced the record while this request was in flight.
+    guard !Task.isCancelled,
+      !updatingApplicationIDs.contains(applicationID),
+      let currentIndex = applications.firstIndex(where: { $0.id == applicationID }),
+      applications[currentIndex] == application
     else {
       return
     }
@@ -210,7 +265,7 @@ final class AppLibrary {
   }
 
   func restartRefresh() async {
-    guard updatingApplicationIDs.isEmpty else { return }
+    guard !Task.isCancelled, updatingApplicationIDs.isEmpty else { return }
     refreshGeneration += 1
     refreshRequested = false
     requestedRefreshCachePolicy = .allowed
@@ -218,10 +273,11 @@ final class AppLibrary {
       cachePolicy: .reloadIgnoringCache,
       generation: refreshGeneration
     )
+    await refreshPendingInstalledApplications()
   }
 
   private func refresh(cachePolicy: UpdateCachePolicy) async {
-    guard updatingApplicationIDs.isEmpty else { return }
+    guard !Task.isCancelled, updatingApplicationIDs.isEmpty else { return }
     guard phase == .idle else {
       refreshRequested = true
       requestedRefreshCachePolicy = requestedRefreshCachePolicy.merging(cachePolicy)
@@ -239,6 +295,7 @@ final class AppLibrary {
       guard completed else { return }
       activeCachePolicy = requestedRefreshCachePolicy
     } while refreshRequested
+    await refreshPendingInstalledApplications()
   }
 
   @discardableResult
@@ -246,6 +303,10 @@ final class AppLibrary {
     cachePolicy: UpdateCachePolicy,
     generation: Int
   ) async -> Bool {
+    guard !Task.isCancelled else { return false }
+    // This full scan covers local changes already queued before it starts.
+    installedApplicationRefreshRequested = false
+    defer { finishRefresh(generation: generation) }
     let previousSelection = selectedApplicationID
     let previousApplications = applications
     pendingCheckedFlushTask?.cancel()
@@ -385,6 +446,7 @@ final class AppLibrary {
     guard pendingCheckedFlushTask == nil else { return }
     pendingCheckedFlushTask = Task { @MainActor in
       try? await Task.sleep(for: Self.checkedResultFlushDelay)
+      guard !Task.isCancelled else { return }
       flushPendingChecked()
     }
   }
@@ -465,6 +527,28 @@ final class AppLibrary {
         merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
       }
       return carryingMetadata(from: previous, onto: merged)
+    }
+  }
+
+  static func mergeInstalledApplicationChanges(
+    _ installedApplications: [AppRecord],
+    previous: [AppRecord]
+  ) -> [AppRecord] {
+    let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+
+    return installedApplications.map { disk in
+      guard let existing = previousByID[disk.id] else {
+        return disk
+      }
+
+      let versionChanged =
+        disk.currentVersion != existing.currentVersion
+        || disk.buildVersion != existing.buildVersion
+      guard versionChanged else {
+        return carryingInstalledState(from: existing, onto: disk)
+      }
+
+      return installedDiskRecord(disk, replacing: existing, installedAt: .now)
     }
   }
 
@@ -557,6 +641,55 @@ final class AppLibrary {
       merged.lastInstalledAt = previous.lastInstalledAt
     }
     return merged
+  }
+
+  private static func carryingInstalledState(
+    from previous: AppRecord,
+    onto disk: AppRecord
+  ) -> AppRecord {
+    if disk.source != .selfManaged, disk.source != previous.source {
+      return carryingMetadata(from: previous, onto: disk)
+    }
+
+    var merged = carryingMetadata(from: previous, onto: disk)
+    let detectedSameSource = disk.source == previous.source
+    merged.source = previous.source
+    merged.appStorePlatform = detectedSameSource
+      ? disk.appStorePlatform ?? previous.appStorePlatform
+      : previous.appStorePlatform
+    merged.appStoreCountryCode = detectedSameSource
+      ? disk.appStoreCountryCode ?? previous.appStoreCountryCode
+      : previous.appStoreCountryCode
+    merged.appStoreAccountCountryCode = detectedSameSource
+      ? disk.appStoreAccountCountryCode ?? previous.appStoreAccountCountryCode
+      : previous.appStoreAccountCountryCode
+    merged.status = previous.status
+    merged.latestVersion = previous.latestVersion
+    merged.latestBuildVersion = previous.latestBuildVersion
+    merged.sourceURL = detectedSameSource ? disk.sourceURL ?? previous.sourceURL : previous.sourceURL
+    merged.sourceIdentifier = detectedSameSource
+      ? disk.sourceIdentifier ?? previous.sourceIdentifier
+      : previous.sourceIdentifier
+    merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
+    return merged
+  }
+
+  private static func installedDiskRecord(
+    _ disk: AppRecord,
+    replacing application: AppRecord,
+    installedAt: Date
+  ) -> AppRecord {
+    var record = carryingInstalledState(from: application, onto: disk)
+    record.lastInstalledAt = installedAt
+
+    if application.hasNewerRelease(than: disk) {
+      record.status = .updateAvailable
+      record.canAutomaticallyUpdate = application.canAutomaticallyUpdate
+    } else {
+      record.status = record.source == .selfManaged ? .selfManaged : .upToDate
+      record.canAutomaticallyUpdate = false
+    }
+    return record
   }
 
   func performPrimaryAction(for applicationID: AppRecord.ID) async -> URL? {
@@ -727,34 +860,7 @@ final class AppLibrary {
       return
     }
 
-    var record = disk
-    record.source = application.source
-    record.appStorePlatform = application.appStorePlatform
-    record.appStoreCountryCode = application.appStoreCountryCode
-    record.appStoreAccountCountryCode = application.appStoreAccountCountryCode
-    record.sourceURL = application.sourceURL
-    record.homepageURL = application.homepageURL
-    record.releaseNotes = application.releaseNotes
-    record.releaseDate = application.releaseDate
-    record.releaseNotesURL = application.releaseNotesURL
-    record.sourceIdentifier = application.sourceIdentifier
-    record.alternateUpdateSource = application.alternateUpdateSource
-    record.alternateSourceURL = application.alternateSourceURL
-    record.alternateSourceIdentifier = application.alternateSourceIdentifier
-    record.alternateHomepageURL = application.alternateHomepageURL
-    record.homebrewCaskToken = application.homebrewCaskToken
-    record.packageByteCount = application.packageByteCount
-    record.latestVersion = application.latestVersion
-    record.latestBuildVersion = application.latestBuildVersion
-    record.lastInstalledAt = .now
-
-    if application.hasNewerRelease(than: disk) {
-      record.status = .updateAvailable
-      record.canAutomaticallyUpdate = application.canAutomaticallyUpdate
-    } else {
-      record.status = .upToDate
-      record.canAutomaticallyUpdate = false
-    }
+    let record = Self.installedDiskRecord(disk, replacing: application, installedAt: .now)
 
     applications[index] = record
     persistSnapshot()

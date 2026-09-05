@@ -108,6 +108,38 @@ final class AppStoreUpdateSessionTests: XCTestCase {
     XCTAssertNil(error)
   }
 
+  func testSuccessfulInstallRegistersItsReportedPathWithLaunchServices() {
+    let registrationURL = AppStoreUpdateSession.launchServicesRegistrationURL(
+      installedPath: "/Applications/iQIYI.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/Old iQIYI.app"),
+      error: nil
+    )
+
+    XCTAssertEqual(registrationURL?.path, "/Applications/iQIYI.app")
+  }
+
+  func testSuccessfulInstallFallsBackToOriginalApplicationPathForRegistration() {
+    let applicationURL = URL(fileURLWithPath: "/Applications/iQIYI.app")
+
+    let registrationURL = AppStoreUpdateSession.launchServicesRegistrationURL(
+      installedPath: nil,
+      applicationURL: applicationURL,
+      error: nil
+    )
+
+    XCTAssertEqual(registrationURL, applicationURL)
+  }
+
+  func testFailedInstallIsNotRegisteredWithLaunchServices() {
+    let registrationURL = AppStoreUpdateSession.launchServicesRegistrationURL(
+      installedPath: "/Applications/iQIYI.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/iQIYI.app"),
+      error: NSError(domain: "test", code: 1)
+    )
+
+    XCTAssertNil(registrationURL)
+  }
+
   func testRetainedReceiptKeepsRequiredFileName() {
     let receiptURL = URL(fileURLWithPath: "/private/tmp/download/receipt")
 
