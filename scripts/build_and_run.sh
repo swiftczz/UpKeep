@@ -127,20 +127,65 @@ development_signing_identity() {
     | /usr/bin/awk -F'"' '/"Apple Development:/{print $2; exit}'
 }
 
+# 嵌套助手必须先单独签名，再签外层 .app。不要用 --deep：
+# 对已签名的助手再 --deep 会导致 “nested code is modified or invalid”。
+codesign_item() {
+  local path="$1"
+  local identifier="$2"
+  local identity="$3"
+  local requirements="${4:-}"
+  shift 4 || true
+
+  local args=(--force --sign)
+  if [[ -z "$identity" || "$identity" == "-" ]]; then
+    args+=(-)
+  else
+    args+=("$identity")
+  fi
+  args+=(--identifier "$identifier")
+  if [[ -n "$requirements" ]]; then
+    args+=(--requirements "$requirements")
+  fi
+  args+=("$@")
+  codesign "${args[@]}" "$path"
+}
+
+sign_bundle() {
+  local identity="${1:-}"
+  local hardened="${2:-0}"
+  local extra=()
+
+  if [[ "$hardened" == "1" && -n "$identity" && "$identity" != "-" ]]; then
+    extra+=(--options runtime --timestamp)
+  fi
+
+  if [[ -z "$identity" || "$identity" == "-" ]]; then
+    echo "==> 使用带固定要求的 Ad-hoc 签名"
+    codesign_item "$HELPER_BINARY" "$HELPER_LABEL" "-" \
+      "=designated => identifier \"$HELPER_LABEL\""
+    codesign_item "$APP_BUNDLE" "$BUNDLE_ID" "-" \
+      "=designated => identifier \"$BUNDLE_ID\""
+  else
+    echo "==> 使用代码签名：$identity"
+    codesign_item "$HELPER_BINARY" "$HELPER_LABEL" "$identity" "" "${extra[@]}"
+    codesign_item "$APP_BUNDLE" "$BUNDLE_ID" "$identity" "" "${extra[@]}"
+  fi
+
+  codesign --verify --strict --verbose=2 "$HELPER_BINARY"
+  codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+}
+
 sign_development_app() {
   local identity
   identity="$(development_signing_identity)"
 
   if [[ -n "$identity" && "$identity" != "-" ]]; then
     echo "==> 使用稳定的本地开发签名：$identity"
-    codesign --force --deep --sign "$identity" "$APP_BUNDLE"
+    sign_bundle "$identity" 0
     return
   fi
 
-  echo "==> 未找到 Apple Development 证书，使用带固定要求的 Ad-hoc 签名"
-  codesign --force --deep --sign - \
-    --requirements "=designated => identifier \"$BUNDLE_ID\"" \
-    "$APP_BUNDLE"
+  sign_bundle "-" 0
 }
 
 package_app_from_binary() {
@@ -169,7 +214,6 @@ package_app_from_binary() {
 
   write_info_plist
   write_helper_plist
-  sign_development_app
 }
 
 sign_app() {
@@ -179,16 +223,10 @@ sign_app() {
   fi
 
   if [[ -z "$identity" || "$identity" == "-" ]]; then
-    echo "==> 使用带固定要求的 Ad-hoc 签名"
-    codesign --force --deep --sign - \
-      --requirements "=designated => identifier \"$BUNDLE_ID\"" \
-      "$APP_BUNDLE"
+    sign_bundle "-" 0
   else
-    echo "==> 使用代码签名：$identity"
-    codesign --force --deep --options runtime --timestamp --sign "$identity" "$APP_BUNDLE"
+    sign_bundle "$identity" 1
   fi
-
-  codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 }
 
 create_dmg() {
@@ -258,6 +296,8 @@ build_only() {
 
   if [[ $should_sign -eq 1 ]]; then
     sign_app
+  else
+    sign_development_app
   fi
 
   if [[ $should_create_dmg -eq 1 ]]; then
@@ -275,6 +315,7 @@ build_debug_app() {
   local build_dir
   build_dir="$(swift build --package-path "$ROOT_DIR" --show-bin-path)"
   package_app_from_binary "$build_dir/$APP_NAME" "$build_dir/$HELPER_NAME"
+  sign_development_app
 }
 
 quit_running_app() {
