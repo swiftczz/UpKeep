@@ -1,133 +1,96 @@
 # Upkeep
 
-Upkeep 是一个面向 macOS 26 及以上系统的应用更新检查工具。它扫描本机应用，识别实际更新来源，并在原生 SwiftUI 双栏界面中展示当前版本、最新版本和发行说明。
+Upkeep 是 macOS 上的应用更新与卸载工具。它扫描本机已安装的 `.app`，判断每个应用实际用哪条更新通道，然后在同一个窗口里检查版本、安装更新，或把应用和关联文件一起移到废纸篓。
 
-应用源码不直接导入 AppKit：窗口与网页 URL 操作使用 SwiftUI，应用图标通过 Quick Look Thumbnailing 读取为 Core Graphics 图像；本地应用启动、本机扫描、网络和进程操作由 Foundation 完成。
+最低系统版本是 **macOS 26**。源码是 Swift 6.2 + SwiftUI，用 Swift Package Manager 组织，没有第三方 Swift 包。
 
-## 当前能力
+## 如何使用
 
-- 扫描 `/Applications` 和 `~/Applications`
-- 读取应用图标、名称、Bundle ID、版本和构建号
-- 对应用图标进行异步生成、请求合并和内存缓存，长列表滚动时不重复读取同一图标
-- 按系统首选语言读取应用名称，并按应用包本地修改时间从新到旧排列
-- 识别原生 Mac App Store receipt，以及安装在 Mac 上的 iPhone/iPad App Store 包
-- 按本地应用平台分别查询 Mac 或 iPhone/iPad 商店版本，避免跨平台误配
-- 应用列表中的 App Store 来源统一显示苹果 Logo；详情徽标附加 `macwindow`、`iphone`、`ipad` 小图标区分平台
-- 识别 Homebrew Cask，并使用 Homebrew 的更新判断结果
-- 识别 Sparkle Appcast，并解析版本、发布日期和发行说明
-- 识别 Electron-builder（`app-update.yml` 的 github / generic HTTPS 源）并检查 `latest-mac.yml`
-- 识别 Tauri updater（`latest.json` / `update-proxy.json`）并检查版本、发行说明和安装包
-- 识别应用自身明确引用的 GitHub Releases 稳定版接口，并检查版本、发行说明和当前 Mac 架构安装包
-- 对无法安全查询的应用标记为“由应用自身管理”
-- 按“可用更新”和“已安装的应用”分组
-- 刷新时保持当前列表和选择稳定，扫描与检查结束后一次性提交最终分组，避免点击应用时列表跳动
-- 支持在更新列表中右键忽略应用更新，并在已安装列表中取消忽略；忽略状态会跨启动保留
-- 支持应用搜索、详情查看、检查更新和安全的更新入口
-- 原生 Mac App Store 应用可复用 App Store 当前登录账号，由 Upkeep 直接下载并安装更新
-- Homebrew Cask 可由 Upkeep 执行更新
-- 带安全下载项的 Sparkle Appcast 可由 Upkeep 校验 Ed25519 签名、开发者身份并安装
-- Electron-builder、Tauri updater 与 GitHub Releases 可由 Upkeep 下载 HTTPS 安装包并替换本地应用；提供校验值时会先验证
-- 其他来源交回原管理工具
+左侧是应用列表，右侧是详情。
 
-## 环境要求
+列表分三组：
 
-- macOS 26.0+
-- Xcode 26+
-- Swift 6.2+
-- Homebrew 为可选项；未安装时不启用 Homebrew 来源
-- 不需要安装 `mas`；App Store 更新逻辑已经集成到 Upkeep
-- Sparkle 更新由 Upkeep 直接解析和安装，不嵌入 Sparkle.framework
+1. **可用更新** — 已发现新版本，且你没有忽略
+2. **已安装的应用** — 已是最新，或不支持检查
+3. **已忽略的更新** — 你主动忽略过的条目
 
-> App Store 直接更新使用 macOS 私有的 CommerceKit 与 StoreFoundation 框架，适合本地或
-> Developer ID 分发，不能用于提交 Mac App Store。相关移植代码遵循 mas-cli/mas 的 MIT
-> 许可，详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+侧栏可以按应用名、Bundle ID 或更新来源搜索。例如输入 `Sparkle`、`Homebrew`、`GitHub` 会只留下对应来源。
 
-## 使用 Swift Package Manager
+右侧详情显示当前版本、最新版本、发布日期、更新包大小、主页和发行说明。主按钮随状态变化：
 
-工程由根目录的 `Package.swift` 管理，不依赖 `.xcodeproj`。
+- 能由 Upkeep 安装时，按钮是「更新」
+- Mac App Store 应用因平台或商店区号对不上、必须去商店页时，会打开 App Store
+- 没有可安装更新时，按钮是「打开」
 
-在 Xcode 中打开 `Package.swift`，选择 Upkeep executable scheme 后运行；也可以在项目目录执行：
+主按钮右侧的菜单里还有「在 Finder 中显示」和「卸载」。
+
+工具栏：
+
+- **检查更新**（`⌘R`）重新扫描并检查全部应用
+- **更新全部** 一次性安装所有可自动更新的条目；如果其中有正在运行的应用，会先弹出确认，更新时退出，装完再打开
+
+
+## 如何编译
+
+需要 Xcode 26 和 Swift 6.2。在仓库根目录：
 
 ```sh
-swift run Upkeep
-```
+# Debug 组装成 .app 并打开
+./scripts/build_and_run.sh
 
-运行测试：
+# 带调试器
+./scripts/build_and_run.sh --debug
 
-```sh
+# 打开后跟系统日志
+./scripts/build_and_run.sh --logs
+
+# 打开后确认进程还在
+./scripts/build_and_run.sh --verify
+
+# 测试
 swift test
 ```
 
-## 编译、运行与打包
+也可以用 Xcode 打开根目录的 `Package.swift`，选 Upkeep scheme 运行。不要直接 `swift run Upkeep`：那样只有裸二进制，没有 `.app` 包，也没有特权助手。
 
-项目提供了与 DeepListen 使用方式一致的脚本：
-
-```sh
-./script/build_and_run.sh
-```
-
-常用开发模式：
-
-| 命令 | 用途 |
-| --- | --- |
-| `./script/build_and_run.sh` | Debug 编译、组装 `.app` 并启动 |
-| `./script/build_and_run.sh --debug` | 使用 LLDB 启动应用 |
-| `./script/build_and_run.sh --logs` | 启动应用并跟踪系统日志 |
-| `./script/build_and_run.sh --verify` | 启动并确认应用进程正常存活 |
-
-构建发布包：
+打 Release 包：
 
 ```sh
-APP_VERSION=0.1.0 ./script/build_and_run.sh --build-only universal --sign --dmg
-APP_VERSION=0.1.0 ./script/build_and_run.sh --build-only arm64     --sign --dmg
-APP_VERSION=0.1.0 ./script/build_and_run.sh --build-only x86_64    --sign --dmg
+./scripts/build_and_run.sh --build-only universal --sign --dmg
+./scripts/build_and_run.sh --build-only arm64 --sign --dmg
+./scripts/build_and_run.sh --build-only x86_64 --sign --dmg
 ```
 
-- `--build-only` 使用 Release 配置，并在 `dist/` 生成 `Upkeep.app`。
-- `--sign` 默认使用 Ad-hoc 签名；设置 `SIGN_IDENTITY="Developer ID Application: …"` 可改用 Developer ID 和 Hardened Runtime。
-- `--dmg` 生成 `Upkeep-<架构>-<版本>.dmg`，内含应用和指向 `/Applications` 的拖拽安装入口。
-- `APP_VERSION` 默认取最近的 Git tag，没有 tag 时为 `0.1.0-dev`。
-- `APP_BUILD` 默认取当前仓库提交数，也可以通过环境变量明确指定。
-- 如果添加 `Resources/AppIcon.icns`，脚本会自动将其写入应用包。
+产物在 `dist/`。`--sign` 的证书顺序是：环境变量 `SIGN_IDENTITY` → 本机 Apple Development 证书 → 带固定 Bundle ID 要求的 Ad-hoc。`--dmg` 会再打一份带 Applications 快捷方式的磁盘镜像。
 
-## 应用图标
+版本号：`APP_VERSION` 没设时用最近的 Git tag，没有 tag 就是 `0.1.0-dev`。构建号：`APP_BUILD` 没设时用当前提交数。
 
-图标是红底上的环形更新箭头，扁平化处理，底色上下只差一档明度。
-
-`Resources/AppIcon.png` 与 `AppIcon.icns` 不是图片素材，而是由脚本按参数绘制出来的：
+图标在 `Resources/AppIcon.icns`。要改外观，改 `scripts/make_app_icon.py` 顶部的颜色和几何参数，然后：
 
 ```sh
-python3 script/make_app_icon.py Resources
+python3 scripts/make_app_icon.py Resources
 ```
 
-脚本顶部集中了所有可调参数（渐变色、圆弧半径、笔画宽度、箭头比例等），改完重跑即可。依赖 `pillow`。
+需要 Pillow。输出必须是 1024×1024、没有透明像素的方图。macOS 26 看到 `.icns` 里有透明区域，会按旧图标处理，外面再套一层灰色玻璃底板。圆角和阴影交给系统加，不要画在图里。
 
-输出是 1024×1024 满幅、完全不透明的方图，自己不做圆角也不烘焙投影。macOS 26 一旦在 `.icns` 里发现透明像素，就会把它当成旧格式图标，塞进一块灰色玻璃底板里缩小显示，于是出现双层圆角套框；交满幅不透明方图，系统才会自己套上正确的圆角、投影和玻璃边缘。改图标时注意别把这条规则改回旧的「1024 画布内 824 图形」布局。
+对外分发还要自己做 Developer ID 签名和公证。
 
-## 目录结构
+## 项目结构
 
 ```text
-Upkeep/
-├── Package.swift
-├── script/
-│   └── build_and_run.sh
-├── Upkeep/
-│   ├── Models/
-│   ├── Services/
-│   ├── Store/
-│   ├── Views/
-│   └── Resources/
-├── UpkeepTests/
-└── 需求文档.md
+Package.swift                         SPM 清单
+Resources/                            图标
+scripts/build_and_run.sh              组装 .app / 签名 / DMG
+scripts/make_app_icon.py              画图标
+Upkeep/                               主程序
+  Models/                             AppRecord、来源和状态
+  Services/                           扫描、各更新通道、安装、卸载、进程
+  Store/                              列表状态和本地缓存
+  Views/                              侧栏、详情、卸载页
+UpkeepPrivilegedHelper/               以 root 安装 App Store pkg
+UpkeepPrivilegedHelperProtocol/       主程序和助手共用的 XPC 协议
+UpkeepTests/
+UpkeepPrivilegedHelperTests/
 ```
 
-## 首版边界
-
-- 原生 Mac App Store 应用支持直接更新；安装在 Mac 上的 iPhone/iPad 应用仍跳转至官方商店。
-- Sparkle 应用在 Appcast 含 HTTPS 安装包时支持直接更新；仅含说明、动态生成或需要鉴权的 Feed 仍打开应用处理。
-- Electron-builder 仅处理 `provider: github` 与带 HTTPS 地址的 `provider: generic`；`custom`、localhost、空地址等不安全配置仍交给应用自身。
-- Tauri updater 仅处理 HTTPS 的 `latest.json` / `update-proxy.json`，并安装当前架构的 `.app` 压缩包。
-- GitHub Releases 仅接受应用包中明确的稳定版接口，仓库名必须与应用名或 Bundle ID 对应；自动安装会核对 Bundle ID 与候选应用签名，本地应用有 Team ID 时还会核对开发者签名，release 提供 SHA256 时会先校验安装包。
-- Homebrew 通常不提供发行说明，因此详情可能只有版本与主页。
-- 动态或需要鉴权的更新源不会被强行解析。
-- 脚本可以生成 `.app` 和 DMG；公开分发前仍需配置 Developer ID 签名、公证和正式应用图标。
+主程序链接 CoreServices、Security、ServiceManagement。助手只链接 Security。
