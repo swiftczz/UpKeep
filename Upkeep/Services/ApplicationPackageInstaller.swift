@@ -161,9 +161,26 @@ enum ApplicationPackageInstaller {
   }
 
   private static func verifySHA512(_ data: Data, expected: String) throws {
-    let digest = Data(SHA512.hash(data: data)).base64EncodedString()
+    let digest = Data(SHA512.hash(data: data))
     let normalizedExpected = expected.filter { !$0.isWhitespace }
-    guard digest == normalizedExpected else {
+    let encodedBytes = Array(normalizedExpected.utf8)
+    let expectedDigest: Data?
+    // Some electron-updater feeds (including TradingView) encode SHA-512 as
+    // hex rather than Base64. Compare the decoded 64-byte digests in either case.
+    if encodedBytes.count == 128,
+      encodedBytes.allSatisfy({
+        (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
+      })
+    {
+      expectedDigest = Data(stride(from: 0, to: encodedBytes.count, by: 2).compactMap { offset in
+        UInt8(String(decoding: encodedBytes[offset..<offset + 2], as: UTF8.self), radix: 16)
+      })
+    } else {
+      expectedDigest = Data(base64Encoded: normalizedExpected)
+    }
+    guard let expectedDigest, expectedDigest.count == SHA512.byteCount,
+      digest == expectedDigest
+    else {
       throw ApplicationPackageInstallerError.checksumMismatch
     }
   }

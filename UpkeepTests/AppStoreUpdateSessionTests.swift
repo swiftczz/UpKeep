@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Upkeep
 
 final class AppStoreUpdateSessionTests: XCTestCase {
@@ -157,4 +158,74 @@ final class AppStoreUpdateSessionTests: XCTestCase {
       "QQMusic.pkg"
     )
   }
+  func testDownloadProgressUsesDownloadPhase() {
+    var lifecycle = AppStoreDownloadLifecycle()
+    XCTAssertEqual(
+      lifecycle.progress(phase: "Downloading", fractionCompleted: 0.4),
+      UpdateProgress(fractionCompleted: 0.4, status: "正在下载…")
+    )
+    XCTAssertEqual(
+      lifecycle.progress(phase: "Downloading", fractionCompleted: 1),
+      .indeterminate("下载完成，等待安装…")
+    )
+  }
+
+  func testInstallProgressDoesNotRegressToLateDownloadProgress() {
+    var lifecycle = AppStoreDownloadLifecycle()
+    XCTAssertEqual(
+      lifecycle.progress(phase: "Installing", fractionCompleted: 0.2),
+      .indeterminate("正在安装…")
+    )
+    XCTAssertEqual(
+      lifecycle.progress(phase: "Downloading", fractionCompleted: 1),
+      .indeterminate("正在安装…")
+    )
+  }
+
+  func testUnknownPhaseDoesNotDisplayMisleadingDownloadPercentage() {
+    var lifecycle = AppStoreDownloadLifecycle()
+    XCTAssertEqual(
+      lifecycle.progress(phase: nil, fractionCompleted: 1),
+      .indeterminate("正在处理更新…")
+    )
+    XCTAssertEqual(
+      lifecycle.progress(phase: "Verifying", fractionCompleted: 1),
+      .indeterminate("正在验证更新…")
+    )
+  }
+
+  func testUnknownPhasePreservesAvailableProgress() {
+    for phase: String? in [nil, "", "Transfer"] {
+      var lifecycle = AppStoreDownloadLifecycle()
+      XCTAssertEqual(
+        lifecycle.progress(phase: phase, fractionCompleted: 0.42),
+        UpdateProgress(fractionCompleted: 0.42, status: "正在处理更新…")
+      )
+      for unavailable: Double? in [nil, .nan, .infinity, 1] {
+        XCTAssertEqual(
+          lifecycle.progress(phase: phase, fractionCompleted: unavailable),
+          .indeterminate("正在处理更新…")
+        )
+      }
+    }
+  }
+
+  func testFallbackInstallIgnoresLateDownloadAndRemovalEvents() {
+    var lifecycle = AppStoreDownloadLifecycle()
+    XCTAssertTrue(lifecycle.beginFallbackInstall())
+    XCTAssertFalse(lifecycle.acceptsDownloadEvents)
+    XCTAssertNil(lifecycle.progress(phase: "Downloading", fractionCompleted: 1))
+    XCTAssertFalse(lifecycle.beginFallbackInstall())
+    lifecycle.finish()
+    XCTAssertFalse(lifecycle.acceptsDownloadEvents)
+    XCTAssertNil(lifecycle.progress(phase: "Installing", fractionCompleted: 1))
+  }
+
+  func testCompletedSessionCannotStartAnotherFallbackInstall() {
+    var lifecycle = AppStoreDownloadLifecycle()
+    lifecycle.finish()
+    XCTAssertFalse(lifecycle.beginFallbackInstall())
+    XCTAssertFalse(lifecycle.acceptsDownloadEvents)
+  }
+
 }

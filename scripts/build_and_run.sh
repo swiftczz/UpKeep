@@ -103,6 +103,10 @@ write_helper_plist() {
   <string>$HELPER_LABEL</string>
   <key>BundleProgram</key>
   <string>Contents/MacOS/$HELPER_NAME</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$HELPER_NAME</string>
+  </array>
   <key>MachServices</key>
   <dict>
     <key>$HELPER_LABEL</key>
@@ -153,12 +157,6 @@ codesign_item() {
 sign_bundle() {
   local identity="${1:-}"
   local hardened="${2:-0}"
-  local extra=()
-
-  if [[ "$hardened" == "1" && -n "$identity" && "$identity" != "-" ]]; then
-    extra+=(--options runtime --timestamp)
-  fi
-
   if [[ -z "$identity" || "$identity" == "-" ]]; then
     echo "==> 使用带固定要求的 Ad-hoc 签名"
     codesign_item "$HELPER_BINARY" "$HELPER_LABEL" "-" \
@@ -167,11 +165,18 @@ sign_bundle() {
       "=designated => identifier \"$BUNDLE_ID\""
   else
     echo "==> 使用代码签名：$identity"
-    codesign_item "$HELPER_BINARY" "$HELPER_LABEL" "$identity" "" "${extra[@]}"
-    codesign_item "$APP_BUNDLE" "$BUNDLE_ID" "$identity" "" "${extra[@]}"
+    # macOS Bash 3.2 treats an empty array as unset under `set -u`.
+    if [[ "$hardened" == "1" ]]; then
+      codesign_item "$HELPER_BINARY" "$HELPER_LABEL" "$identity" "" --options runtime --timestamp
+      codesign_item "$APP_BUNDLE" "$BUNDLE_ID" "$identity" "" --options runtime --timestamp
+    else
+      codesign_item "$HELPER_BINARY" "$HELPER_LABEL" "$identity" ""
+      codesign_item "$APP_BUNDLE" "$BUNDLE_ID" "$identity" ""
+    fi
   fi
 
   codesign --verify --strict --verbose=2 "$HELPER_BINARY"
+  test -s "$APP_CONTENTS/_CodeSignature/CodeResources"
   codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 }
 
@@ -236,6 +241,7 @@ create_dmg() {
   rm -f "$dmg_path"
   STAGING_DIR="$(mktemp -d)"
   ditto "$APP_BUNDLE" "$STAGING_DIR/$APP_NAME.app"
+  codesign --verify --deep --strict --verbose=2 "$STAGING_DIR/$APP_NAME.app"
   ln -s /Applications "$STAGING_DIR/Applications"
 
   diskutil image create from \

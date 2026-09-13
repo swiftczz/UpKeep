@@ -4,6 +4,7 @@
 import CoreServices
 import Darwin
 import Foundation
+import OSLog
 import ObjectiveC
 import Security
 
@@ -12,6 +13,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     PrivateFrameworks.load() != nil
   }
 
+  private static let logger = Logger(subsystem: "com.chengzhong.Upkeep", category: "AppStoreUpdate")
   private static let fallbackInstallLock = NSLock()
   nonisolated(unsafe) private static var fallbackInstallAuthorization: AuthorizationRef?
 
@@ -26,6 +28,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
   private var receiptHardLinkURL: URL?
   private var selfRetainer: AppStoreUpdateSession?
   private var isFinished = false
+  private var downloadLifecycle = AppStoreDownloadLifecycle()
   private var purchaseGate = AppStorePurchaseGate()
   private let finishLock = NSLock()
 
@@ -62,6 +65,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     completionHandler = completion
     selfRetainer = self
     isFinished = false
+    downloadLifecycle = AppStoreDownloadLifecycle()
     purchaseGate.reset()
 
     guard let queueClass = NSClassFromString("CKDownloadQueue"),
@@ -77,11 +81,13 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     let buyParameters =
       "productType=C&price=0&pg=default&appExtVrsId=0&pricingParameters=STDRDL&salableAdamId=\(adamID)"
     guard let purchaseClass = NSClassFromString("SSPurchase"),
-      let purchase = ObjC.call(purchaseClass, "purchaseWithBuyParameters:", buyParameters as NSString)
+      let purchase = ObjC.call(
+        purchaseClass, "purchaseWithBuyParameters:", buyParameters as NSString)
         as? NSObject,
       let metadataClass = NSClassFromString("SSDownloadMetadata"),
       let allocatedMetadata = ObjC.call(metadataClass, "alloc"),
-      let metadata = ObjC.call(allocatedMetadata, "initWithKind:", "software" as NSString) as? NSObject,
+      let metadata = ObjC.call(allocatedMetadata, "initWithKind:", "software" as NSString)
+        as? NSObject,
       let controllerClass = NSClassFromString("CKPurchaseController"),
       let controller = ObjC.call(controllerClass, "sharedPurchaseController")
     else {
@@ -97,22 +103,25 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
 
     let purchaseCompletion: ObjC.PurchaseCompletion = { [weak self] _, _, error, response in
       guard let self else { return }
-      if let error {
-        self.complete(installedPath: nil, error: error)
-        return
-      }
-
       let downloads = (response as? NSObject)?.value(forKey: "downloads") as? [Any]
-      guard downloads?.isEmpty == false else {
-        self.complete(
-          installedPath: nil,
-          error: Self.bridgeError(4, "App Store 没有开始下载此更新。")
-        )
-        return
-      }
-      _ = self.purchaseGate.completePurchase(downloadCount: downloads?.count ?? 0)
+      self.purchaseCompleted(error: error, downloadCount: downloads?.count ?? 0)
     }
     ObjC.performPurchase(controller, purchase: purchase, completion: purchaseCompletion)
+  }
+
+  private func purchaseCompleted(error: NSError?, downloadCount: Int) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { [self] in
+        purchaseCompleted(error: error, downloadCount: downloadCount)
+      }
+      return
+    }
+    guard !isFinished else { return }
+    if let error {
+      complete(installedPath: nil, error: error)
+    } else if !purchaseGate.completePurchase(downloadCount: downloadCount) {
+      complete(installedPath: nil, error: Self.bridgeError(4, "App Store 没有开始下载此更新。"))
+    }
   }
 
   func cancel() {
@@ -133,23 +142,39 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
 
   @objc(downloadQueue:statusChangedForDownload:)
   func downloadQueue(_ queue: Any, statusChangedForDownload download: Any) {
-    guard downloadMatchesSession(download) else { return }
+    guard Thread.isMainThread else {
+      let event = AppStoreDownloadEvent(queue: queue, download: download)
+      DispatchQueue.main.async { [self, event] in
+        downloadQueue(event.queue, statusChangedForDownload: event.download)
+      }
+      return
+    }
+    guard downloadLifecycle.acceptsDownloadEvents, downloadMatchesSession(download) else { return }
     currentDownload = download as AnyObject
     refreshArtifactHardLinks()
 
     let status = (download as AnyObject).value(forKey: "status") as? NSObject
     let rawProgress = status?.value(forKey: "phasePercentComplete") as? NSNumber
-    progressHandler?(
-      UpdateProgress(
-        fractionCompleted: UpdateProgress.clamp(rawProgress?.doubleValue ?? 0),
-        status: "正在下载…"
-      )
-    )
+    let phase =
+      status?.responds(to: NSSelectorFromString("activePhase")) == true
+      ? status?.value(forKey: "activePhase") as? String : nil
+    if let progress = downloadLifecycle.progress(
+      phase: phase, fractionCompleted: rawProgress?.doubleValue
+    ) {
+      progressHandler?(progress)
+    }
   }
 
   @objc(downloadQueue:changedWithRemoval:)
   func downloadQueue(_ queue: Any, changedWithRemoval download: Any) {
-    guard downloadMatchesSession(download) else { return }
+    guard Thread.isMainThread else {
+      let event = AppStoreDownloadEvent(queue: queue, download: download)
+      DispatchQueue.main.async { [self, event] in
+        downloadQueue(event.queue, changedWithRemoval: event.download)
+      }
+      return
+    }
+    guard downloadLifecycle.acceptsDownloadEvents, downloadMatchesSession(download) else { return }
 
     let status = (download as AnyObject).value(forKey: "status") as? NSObject
     let error = status?.value(forKey: "error") as? NSError
@@ -171,12 +196,20 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
         complete(installedPath: nil, error: Self.bridgeError(5, "App Store 下载更新失败。"))
         return
       }
-      progressHandler?(UpdateProgress(fractionCompleted: 0.95, status: "正在安装…"))
+      guard downloadLifecycle.beginFallbackInstall() else { return }
+      Self.logger.info("App Store 安装失败，转交安装助手，应用编号：\(self.adamID)")
+      progressHandler?(.indeterminate("正在连接安装助手…"))
       DispatchQueue.global(qos: .userInitiated).async {
         let installError = Self.installDownloadedPackage(
           packageURL: packageHardLinkURL,
           receiptURL: receiptHardLinkURL,
-          applicationURL: applicationURL
+          applicationURL: applicationURL,
+          progress: { [weak self] progress in
+            DispatchQueue.main.async { [weak self] in
+              guard let self, !self.isFinished else { return }
+              self.progressHandler?(progress)
+            }
+          }
         )
         DispatchQueue.main.async { [self] in
           complete(
@@ -346,6 +379,10 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     }
     finishLock.unlock()
     guard shouldFinish else { return }
+    downloadLifecycle.finish()
+    if let error {
+      Self.logger.error("App Store 更新失败：\(error.localizedDescription, privacy: .public)")
+    }
 
     if let observerToken, let downloadQueue {
       ObjC.callVoid(downloadQueue, "removeObserver:", observerToken)
@@ -397,12 +434,14 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
   private static func installDownloadedPackage(
     packageURL: URL,
     receiptURL: URL,
-    applicationURL: URL
+    applicationURL: URL,
+    progress: @escaping @Sendable (UpdateProgress) -> Void
   ) -> NSError? {
     switch AppStorePrivilegedInstaller.installDownloadedPackage(
       packageURL: packageURL,
       receiptURL: receiptURL,
-      applicationURL: applicationURL
+      applicationURL: applicationURL,
+      progress: progress
     ) {
     case .installed:
       return nil
@@ -415,6 +454,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
     fallbackInstallLock.lock()
     defer { fallbackInstallLock.unlock() }
 
+    progress(.indeterminate("正在等待管理员授权…"))
     let authorizationResult = cachedFallbackInstallAuthorization()
     guard let authorization = authorizationResult.authorization else {
       return authorizationResult.error
@@ -445,6 +485,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       applicationURL.path,
     ]
 
+    progress(.indeterminate("正在安装…"))
     var output = ""
     let status = withCArgumentVector(arguments) { argv in
       var pipe: UnsafeMutablePointer<FILE>?
@@ -538,6 +579,53 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
   }
 }
 
+// Framework observer callbacks may arrive on a background queue. Transfer the
+// event to the main queue before reading it or mutating the session state.
+private struct AppStoreDownloadEvent: @unchecked Sendable {
+  let queue: Any
+  let download: Any
+}
+
+struct AppStoreDownloadLifecycle {
+  private enum Stage { case receiving, fallbackInstall, finished }
+  private var stage = Stage.receiving
+  private var hasEnteredInstallation = false
+
+  var acceptsDownloadEvents: Bool { stage == .receiving }
+
+  mutating func beginFallbackInstall() -> Bool {
+    guard acceptsDownloadEvents else { return false }
+    stage = .fallbackInstall
+    return true
+  }
+
+  mutating func finish() { stage = .finished }
+
+  mutating func progress(phase: String?, fractionCompleted: Double?) -> UpdateProgress? {
+    guard acceptsDownloadEvents else { return nil }
+    let phase = phase?.lowercased() ?? ""
+    if phase.contains("install") {
+      hasEnteredInstallation = true
+    }
+    if hasEnteredInstallation { return .indeterminate("正在安装…") }
+    if phase.contains("verif") { return .indeterminate("正在验证更新…") }
+    if phase.contains("extract") { return .indeterminate("正在解压更新…") }
+    let fraction = fractionCompleted.flatMap { $0.isFinite ? UpdateProgress.clamp($0) : nil }
+    guard phase.contains("download") else {
+      // Private framework phase names are not stable. Preserve reported progress
+      // without claiming an unknown phase is necessarily a download.
+      return UpdateProgress(
+        fractionCompleted: fraction.flatMap { $0 < 1 ? $0 : nil },
+        status: "正在处理更新…"
+      )
+    }
+    if let fraction, fraction >= 1 {
+      return .indeterminate("下载完成，等待安装…")
+    }
+    return UpdateProgress(fractionCompleted: fraction, status: "正在下载…")
+  }
+}
+
 struct AppStorePurchaseGate {
   private(set) var purchaseHasCompleted = false
 
@@ -610,9 +698,10 @@ private struct PrivateFrameworks: @unchecked Sendable {
 }
 
 private enum ObjC {
-  typealias PurchaseCompletion = @convention(block) (
-    AnyObject?, Bool, NSError?, AnyObject?
-  ) -> Void
+  typealias PurchaseCompletion =
+    @convention(block) (
+      AnyObject?, Bool, NSError?, AnyObject?
+    ) -> Void
 
   nonisolated(unsafe) private static let msgSend: UnsafeMutableRawPointer = {
     guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "objc_msgSend") else {
@@ -659,7 +748,8 @@ private enum ObjC {
     purchase: AnyObject,
     completion: PurchaseCompletion
   ) {
-    typealias Fn = @convention(c) (AnyObject, Selector, AnyObject, UInt64, PurchaseCompletion) ->
+    typealias Fn =
+      @convention(c) (AnyObject, Selector, AnyObject, UInt64, PurchaseCompletion) ->
       Void
     unsafeBitCast(msgSend, to: Fn.self)(
       controller,
@@ -682,13 +772,14 @@ private enum ObjC {
   }
 }
 
-private typealias AuthorizationExecuteWithPrivilegesFn = @convention(c) (
-  AuthorizationRef,
-  UnsafePointer<CChar>,
-  AuthorizationFlags,
-  UnsafePointer<UnsafeMutablePointer<CChar>?>,
-  UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
-) -> OSStatus
+private typealias AuthorizationExecuteWithPrivilegesFn =
+  @convention(c) (
+    AuthorizationRef,
+    UnsafePointer<CChar>,
+    AuthorizationFlags,
+    UnsafePointer<UnsafeMutablePointer<CChar>?>,
+    UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
+  ) -> OSStatus
 
 private let authorizationExecuteWithPrivileges: AuthorizationExecuteWithPrivilegesFn? = {
   let handle =

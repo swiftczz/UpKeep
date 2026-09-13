@@ -4,6 +4,24 @@ import XCTest
 @testable import Upkeep
 
 final class AppStorePrivilegedInstallerTests: XCTestCase {
+  func testRegistrationFingerprintIncludesLaunchConfigurationAndApplicationLocation() {
+    let helper = Data("signed helper".utf8)
+    let original = AppStorePrivilegedInstaller.registrationFingerprint(
+      helperData: helper, launchDaemonData: Data("old plist".utf8),
+      applicationPath: "/Applications/Upkeep.app"
+    )
+    let changedPlist = AppStorePrivilegedInstaller.registrationFingerprint(
+      helperData: helper, launchDaemonData: Data("new plist".utf8),
+      applicationPath: "/Applications/Upkeep.app"
+    )
+    let movedApp = AppStorePrivilegedInstaller.registrationFingerprint(
+      helperData: helper, launchDaemonData: Data("old plist".utf8),
+      applicationPath: "/Users/example/Applications/Upkeep.app"
+    )
+    XCTAssertNotEqual(original, changedPlist)
+    XCTAssertNotEqual(original, movedApp)
+  }
+
   func testRegistrationIsUnavailableWithoutBundledHelper() {
     let state = RegistrationState(status: .disabled)
 
@@ -77,7 +95,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
     let error = try? XCTUnwrap(result.error)
     XCTAssertEqual(error?.code, 5)
     XCTAssertTrue(error?.localizedDescription.contains("后台项目") == true)
-    XCTAssertEqual(state.registeredFingerprint, "new-fingerprint")
+    XCTAssertNil(state.registeredFingerprint)
     XCTAssertEqual(state.registerCallCount, 0)
   }
 
@@ -137,10 +155,115 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
     XCTAssertEqual(error?.code, 1)
     XCTAssertTrue(error?.localizedDescription.contains("register failed") == true)
   }
+  func testRepairsUnreachableHelperEvenWhenFingerprintIsUnchanged() {
+    let state = RegistrationState(
+      status: .enabled, registeredFingerprint: "new-fingerprint", reachability: [false, true]
+    )
+    let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+    guard case .enabled = result else { return XCTFail("Expected repaired registration") }
+    XCTAssertEqual(state.unregisterCallCount, 1)
+    XCTAssertEqual(state.registerCallCount, 1)
+    XCTAssertEqual(state.probeCallCount, 2)
+  }
+
+  func testFailedRepairStopsAfterOneAttempt() {
+    let state = RegistrationState(
+      status: .enabled, registeredFingerprint: "new-fingerprint", reachability: [false]
+    )
+    let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+    XCTAssertEqual(result.error?.code, 7)
+    XCTAssertEqual(state.unregisterCallCount, 1)
+    XCTAssertEqual(state.registerCallCount, 1)
+    XCTAssertEqual(state.probeCallCount, 2)
+  }
+
+  func testUnreachableReplacementDoesNotPersistNewFingerprint() {
+    let state = RegistrationState(
+      status: .enabled, registeredFingerprint: "old-fingerprint", reachability: [false]
+    )
+    let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+    XCTAssertEqual(result.error?.code, 7)
+    XCTAssertEqual(state.registeredFingerprint, "old-fingerprint")
+    XCTAssertEqual(state.probeCallCount, 1)
+  }
+
+  func testFreshRegistrationMustAnswerBeforeItIsMarkedReady() {
+    let state = RegistrationState(status: .disabled, reachability: [false])
+    let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+    XCTAssertEqual(result.error?.code, 7)
+    XCTAssertNil(state.registeredFingerprint)
+  }
+
+  func testUnresponsiveConnectionDoesNotSubmitAnInstallation() {
+    var installed = false
+    let result = AppStorePrivilegedInstaller.sendInstallRequest(
+      using: PrivilegedHelperConnectionDependencies(
+        ping: { _ in }, install: { _ in installed = true }
+      ),
+      connectionTimeout: 0
+    )
+    guard case .failed(let error) = result else { return XCTFail("Expected connection failure") }
+    XCTAssertEqual(error.code, 7)
+    XCTAssertFalse(installed)
+  }
+
+  func testRejectedConnectionDoesNotSubmitAnInstallation() {
+    let result = AppStorePrivilegedInstaller.sendInstallRequest(
+      using: PrivilegedHelperConnectionDependencies(
+        ping: { $0(false) }, install: { _ in XCTFail("Must not install") }
+      )
+    )
+    guard case .failed(let error) = result else { return XCTFail("Expected connection failure") }
+    XCTAssertEqual(error.code, 7)
+  }
+
+  func testConnectedHelperInstallsExactlyOnce() {
+    var installs = 0
+    let result = AppStorePrivilegedInstaller.sendInstallRequest(
+      using: PrivilegedHelperConnectionDependencies(
+        ping: { $0(true) },
+        install: { reply in
+          installs += 1
+          reply(.installed)
+        }
+      )
+    )
+    guard case .installed = result else { return XCTFail("Expected installation") }
+    XCTAssertEqual(installs, 1)
+  }
+
+  func testInstallationTimeoutReportsUncertainOutcomeWithoutRetrying() {
+    var installs = 0
+    let result = AppStorePrivilegedInstaller.sendInstallRequest(
+      using: PrivilegedHelperConnectionDependencies(
+        ping: { $0(true) }, install: { _ in installs += 1 }
+      ),
+      installationTimeout: 0
+    )
+    guard case .failed(let error) = result else { return XCTFail("Expected timeout") }
+    XCTAssertEqual(error.code, 2)
+    XCTAssertTrue(error.localizedDescription.contains("尚未确认"))
+    XCTAssertEqual(installs, 1)
+  }
+
+  func testLateReplyCannotReplaceTimeout() {
+    let reply = PrivilegedHelperReply<Bool>()
+    XCTAssertFalse(reply.wait(timeout: 0, otherwise: false))
+    reply.resolve(true)
+    XCTAssertFalse(reply.wait(timeout: 0, otherwise: true))
+  }
+
+  func testDuplicateReplyCannotReplaceOriginalResult() {
+    let reply = PrivilegedHelperReply<Bool>()
+    reply.resolve(true)
+    reply.resolve(false)
+    XCTAssertTrue(reply.wait(timeout: 0, otherwise: false))
+  }
+
 }
 
-private extension PrivilegedHelperRegistrationResult {
-  var error: NSError? {
+extension PrivilegedHelperRegistrationResult {
+  fileprivate var error: NSError? {
     guard case .failed(let error) = self else { return nil }
     return error
   }
@@ -154,19 +277,23 @@ private final class RegistrationState {
   let unregisterError: Error?
   let shouldReplyToUnregister: Bool
   let registerError: Error?
+  var reachability: [Bool]
+  var probeCallCount = 0
 
   init(
     status: PrivilegedHelperServiceStatus,
     registeredFingerprint: String? = nil,
     unregisterError: Error? = nil,
     shouldReplyToUnregister: Bool = true,
-    registerError: Error? = nil
+    registerError: Error? = nil,
+    reachability: [Bool] = [true]
   ) {
     self.status = status
     self.registeredFingerprint = registeredFingerprint
     self.unregisterError = unregisterError
     self.shouldReplyToUnregister = shouldReplyToUnregister
     self.registerError = registerError
+    self.reachability = reachability
   }
 
   func dependencies(
@@ -192,6 +319,11 @@ private final class RegistrationState {
           throw registerError
         }
         self.status = .enabled
+      },
+      isReachable: {
+        self.probeCallCount += 1
+        if self.reachability.count > 1 { return self.reachability.removeFirst() }
+        return self.reachability.first ?? false
       }
     )
   }
