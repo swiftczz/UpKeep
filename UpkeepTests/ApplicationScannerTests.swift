@@ -547,7 +547,21 @@ final class ApplicationScannerTests: XCTestCase {
       withDestinationPath: "Wrapper/LangEasyLexis.app"
     )
 
-    let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    let infoURL = wrappedApplicationURL.appendingPathComponent("Info.plist")
+    let completeInfo = try Data(contentsOf: infoURL)
+    var incompleteInfo = try XCTUnwrap(
+      PropertyListSerialization.propertyList(from: completeInfo, format: nil) as? [String: Any]
+    )
+    incompleteInfo.removeValue(forKey: "CFBundleShortVersionString")
+    incompleteInfo.removeValue(forKey: "CFBundleVersion")
+    try writePropertyList(incompleteInfo, to: infoURL)
+    let incomplete = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+    XCTAssertEqual(incomplete.currentVersion, "未知")
+
+    try completeInfo.write(to: infoURL)
+    let application = try XCTUnwrap(
+      ApplicationScanner.makeRecord(from: applicationURL, reusing: incomplete)
+    )
 
     XCTAssertEqual(application.source, .appStore)
     XCTAssertEqual(application.appStorePlatform, .iPhone)
@@ -556,6 +570,37 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.sourceTitle, "iPhone App Store")
     XCTAssertEqual(application.sourceSystemImage, "apple.logo")
     XCTAssertEqual(application.sourcePlatformSystemImage, "iphone")
+    XCTAssertEqual(application.currentVersion, "1.0")
+    XCTAssertEqual(application.buildVersion, "1")
+    XCTAssertEqual(application.applicationURL, applicationURL)
+
+    // App Store can finish or replace the inner bundle while Upkeep is running.
+    // A rescan must read the plist on disk instead of Foundation's cached wrapper.
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "cn.com.langeasy.LangEasyLexis",
+        extraValues: [
+          "CFBundleShortVersionString": "2.0",
+          "CFBundleVersion": "2",
+          "CFBundleSupportedPlatforms": ["iPhoneOS"],
+          "UIDeviceFamily": [1, 2],
+        ]
+      ),
+      to: wrappedApplicationURL.appendingPathComponent("Info.plist")
+    )
+
+    let updated = try XCTUnwrap(
+      ApplicationScanner.makeRecord(from: applicationURL, reusing: application)
+    )
+    let installed = try XCTUnwrap(
+      ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
+    )
+    for record in [updated, installed] {
+      XCTAssertEqual(record.currentVersion, "2.0")
+      XCTAssertEqual(record.buildVersion, "2")
+      XCTAssertEqual(record.applicationURL, applicationURL)
+      XCTAssertEqual(record.appStorePlatform, .iPhone)
+    }
   }
 
   func testDoesNotTreatGitHubDownloadMetadataAsAnUpdateSource() throws {

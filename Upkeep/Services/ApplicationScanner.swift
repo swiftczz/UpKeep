@@ -360,6 +360,7 @@ struct ApplicationScanner: ApplicationScanning {
     var urls = [
       bundle.bundleURL.appendingPathComponent("Contents", isDirectory: true),
       bundle.bundleURL.appendingPathComponent("Contents/Info.plist"),
+      bundle.bundleURL.appendingPathComponent("Info.plist"),
     ]
     if let executableURL = bundle.executableURL {
       urls.append(executableURL)
@@ -458,15 +459,14 @@ struct ApplicationScanner: ApplicationScanning {
   }
 
   private static func resolvedBundle(from applicationURL: URL) -> Bundle? {
-    if let bundle = Bundle(url: applicationURL) {
-      return bundle
-    }
-
+    // Foundation can open an iOS wrapper as a bundle, but its info dictionary
+    // is cached. Resolve the inner bundle first so freshInfoDictionary reads
+    // the actual plist after an App Store installation or update.
     let wrappedBundleURL =
       applicationURL
       .appendingPathComponent("WrappedBundle")
       .resolvingSymlinksInPath()
-    return Bundle(url: wrappedBundleURL)
+    return Bundle(url: wrappedBundleURL) ?? Bundle(url: applicationURL)
   }
 
   private static func appStoreAdamIdentifier(at applicationURL: URL) -> String? {
