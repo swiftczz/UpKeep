@@ -492,7 +492,11 @@ final class AppLibrary {
         return current
       }
 
-      if current.source == .homebrew, current.status == .updateAvailable {
+      // Homebrew enrichment has already checked this version. Do not replace
+      // a fresh up-to-date result with a previously cached update.
+      if current.source == .homebrew,
+        current.status == .updateAvailable || current.status == .upToDate
+      {
         return carryingMetadata(from: previous, onto: current)
       }
 
@@ -524,6 +528,7 @@ final class AppLibrary {
         merged.releaseNotes = previous.releaseNotes
         merged.releaseDate = previous.releaseDate
         merged.releaseNotesURL = previous.releaseNotesURL
+        merged.updatePageURL = previous.updatePageURL
         merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
       }
       return carryingMetadata(from: previous, onto: merged)
@@ -586,6 +591,7 @@ final class AppLibrary {
     merged.releaseNotes = previous.releaseNotes
     merged.releaseDate = previous.releaseDate
     merged.releaseNotesURL = previous.releaseNotesURL
+    merged.updatePageURL = previous.source == current.source ? previous.updatePageURL : nil
     merged.canAutomaticallyUpdate =
       previous.source == current.source
       ? previous.canAutomaticallyUpdate
@@ -667,6 +673,7 @@ final class AppLibrary {
     merged.latestVersion = previous.latestVersion
     merged.latestBuildVersion = previous.latestBuildVersion
     merged.sourceURL = detectedSameSource ? disk.sourceURL ?? previous.sourceURL : previous.sourceURL
+    merged.updatePageURL = previous.updatePageURL
     merged.sourceIdentifier = detectedSameSource
       ? disk.sourceIdentifier ?? previous.sourceIdentifier
       : previous.sourceIdentifier
@@ -707,6 +714,10 @@ final class AppLibrary {
       application.sourceURL != nil
     {
       return Self.nativeAppStoreUpdateURL(for: application)
+    }
+
+    if let updatePageURL = application.manualUpdateURL {
+      return updatePageURL
     }
 
     return application.applicationURL

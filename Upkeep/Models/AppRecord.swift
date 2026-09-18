@@ -21,6 +21,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var sourceURL: URL?
   var homepageURL: URL?
   var releaseNotesURL: URL?
+  var updatePageURL: URL?
   var sourceIdentifier: String?
   var alternateUpdateSource: UpdateSource?
   var alternateSourceURL: URL?
@@ -50,6 +51,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     sourceURL: URL? = nil,
     homepageURL: URL? = nil,
     releaseNotesURL: URL? = nil,
+    updatePageURL: URL? = nil,
     sourceIdentifier: String? = nil,
     alternateUpdateSource: UpdateSource? = nil,
     alternateSourceURL: URL? = nil,
@@ -79,6 +81,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.sourceURL = sourceURL
     self.homepageURL = homepageURL
     self.releaseNotesURL = releaseNotesURL
+    self.updatePageURL = updatePageURL
     self.sourceIdentifier = sourceIdentifier
     self.alternateUpdateSource = alternateUpdateSource
     self.alternateSourceURL = alternateSourceURL
@@ -111,6 +114,7 @@ extension AppRecord: Codable {
     case sourceURL
     case homepageURL
     case releaseNotesURL
+    case updatePageURL
     case sourceIdentifier
     case alternateUpdateSource
     case alternateSourceURL
@@ -149,6 +153,7 @@ extension AppRecord: Codable {
       sourceURL: try container.decodeIfPresent(URL.self, forKey: .sourceURL),
       homepageURL: try container.decodeIfPresent(URL.self, forKey: .homepageURL),
       releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
+      updatePageURL: try container.decodeIfPresent(URL.self, forKey: .updatePageURL),
       sourceIdentifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
       alternateUpdateSource: try container.decodeIfPresent(
         UpdateSource.self,
@@ -214,6 +219,7 @@ extension AppRecord {
     application.latestVersion = nil
     application.latestBuildVersion = nil
     application.packageByteCount = nil
+    application.updatePageURL = nil
     application.canAutomaticallyUpdate = false
     return application
   }
@@ -247,6 +253,13 @@ extension AppRecord {
       return false
     }
     return applicationCountryCode != accountCountryCode
+  }
+
+  var manualUpdateURL: URL? {
+    guard source == .sparkle, needsUpdate, !canAutomaticallyUpdate,
+      let updatePageURL
+    else { return nil }
+    return SecureUpdateURL.https(updatePageURL)
   }
 
   var sourceTitle: String {

@@ -7,6 +7,16 @@ enum VersionComparator {
 
   static func isNewer(_ candidate: String, than installed: String, build: String?) -> Bool {
     if let build = build?.nonBlankValue {
+      // Development casks can use `build,commit` while the app exposes a
+      // shortened commit as its version. Hash prefixes have no version order.
+      if candidate.range(of: #"^[0-9]+,[0-9a-fA-F]{7,64}$"#, options: .regularExpression) != nil,
+        installed.range(of: #"^[0-9a-fA-F]{7,64}$"#, options: .regularExpression) != nil,
+        build.range(of: #"^[0-9]+$"#, options: .regularExpression) != nil,
+        let candidateBuild = candidate.split(separator: ",").first
+      {
+        return isNewer(String(candidateBuild), than: build)
+      }
+
       if matchesInstalledBuild(candidate, build: build) {
         return false
       }

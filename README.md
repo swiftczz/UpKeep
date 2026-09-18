@@ -2,7 +2,7 @@
 
 Upkeep 是 macOS 上的应用更新与卸载工具。它扫描本机已安装的 `.app`，判断每个应用实际用哪条更新通道，然后在同一个窗口里检查版本、安装更新，或把应用和关联文件一起移到废纸篓。
 
-最低系统版本是 **macOS 26**。源码是 Swift 6.2 + SwiftUI，用 Swift Package Manager 组织，没有第三方 Swift 包。
+最低系统版本是 **macOS 26**，仅支持 **Apple Silicon（arm64）**。源码是 Swift 6.2 + SwiftUI，用 Swift Package Manager 组织，没有第三方 Swift 包。
 
 ## 如何使用
 
@@ -56,12 +56,10 @@ swift test
 打 Release 包：
 
 ```sh
-./scripts/build_and_run.sh --build-only universal --sign --dmg
-./scripts/build_and_run.sh --build-only arm64 --sign --dmg
-./scripts/build_and_run.sh --build-only x86_64 --sign --dmg
+./scripts/build_and_run.sh --build-only --sign --dmg
 ```
 
-产物在 `dist/`。`--sign` 的证书顺序是：环境变量 `SIGN_IDENTITY` → 本机 Apple Development 证书 → 带固定 Bundle ID 要求的 Ad-hoc。`--dmg` 会再打一份带 Applications 快捷方式的磁盘镜像。
+主程序和安装助手统一构建为 arm64，每个版本只发布一个 `dist/Upkeep-<版本号>.dmg`，应用包为 `dist/Upkeep.app`。GitHub Release 流程也只构建、上传这一份 DMG。`--sign` 的证书顺序是：环境变量 `SIGN_IDENTITY` → 本机 Apple Development 证书 → 带固定 Bundle ID 要求的 Ad-hoc。`--dmg` 会再打一份带 Applications 快捷方式的磁盘镜像。
 
 版本号：`APP_VERSION` 没设时用最近的 Git tag，没有 tag 就是 `0.1.0-dev`。构建号：`APP_BUILD` 没设时用当前提交数。
 

@@ -38,6 +38,7 @@ struct SparkleUpdateProvider: Sendable {
         application.canAutomaticallyUpdate = false
         application.latestVersion = nil
         application.latestBuildVersion = nil
+        application.updatePageURL = nil
         return application
       }
 
@@ -72,6 +73,7 @@ struct SparkleUpdateProvider: Sendable {
       application.releaseNotesURL = candidate.releaseNotesURL
       application.releaseNotes = candidate.summary.flatMap(Self.plainText(fromHTML:))
       application.packageByteCount = candidate.packageByteCount
+      application.updatePageURL = candidate.manualUpdateURL(relativeTo: feedURL)
 
       if application.releaseNotes == nil,
         let releaseNotesURL = candidate.releaseNotesURL,
@@ -379,6 +381,7 @@ struct SparkleCandidate: Hashable, Sendable {
   var summary: String?
   var publicationDate: String?
   var releaseNotesURL: URL?
+  var updatePageURL: URL?
   var downloadURL: URL?
   var packageByteCount: Int64?
   var minimumSystemVersion: String?
@@ -413,6 +416,14 @@ struct SparkleCandidate: Hashable, Sendable {
 
   func hasSecureDownload(relativeTo feedURL: URL) -> Bool {
     resolvedDownloadURL(relativeTo: feedURL) != nil
+  }
+
+  func manualUpdateURL(relativeTo feedURL: URL) -> URL? {
+    // Sparkle items without an enclosure use their item link for a web handoff.
+    guard downloadURL == nil, let updatePageURL,
+      let resolvedURL = URL(string: updatePageURL.relativeString, relativeTo: feedURL)?.absoluteURL
+    else { return nil }
+    return SecureUpdateURL.https(resolvedURL)
   }
 
   func supportedPackageURL(relativeTo feedURL: URL) -> URL? {
@@ -542,6 +553,7 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       "description",
       "pubdate",
       "releasenoteslink",
+      "link",
       "shortversionstring",
       "version",
       "minimumsystemversion",
@@ -609,6 +621,7 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
     case "description": currentCandidate?.summary = value
     case "pubdate": currentCandidate?.publicationDate = value
     case "releasenoteslink": currentCandidate?.releaseNotesURL = URL(string: value)
+    case "link": currentCandidate?.updatePageURL = URL(string: value)
     case "shortversionstring": currentCandidate?.shortVersion = value
     case "version": currentCandidate?.buildVersion = value
     case "minimumsystemversion": currentCandidate?.minimumSystemVersion = value

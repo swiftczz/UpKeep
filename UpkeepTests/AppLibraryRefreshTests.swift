@@ -718,6 +718,40 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertTrue(merged.availableUpdates(ignoredIDs: []).isEmpty)
   }
 
+  func testFreshHomebrewResultClearsCachedGhosttyUpdate() throws {
+    let previous = AppRecord(
+      name: "Ghostty",
+      bundleIdentifier: "com.mitchellh.ghostty",
+      applicationURL: URL(fileURLWithPath: "/Applications/Ghostty.app"),
+      currentVersion: "5252b193c",
+      buildVersion: "17764",
+      source: .homebrew,
+      status: .updateAvailable,
+      latestVersion: "17761,e2e53f861482e080bf45054ba49ef471f9849937",
+      canAutomaticallyUpdate: false
+    )
+    var current = previous
+    current.status = .upToDate
+    current.latestVersion = current.currentVersion
+
+    let merged = try XCTUnwrap(
+      AppLibrary.mergeKeepingCheckResults([current], previous: [previous]).first
+    )
+    XCTAssertEqual(merged.status, .upToDate)
+    XCTAssertEqual(merged.latestVersion, current.currentVersion)
+    XCTAssertFalse(merged.needsUpdate)
+    XCTAssertFalse(merged.canAutomaticallyUpdate)
+
+    var scanned = current
+    scanned.source = .selfManaged
+    scanned.status = .selfManaged
+    scanned.latestVersion = nil
+    let rescanned = try XCTUnwrap(
+      AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous]).first
+    )
+    XCTAssertFalse(rescanned.needsUpdate)
+  }
+
   func testMergeDoesNotReuseHomebrewHomepageAsSparkleFeed() {
     var previous = makeApplication(
       name: "Thunder",

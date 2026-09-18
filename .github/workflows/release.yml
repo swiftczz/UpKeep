@@ -42,28 +42,22 @@ jobs:
           echo "=== changelog ==="
           cat CHANGELOG.md
 
-      - name: Build universal DMG
-        run: APP_VERSION=${{ steps.ver.outputs.version }} ./scripts/build_and_run.sh --build-only universal --sign --dmg
-
       - name: Build arm64 DMG
-        run: APP_VERSION=${{ steps.ver.outputs.version }} ./scripts/build_and_run.sh --build-only arm64 --sign --dmg
+        run: APP_VERSION=${{ steps.ver.outputs.version }} ./scripts/build_and_run.sh --build-only --sign --dmg
 
-      - name: Build x86_64 DMG
-        run: APP_VERSION=${{ steps.ver.outputs.version }} ./scripts/build_and_run.sh --build-only x86_64 --sign --dmg
+      - name: List DMG
+        run: ls -lh "dist/Upkeep-${{ steps.ver.outputs.version }}.dmg"
 
-      - name: List DMGs
-        run: ls -lh dist/*.dmg
-
-      - name: Upload DMGs to Release
+      - name: Upload DMG to Release
         if: steps.ver.outputs.is_tag == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/*.dmg
+          files: dist/Upkeep-${{ steps.ver.outputs.version }}.dmg
           body_path: CHANGELOG.md
 
-      - name: Upload DMGs as workflow artifacts
+      - name: Upload DMG as workflow artifact
         if: steps.ver.outputs.is_tag == 'false'
         uses: actions/upload-artifact@v7
         with:
-          name: Upkeep-DMGs-${{ steps.ver.outputs.version }}
-          path: dist/*.dmg
+          name: Upkeep-${{ steps.ver.outputs.version }}
+          path: dist/Upkeep-${{ steps.ver.outputs.version }}.dmg

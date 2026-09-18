@@ -235,8 +235,7 @@ sign_app() {
 }
 
 create_dmg() {
-  local arch="$1"
-  local dmg_path="$DIST_DIR/${APP_NAME}-${arch}-${APP_VERSION}.dmg"
+  local dmg_path="$DIST_DIR/${APP_NAME}-${APP_VERSION}.dmg"
 
   rm -f "$dmg_path"
   STAGING_DIR="$(mktemp -d)"
@@ -255,29 +254,14 @@ create_dmg() {
   echo "==> DMG：$dmg_path"
 }
 
-release_build_arguments() {
-  local arch="$1"
-  RELEASE_BUILD_ARGS=(-c release)
-
-  case "$arch" in
-    universal) RELEASE_BUILD_ARGS+=(--arch arm64 --arch x86_64) ;;
-    arm64) RELEASE_BUILD_ARGS+=(--arch arm64) ;;
-    x86_64) RELEASE_BUILD_ARGS+=(--arch x86_64) ;;
-    *)
-      echo "未知架构：${arch}（可选 universal、arm64、x86_64）" >&2
-      exit 2
-      ;;
-  esac
-}
-
 build_only() {
-  local arch="${1:-universal}"
+  local build_args=(-c release --arch arm64)
   local should_sign=0
   local should_create_dmg=0
-  shift || true
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      arm64) ;; # 兼容旧的显式 arm64 调用。
       --sign) should_sign=1 ;;
       --dmg) should_create_dmg=1 ;;
       *) echo "未知选项：$1" >&2; exit 2 ;;
@@ -285,17 +269,16 @@ build_only() {
     shift
   done
 
-  release_build_arguments "$arch"
   mkdir -p "$DIST_DIR"
 
-  echo "==> 编译 ${APP_NAME}（${arch}，版本 ${APP_VERSION}，构建 ${APP_BUILD}）"
-  swift build --package-path "$ROOT_DIR" --product "$APP_NAME" "${RELEASE_BUILD_ARGS[@]}"
-  swift build --package-path "$ROOT_DIR" --product "$HELPER_NAME" "${RELEASE_BUILD_ARGS[@]}"
+  echo "==> 编译 ${APP_NAME}（arm64，版本 ${APP_VERSION}，构建 ${APP_BUILD}）"
+  swift build --package-path "$ROOT_DIR" --product "$APP_NAME" "${build_args[@]}"
+  swift build --package-path "$ROOT_DIR" --product "$HELPER_NAME" "${build_args[@]}"
 
   local build_dir
   local build_binary
   local helper_build_binary
-  build_dir="$(swift build --package-path "$ROOT_DIR" --show-bin-path "${RELEASE_BUILD_ARGS[@]}")"
+  build_dir="$(swift build --package-path "$ROOT_DIR" --show-bin-path "${build_args[@]}")"
   build_binary="$build_dir/$APP_NAME"
   helper_build_binary="$build_dir/$HELPER_NAME"
   package_app_from_binary "$build_binary" "$helper_build_binary"
@@ -307,7 +290,7 @@ build_only() {
   fi
 
   if [[ $should_create_dmg -eq 1 ]]; then
-    create_dmg "$arch"
+    create_dmg
   fi
 
   echo "==> 应用包：$APP_BUNDLE"
@@ -315,11 +298,11 @@ build_only() {
 
 build_debug_app() {
   mkdir -p "$DIST_DIR"
-  swift build --package-path "$ROOT_DIR" --product "$APP_NAME"
-  swift build --package-path "$ROOT_DIR" --product "$HELPER_NAME"
+  swift build --package-path "$ROOT_DIR" --product "$APP_NAME" --arch arm64
+  swift build --package-path "$ROOT_DIR" --product "$HELPER_NAME" --arch arm64
 
   local build_dir
-  build_dir="$(swift build --package-path "$ROOT_DIR" --show-bin-path)"
+  build_dir="$(swift build --package-path "$ROOT_DIR" --show-bin-path --arch arm64)"
   package_app_from_binary "$build_dir/$APP_NAME" "$build_dir/$HELPER_NAME"
   sign_development_app
 }
@@ -364,7 +347,7 @@ open_app() {
 }
 
 usage() {
-  echo "用法：$0 [run|--build-only <universal|arm64|x86_64> [--sign] [--dmg]|--debug|--logs|--verify]" >&2
+  echo "用法：$0 [run|--build-only [--sign] [--dmg]|--debug|--logs|--verify]（仅 arm64）" >&2
 }
 
 case "$MODE" in

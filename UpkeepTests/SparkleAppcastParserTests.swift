@@ -4,6 +4,55 @@ import XCTest
 @testable import Upkeep
 
 final class SparkleAppcastParserTests: XCTestCase {
+  func testResomarkInformationalUpdateKeepsItsWebsiteLink() throws {
+    let xml = """
+      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+        <channel>
+          <link>https://update.resomark.com/appcast.xml</link>
+          <item>
+            <title>Resomark 1.0 Private Beta</title>
+            <sparkle:version>1503</sparkle:version>
+            <sparkle:shortVersionString>0.6.10</sparkle:shortVersionString>
+            <link>https://resomark.com/private-beta?ref=updater&amp;from=0.6.9</link>
+          </item>
+          <item>
+            <sparkle:version>1502</sparkle:version>
+            <sparkle:shortVersionString>0.6.9</sparkle:shortVersionString>
+            <enclosure url="https://update.resomark.com/Resomark_v0.6.9.dmg" />
+          </item>
+        </channel>
+      </rss>
+      """
+    let parser = SparkleAppcastParser(data: Data(xml.utf8))
+    let candidate = try XCTUnwrap(SparkleUpdateProvider.bestCandidate(from: parser.parse()))
+    let feedURL = try XCTUnwrap(URL(string: "https://update.resomark.com/appcast.xml"))
+    XCTAssertEqual(candidate.displayVersion, "0.6.10")
+    XCTAssertEqual(candidate.buildVersion, "1503")
+    XCTAssertNil(candidate.supportedPackageURL(relativeTo: feedURL))
+    XCTAssertEqual(
+      candidate.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
+      "https://resomark.com/private-beta?ref=updater&from=0.6.9"
+    )
+    XCTAssertEqual(parser.homepageURL, feedURL)
+  }
+
+  func testManualUpdateLinksRequireHTTPSAndDoNotOverridePackages() throws {
+    let feedURL = try XCTUnwrap(URL(string: "https://example.com/releases/appcast.xml"))
+    for value in ["http://example.com/update", "file:///tmp/App.app", "javascript:alert(1)"] {
+      let candidate = SparkleCandidate(updatePageURL: URL(string: value))
+      XCTAssertNil(candidate.manualUpdateURL(relativeTo: feedURL))
+    }
+    let relative = SparkleCandidate(updatePageURL: URL(string: "next"))
+    XCTAssertEqual(relative.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
+      "https://example.com/releases/next")
+    let downloadable = SparkleCandidate(
+      updatePageURL: URL(string: "https://example.com/update"),
+      downloadURL: URL(string: "https://example.com/App.dmg")
+    )
+    XCTAssertNil(downloadable.manualUpdateURL(relativeTo: feedURL))
+    XCTAssertNotNil(downloadable.supportedPackageURL(relativeTo: feedURL))
+  }
+
   func testParsesVersionAndReleaseNotesMetadata() throws {
     let xml = """
       <?xml version="1.0" encoding="utf-8"?>

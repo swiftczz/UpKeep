@@ -3,6 +3,14 @@ import XCTest
 @testable import Upkeep
 
 final class VersionComparatorTests: XCTestCase {
+  func testCommitBasedCaskVersionsCompareBuildNumbersInsteadOfHashPrefixes() {
+    let old = "17761,e2e53f861482e080bf45054ba49ef471f9849937"
+    let current = "17764,5252b193cfd52b4bcd868135e21e4563f2f326ec"
+    XCTAssertFalse(VersionComparator.isNewer(old, than: "5252b193c", build: "17764"))
+    XCTAssertFalse(VersionComparator.isNewer(current, than: "5252b193c", build: "17764"))
+    XCTAssertTrue(VersionComparator.isNewer(current, than: "e2e53f861", build: "17761"))
+  }
+
   func testNumericVersionComparison() {
     XCTAssertTrue(VersionComparator.isNewer("2.10", than: "2.9"))
     XCTAssertFalse(VersionComparator.isNewer("2.9", than: "2.10"))

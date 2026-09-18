@@ -353,6 +353,9 @@ struct AppDetailView: View {
   }
 
   private var primaryActionHelp: String {
+    if application.manualUpdateURL != nil {
+      return "此条目未提供安装包，前往开发者页面查看更新详情"
+    }
     if usesUpdatePrimaryAction {
       switch application.source {
       case .appStore:
@@ -376,18 +379,21 @@ struct AppDetailView: View {
   }
 
   private var primaryActionTitle: String {
-    usesUpdatePrimaryAction ? "更新" : "打开"
+    if application.manualUpdateURL != nil { return "查看更新" }
+    return usesUpdatePrimaryAction ? "更新" : "打开"
   }
 
   private var primaryActionSystemImage: String {
-    usesUpdatePrimaryAction
+    if application.manualUpdateURL != nil { return "arrow.up.right.square" }
+    return usesUpdatePrimaryAction
       ? "arrow.down.circle"
       : "arrow.up.forward.app"
   }
 
   private var usesUpdatePrimaryAction: Bool {
     application.needsUpdate
-      && (application.canAutomaticallyUpdate || usesAppStoreUpdateHandoff)
+      && (application.canAutomaticallyUpdate || usesAppStoreUpdateHandoff
+        || application.manualUpdateURL != nil)
   }
 
   private var usesAppStoreUpdateHandoff: Bool {

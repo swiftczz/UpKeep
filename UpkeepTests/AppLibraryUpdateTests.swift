@@ -5,6 +5,45 @@ import XCTest
 
 @MainActor
 final class AppLibraryUpdateTests: XCTestCase {
+  func testInformationalSparkleUpdateOpensWebsiteWithoutInstallingOrQuitting() async throws {
+    let application = AppRecord(
+      name: "Resomark", bundleIdentifier: "com.resomark",
+      applicationURL: URL(fileURLWithPath: "/Applications/Resomark.app"),
+      currentVersion: "0.6.9", buildVersion: "1502",
+      source: .sparkle, status: .updateAvailable,
+      latestVersion: "0.6.10", latestBuildVersion: "1503",
+      sourceURL: URL(string: "https://update.resomark.com/appcast.xml"),
+      updatePageURL: URL(string: "https://resomark.com/private-beta?ref=updater&from=0.6.9")
+    )
+    let restored = try JSONDecoder().decode(AppRecord.self, from: JSONEncoder().encode(application))
+    XCTAssertEqual(restored.manualUpdateURL, application.updatePageURL)
+    let library = try makeLibrary(
+      applications: [restored], runningBundleIdentifiers: [application.bundleIdentifier]
+    )
+    XCTAssertFalse(library.requiresRelaunchConfirmation(for: restored))
+    XCTAssertTrue(library.automaticUpdates.isEmpty)
+    let destination = await library.performPrimaryAction(for: application.id)
+    XCTAssertEqual(destination, application.updatePageURL)
+
+    var checking = application
+    checking.status = .checking
+    checking.updatePageURL = nil
+    let merged = try XCTUnwrap(
+      AppLibrary.mergeKeepingCheckResults([checking], previous: [application]).first
+    )
+    XCTAssertEqual(merged.manualUpdateURL, application.updatePageURL)
+
+    var current = application
+    current.status = .upToDate
+    XCTAssertNil(current.manualUpdateURL)
+    current.status = .updateAvailable
+    current.canAutomaticallyUpdate = true
+    XCTAssertNil(current.manualUpdateURL)
+    current.canAutomaticallyUpdate = false
+    current.updatePageURL = URL(string: "file:///tmp/App.app")
+    XCTAssertNil(current.manualUpdateURL)
+  }
+
   func testRequiresRelaunchConfirmationWhenUpdatableApplicationIsRunning() throws {
     let application = makeUpdateApplication(name: "Running", bundleIdentifier: "com.example.running")
     let library = try makeLibrary(
