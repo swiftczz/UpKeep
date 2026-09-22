@@ -38,8 +38,9 @@ struct ApplicationResidueItem: Identifiable, Hashable, Sendable {
   let url: URL
   let displayName: String
   let category: Category
-  let byteCount: Int64
+  var byteCount: Int64
   var matchReason: ApplicationResidueMatchReason = .nameOnly
+  var isSizeCalculated = true
 
   var isSelectedByDefault: Bool { matchReason.isSelectedByDefault }
 
@@ -48,7 +49,7 @@ struct ApplicationResidueItem: Identifiable, Hashable, Sendable {
   }
 
   var formattedSize: String {
-    byteCount.formatted(.byteCount(style: .file))
+    isSizeCalculated ? byteCount.formatted(.byteCount(style: .file)) : "正在计算…"
   }
 }
 
@@ -57,7 +58,7 @@ enum ApplicationResidueMatchReason: Hashable, Sendable {
   case bundleIdentifier
   case declaredUpdaterCache
   case homebrewCask
-  case declaredGroupContainer
+  case embeddedBundle
   case possibleBundleVariant
   case nameOnly
   case undeclaredGroupContainer
@@ -66,10 +67,9 @@ enum ApplicationResidueMatchReason: Hashable, Sendable {
 
   var isSelectedByDefault: Bool {
     switch self {
-    case .application, .bundleIdentifier, .declaredUpdaterCache, .homebrewCask,
-      .declaredGroupContainer:
+    case .application, .bundleIdentifier, .homebrewCask:
       true
-    case .possibleBundleVariant, .nameOnly, .undeclaredGroupContainer,
+    case .declaredUpdaterCache, .embeddedBundle, .possibleBundleVariant, .nameOnly, .undeclaredGroupContainer,
       .unverifiedGroupContainer, .sharedWith:
       false
     }
@@ -79,13 +79,13 @@ enum ApplicationResidueMatchReason: Hashable, Sendable {
     switch self {
     case .application: "所选应用程序"
     case .bundleIdentifier: "完整 Bundle ID 匹配"
-    case .declaredUpdaterCache: "应用声明的更新缓存"
+    case .declaredUpdaterCache: "应用声明的更新缓存，可能与其他版本共用；默认保留"
     case .homebrewCask: "Homebrew 安装记录"
-    case .declaredGroupContainer: "应用声明的容器，未发现其他已安装应用使用"
+    case .embeddedBundle: "应用内辅助程序的数据，可能被其他应用共用；默认保留"
     case .possibleBundleVariant: "仅 Bundle ID 前缀相同，可能属于独立测试版或其他应用；默认保留"
     case .nameOnly: "仅名称相似，归属未确认；默认保留"
     case .undeclaredGroupContainer: "名称相关，但未找到应用的容器声明；默认保留"
-    case .unverifiedGroupContainer: "应用声明的容器，但未能完整核对其他应用；默认保留"
+    case .unverifiedGroupContainer: "应用声明的共享容器，可能被其他应用共用；默认保留"
     case .sharedWith(let names): "也被 \(names.joined(separator: "、")) 使用；默认保留"
     }
   }

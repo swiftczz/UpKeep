@@ -42,7 +42,7 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     XCTAssertFalse(after.contains { paths.map(\.path).contains($0.id) })
   }
 
-  func testOnlyDeclaredUpdaterCacheInCacheDirectoryIsSelected() throws {
+  func testDeclaredUpdaterCacheIsListedButNotSelected() throws {
     let fixture = try ResidueOwnershipFixture()
     defer { fixture.remove() }
     let cache = try fixture.item("Caches/editor-updater")
@@ -50,7 +50,7 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     let items = fixture.scanner(updaterCaches: ["com.example.Editor": "editor-updater"])
       .items(for: fixture.application)
     XCTAssertEqual(try fixture.find(cache, in: items).matchReason, .declaredUpdaterCache)
-    XCTAssertTrue(try fixture.find(cache, in: items).isSelectedByDefault)
+    XCTAssertFalse(try fixture.find(cache, in: items).isSelectedByDefault)
     XCTAssertFalse(try fixture.find(support, in: items).isSelectedByDefault)
   }
 
@@ -69,7 +69,7 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     XCTAssertFalse(try fixture.find(misleadingContainer, in: items).isSelectedByDefault)
   }
 
-  func testDeclaredSharedGroupsAreRetainedAndOtherAppsGroupsAreExcluded() throws {
+  func testAllDeclaredGroupsAndNameMatchesAreRetained() throws {
     let fixture = try ResidueOwnershipFixture()
     defer { fixture.remove() }
     _ = try fixture.install(name: "Companion", identifier: "org.example.Companion")
@@ -82,13 +82,13 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
       "org.example.Companion": ["TEAM.shared-storage", "TEAM.Editor"],
     ]).items(for: fixture.application)
 
-    XCTAssertEqual(try fixture.find(shared, in: items).matchReason, .sharedWith(["Companion"]))
-    XCTAssertEqual(try fixture.find(scripts, in: items).matchReason, .sharedWith(["Companion"]))
+    XCTAssertEqual(try fixture.find(shared, in: items).matchReason, .unverifiedGroupContainer)
+    XCTAssertEqual(try fixture.find(scripts, in: items).matchReason, .unverifiedGroupContainer)
     XCTAssertFalse(try fixture.find(shared, in: items).isSelectedByDefault)
     XCTAssertFalse(try fixture.find(scripts, in: items).isSelectedByDefault)
-    XCTAssertEqual(try fixture.find(exclusive, in: items).matchReason, .declaredGroupContainer)
-    XCTAssertTrue(try fixture.find(exclusive, in: items).isSelectedByDefault)
-    XCTAssertFalse(items.contains { $0.id == otherOnly.path })
+    XCTAssertEqual(try fixture.find(exclusive, in: items).matchReason, .unverifiedGroupContainer)
+    XCTAssertFalse(try fixture.find(exclusive, in: items).isSelectedByDefault)
+    XCTAssertFalse(try fixture.find(otherOnly, in: items).isSelectedByDefault)
   }
 
   func testTeamAndNameAloneDoNotAuthorizeGroupContainerSelection() throws {
@@ -103,7 +103,7 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     }
   }
 
-  func testIncompleteOwnershipInventoryDoesNotSelectDeclaredGroups() throws {
+  func testUnreadableOtherAppDoesNotBlockTargetScan() throws {
     let fixture = try ResidueOwnershipFixture()
     defer { fixture.remove() }
     _ = try fixture.install(name: "Unreadable", identifier: "org.example.Unreadable")
@@ -136,43 +136,41 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     let items = fixture.scanner(updaterCaches: [
       "com.example.Editor": "editor-updater", "com.example.Editor.beta": "editor-updater",
     ]).items(for: fixture.application)
-    XCTAssertEqual(try fixture.find(cache, in: items).matchReason, .sharedWith(["Editor Beta"]))
+    XCTAssertEqual(try fixture.find(cache, in: items).matchReason, .declaredUpdaterCache)
     XCTAssertFalse(try fixture.find(cache, in: items).isSelectedByDefault)
   }
 
-  func testInventoryIncludesEmbeddedExtensionDeclarations() throws {
+  func testTargetExtensionGroupsAreListedButNotSelected() throws {
     let fixture = try ResidueOwnershipFixture()
     defer { fixture.remove() }
-    let companion = try fixture.install(name: "Companion", identifier: "org.example.Companion")
+    _ = try fixture.install(name: "Companion", identifier: "org.example.Companion")
     _ = try fixture.install(
       name: "Extension", identifier: "org.example.Companion.extension",
-      at: companion.appendingPathComponent("Contents/PlugIns/Extension.appex")
+      at: fixture.application.applicationURL.appendingPathComponent("Contents/PlugIns/Extension.appex")
     )
     let group = try fixture.item("Group Containers/TEAM.shared-storage")
     let items = fixture.scanner(groups: [
-      "com.example.Editor": ["TEAM.shared-storage"],
       "org.example.Companion.extension": ["TEAM.shared-storage"],
     ]).items(for: fixture.application)
-    XCTAssertEqual(try fixture.find(group, in: items).matchReason, .sharedWith(["Companion"]))
+    XCTAssertEqual(try fixture.find(group, in: items).matchReason, .unverifiedGroupContainer)
     XCTAssertFalse(try fixture.find(group, in: items).isSelectedByDefault)
   }
 
-  func testInventoryIncludesHelperInsideFramework() throws {
+  func testTargetFrameworkHelperGroupsAreListedButNotSelected() throws {
     let fixture = try ResidueOwnershipFixture()
     defer { fixture.remove() }
-    let companion = try fixture.install(name: "Companion", identifier: "org.example.Companion")
+    _ = try fixture.install(name: "Companion", identifier: "org.example.Companion")
     _ = try fixture.install(
       name: "Helper", identifier: "org.example.Companion.helper",
-      at: companion.appendingPathComponent(
+      at: fixture.application.applicationURL.appendingPathComponent(
         "Contents/Frameworks/Example.framework/Versions/A/XPCServices/Helper.xpc"
       )
     )
     let group = try fixture.item("Group Containers/TEAM.shared-storage")
     let items = fixture.scanner(groups: [
-      "com.example.Editor": ["TEAM.shared-storage"],
       "org.example.Companion.helper": ["TEAM.shared-storage"],
     ]).items(for: fixture.application)
-    XCTAssertEqual(try fixture.find(group, in: items).matchReason, .sharedWith(["Companion"]))
+    XCTAssertEqual(try fixture.find(group, in: items).matchReason, .unverifiedGroupContainer)
     XCTAssertFalse(try fixture.find(group, in: items).isSelectedByDefault)
   }
 
@@ -197,6 +195,37 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
       ]
     )
     XCTAssertEqual(ApplicationCodeSigning.applicationGroups(at: applicationURL), Set(groups))
+    XCTAssertNil(ApplicationCodeSigning.teamIdentifier(at: applicationURL))
+  }
+
+  func testEmbeddedSDKDataIsNeverSelectedAndNewHelpersAreReadWithoutAnIndex() throws {
+    let fixture = try ResidueOwnershipFixture()
+    defer { fixture.remove() }
+    let data = try fixture.item("Caches/org.sparkle-project.Updater")
+    let scanner = fixture.scanner()
+    XCTAssertFalse(scanner.items(for: fixture.application).contains { $0.id == data.path })
+    _ = try fixture.install(name: "Updater", identifier: "org.sparkle-project.Updater",
+      at: fixture.application.applicationURL.appendingPathComponent("Contents/XPCServices/Updater.xpc"))
+    let items = scanner.items(for: fixture.application)
+    XCTAssertEqual(try fixture.find(data, in: items).matchReason, .embeddedBundle)
+    XCTAssertFalse(try fixture.find(data, in: items).isSelectedByDefault)
+  }
+
+  func testWrappedIOSAppReadsItsOwnGroupDeclarations() throws {
+    let fixture = try ResidueOwnershipFixture()
+    defer { fixture.remove() }
+    let wrapper = fixture.applicationsDirectory.appendingPathComponent("Mobile.app")
+    let wrapped = try fixture.install(name: "Mobile", identifier: "com.example.mobile",
+      at: wrapper.appendingPathComponent("Wrapper/Mobile.app"))
+    try FileManager.default.createSymbolicLink(at: wrapper.appendingPathComponent("WrappedBundle"),
+      withDestinationURL: wrapped)
+    let group = try fixture.item("Group Containers/TEAM.mobile")
+    let scanner = fixture.scanner(groups: ["com.example.mobile": ["TEAM.mobile"]])
+    let app = AppRecord(name: "Mobile", bundleIdentifier: "com.example.mobile",
+      applicationURL: wrapper, currentVersion: "1")
+    let items = scanner.items(for: app)
+    XCTAssertEqual(try fixture.find(group, in: items).matchReason, .unverifiedGroupContainer)
+    XCTAssertTrue(try fixture.find(wrapper, in: items).isSelectedByDefault)
   }
 }
 
@@ -260,13 +289,13 @@ private struct ResidueOwnershipFixture: Sendable {
       receiptsDirectory: nil, darwinDirectories: [], caskroomDirectories: [],
       teamIdentifier: { _ in "TEAM" }, bundleName: { _ in "Editor" },
       updaterCacheDirName: cacheReader,
-      ownershipInventory: {
-        ApplicationResidueOwnershipInventory.scan(
-          applicationDirectories: [applicationsDirectory],
-          applicationGroups: groupsReader, updaterCacheDirName: cacheReader
-        )
-      },
-      applicationGroups: groupsReader
+      applicationGroups: groupsReader,
+      knownApplications: ((try? FileManager.default.contentsOfDirectory(
+        at: applicationsDirectory, includingPropertiesForKeys: nil)) ?? []).compactMap { url in
+          guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier else { return nil }
+          return AppRecord(name: url.deletingPathExtension().lastPathComponent,
+            bundleIdentifier: id, applicationURL: url, currentVersion: "1")
+        }
     )
   }
 

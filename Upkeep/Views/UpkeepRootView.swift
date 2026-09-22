@@ -46,6 +46,7 @@ struct UpkeepRootView: View {
         if let uninstallingApplication, uninstallingApplication.id == application.id {
           UninstallApplicationView(
             application: uninstallingApplication,
+            knownApplications: library.applications,
             onCancel: {
               self.uninstallingApplication = nil
             },

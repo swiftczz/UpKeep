@@ -4,6 +4,7 @@ struct UninstallApplicationView: View {
   @Environment(\.openURL) private var openURL
 
   let application: AppRecord
+  var knownApplications: [AppRecord] = []
   var scanner: ApplicationResidueScanner = .live
   var homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
   var applicationLauncher: ApplicationLauncher = .live
@@ -17,6 +18,8 @@ struct UninstallApplicationView: View {
   @State private var isUninstalling = false
   @State private var isConfirming = false
   @State private var containerAccessMessage: String?
+  @State private var scanTask: Task<Void, Never>?
+  @State private var scanGeneration = UUID()
 
   var body: some View {
     VStack(spacing: 0) {
@@ -103,7 +106,7 @@ struct UninstallApplicationView: View {
       Spacer(minLength: 24)
 
       VStack(alignment: .trailing, spacing: 4) {
-        Text(selectedByteCount.formatted(.byteCount(style: .file)))
+        Text(sizeSummary(for: selectedItems))
           .font(.title3.weight(.semibold).monospacedDigit())
         Text(selectionSummary)
           .font(.caption)
@@ -126,7 +129,7 @@ struct UninstallApplicationView: View {
               Label(category.title, systemImage: category.systemImage)
               Spacer()
               Text(
-                "\(groupedItems.count) · \(groupedItems.reduce(Int64(0)) { $0 + $1.byteCount }.formatted(.byteCount(style: .file)))"
+                "\(groupedItems.count) · \(sizeSummary(for: groupedItems))"
               )
               .foregroundStyle(.secondary)
               .monospacedDigit()
@@ -225,8 +228,9 @@ struct UninstallApplicationView: View {
     items.filter { selectedIDs.contains($0.id) }
   }
 
-  private var selectedByteCount: Int64 {
-    selectedItems.reduce(0) { $0 + $1.byteCount }
+  private func sizeSummary(for items: [ApplicationResidueItem]) -> String {
+    guard !isScanning, items.allSatisfy(\.isSizeCalculated) else { return "正在计算大小…" }
+    return items.reduce(Int64(0)) { $0 + $1.byteCount }.formatted(.byteCount(style: .file))
   }
 
   private var selectionSummary: String {
@@ -246,18 +250,42 @@ struct UninstallApplicationView: View {
   }
 
   private func scan() async {
+    scanTask?.cancel()
+    let generation = UUID()
+    scanGeneration = generation
     isScanning = true
+    items = []
+    selectedIDs = []
     let application = application
-    let scanner = scanner
-    let scanned = await Task.detached(priority: .userInitiated) {
-      scanner.items(for: application)
-    }.value
-    items = scanned
-    selectedIDs = ApplicationResidueItem.defaultSelection(in: scanned)
-    isScanning = false
+    var scanner = scanner
+    scanner.knownApplications = knownApplications
+    let task = Task { @MainActor in
+      for await event in scanner.events(for: application) {
+        guard !Task.isCancelled, scanGeneration == generation else { return }
+        switch event {
+        case .found(let scanned):
+          items = scanned
+          selectedIDs = ApplicationResidueItem.defaultSelection(in: scanned)
+          isScanning = false
+        case .measured(let item):
+          if let index = items.firstIndex(where: { $0.id == item.id }) {
+            // Keep row order and the user's choices stable as sizes arrive.
+            items[index] = item
+          }
+        }
+      }
+    }
+    scanTask = task
+    await withTaskCancellationHandler {
+      await task.value
+    } onCancel: {
+      task.cancel()
+    }
   }
 
   private func uninstall() async {
+    scanTask?.cancel()
+    scanGeneration = UUID()
     isUninstalling = true
     defer { isUninstalling = false }
 

@@ -13,8 +13,10 @@ struct ApplicationResidueScanner: @unchecked Sendable {
   var updaterCacheDirName: @Sendable (URL) -> String?
   var systemManagedDarwinItem: @Sendable (URL) -> Bool = Self.isSystemManagedDarwinItem(_:)
 
-  var ownershipInventory: @Sendable () -> ApplicationResidueOwnershipInventory = { .init() }
   var applicationGroups: @Sendable (URL) -> Set<String>? = { _ in nil }
+  var sizeCalculator: @Sendable (URL) -> Int64 = Self.allocatedSize(of:)
+  // Reuse the already displayed app records; uninstall never scans other apps.
+  var knownApplications: [AppRecord] = []
 
   static var live: ApplicationResidueScanner {
     let fileManager = FileManager.default
@@ -39,35 +41,52 @@ struct ApplicationResidueScanner: @unchecked Sendable {
       teamIdentifier: { ApplicationCodeSigning.teamIdentifier(at: $0) },
       bundleName: { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleName") as? String },
       updaterCacheDirName: Self.updaterCacheDirName(in:),
-      ownershipInventory: {
-        ApplicationResidueOwnershipInventory.scan(
-          applicationDirectories: [
-            URL(fileURLWithPath: "/Applications", isDirectory: true),
-            homeDirectory.appendingPathComponent("Applications", isDirectory: true),
-            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
-            URL(fileURLWithPath: "/System/Library/CoreServices", isDirectory: true),
-          ],
-          updaterCacheDirName: Self.updaterCacheDirName(in:)
-        )
-      },
       applicationGroups: { ApplicationCodeSigning.applicationGroups(at: $0) }
     )
   }
 
-  func items(for application: AppRecord) -> [ApplicationResidueItem] {
+  enum ScanEvent: Sendable {
+    case found([ApplicationResidueItem])
+    case measured(ApplicationResidueItem)
+  }
+
+  func events(for application: AppRecord) -> AsyncStream<ScanEvent> {
+    AsyncStream { continuation in
+      let worker = Task.detached(priority: .userInitiated) {
+        defer { continuation.finish() }
+        guard !Task.isCancelled else { return }
+        let found = items(for: application, includingSizes: false)
+        guard !Task.isCancelled else { return }
+        continuation.yield(.found(found))
+        for item in found {
+          guard !Task.isCancelled else { return }
+          var measured = item
+          measured.byteCount = sizeCalculator(item.url)
+          measured.isSizeCalculated = true
+          guard !Task.isCancelled else { return }
+          continuation.yield(.measured(measured))
+        }
+      }
+      continuation.onTermination = { @Sendable _ in worker.cancel() }
+    }
+  }
+
+  func items(for application: AppRecord, includingSizes: Bool = true) -> [ApplicationResidueItem] {
+    let target = ApplicationResidueTarget.read(
+      at: application.applicationURL, fileManager: fileManager, applicationGroups: applicationGroups)
+    guard !Task.isCancelled else { return [] }
     let identity = ApplicationResidueIdentity.make(
       for: application,
-      teamIdentifier: teamIdentifier(application.applicationURL),
-      bundleName: bundleName(application.applicationURL),
-      updaterCacheDirName: updaterCacheDirName(application.applicationURL)
+      teamIdentifier: teamIdentifier(target.bundleURL),
+      bundleName: bundleName(target.bundleURL),
+      updaterCacheDirName: updaterCacheDirName(target.bundleURL)
     )
 
-    let inventory = ownershipInventory()
-    let matcher = inventory.matcher(
-      identity: identity,
-      applicationURL: application.applicationURL,
-      declaredGroups: applicationGroups(application.applicationURL) ?? []
-    )
+    let matcher = ApplicationResidueMatcher(
+      identity: identity, target: target,
+      otherApplications: knownApplications.filter {
+        $0.applicationURL.standardizedFileURL != application.applicationURL.standardizedFileURL
+      })
     var found: [URL: ApplicationResidueItem] = [:]
 
     func add(
@@ -83,8 +102,9 @@ struct ApplicationResidueScanner: @unchecked Sendable {
         url: standardized,
         displayName: displayName(for: standardized),
         category: category,
-        byteCount: allocatedSize(of: standardized),
-        matchReason: reason
+        byteCount: includingSizes ? sizeCalculator(standardized) : 0,
+        matchReason: reason,
+        isSizeCalculated: includingSizes
       )
     }
 
@@ -96,9 +116,10 @@ struct ApplicationResidueScanner: @unchecked Sendable {
     ) {
       let children =
         (try? fileManager.contentsOfDirectory(
-          at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: []
+          at: directory, includingPropertiesForKeys: nil, options: []
         )) ?? []
       for child in children {
+        guard !Task.isCancelled else { return }
         guard let reason = matcher.match(leaf: child.lastPathComponent, location: location) else {
           continue
         }
@@ -254,7 +275,8 @@ struct ApplicationResidueScanner: @unchecked Sendable {
     return url.lastPathComponent
   }
 
-  private func allocatedSize(of url: URL) -> Int64 {
+  static func allocatedSize(of url: URL) -> Int64 {
+    guard !Task.isCancelled else { return 0 }
     let values = try? url.resourceValues(forKeys: [
       .isRegularFileKey,
       .isDirectoryKey,
@@ -273,7 +295,7 @@ struct ApplicationResidueScanner: @unchecked Sendable {
     }
 
     guard
-      let enumerator = fileManager.enumerator(
+      let enumerator = FileManager.default.enumerator(
         at: url,
         includingPropertiesForKeys: [
           .isRegularFileKey,
@@ -290,6 +312,7 @@ struct ApplicationResidueScanner: @unchecked Sendable {
 
     var total: Int64 = 0
     for case let fileURL as URL in enumerator {
+      guard !Task.isCancelled else { return total }
       let fileValues = try? fileURL.resourceValues(forKeys: [
         .isRegularFileKey,
         .totalFileAllocatedSizeKey,
