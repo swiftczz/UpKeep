@@ -33,6 +33,36 @@ private final class TestSnapshotBox: @unchecked Sendable {
 
 @MainActor
 final class AppLibraryRefreshTests: XCTestCase {
+  func testDuplicateRecordsDoNotCrashEitherMergeAndKeepDistinctInstallations() {
+    let original = AppRecord(name: "Example", bundleIdentifier: "com.example.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"), currentVersion: "1",
+      source: .sparkle, status: .upToDate, latestVersion: "1", releaseNotes: "Existing notes")
+    var duplicate = original
+    duplicate.releaseNotes = nil
+    let copy = AppRecord(name: "Example Copy", bundleIdentifier: "com.example.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example Copy.app"), currentVersion: "1")
+    let previous = [original, duplicate, copy]
+    for merged in [
+      AppLibrary.mergeKeepingCheckResults([original, duplicate, copy], previous: previous),
+      AppLibrary.mergeInstalledApplicationChanges([original, duplicate, copy], previous: previous),
+    ] {
+      XCTAssertEqual(merged.map(\.id), [original.id, copy.id])
+      XCTAssertEqual(merged.first?.releaseNotes, "Existing notes")
+    }
+  }
+
+  func testRestoresDuplicateSnapshotWithoutPublishingDuplicateRows() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let app = AppRecord(name: "Example", bundleIdentifier: "com.example.app",
+      applicationURL: url, currentVersion: "1")
+    let snapshot = ApplicationLibrarySnapshot(lastCheckedAt: nil, applications: [app, app])
+    let store = ApplicationLibraryStore(load: { snapshot }, save: { _ in })
+    let library = AppLibrary(libraryStore: store)
+    XCTAssertEqual(library.applications.map(\.id), [app.id])
+  }
+
   func testRestoresCachedApplicationsImmediately() throws {
     let suiteName = "UpkeepTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -627,6 +657,26 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(library.applications.first?.status, .updateAvailable)
     XCTAssertEqual(library.availableUpdates.map(\.name), ["Example"])
     XCTAssertTrue(library.checkingApplicationIDs.isEmpty)
+  }
+
+  func testVSCodeUpdateComparisonUsesCommitIdentityInsteadOfOrderingHashes() {
+    var cached = makeApplication(name: "Code", status: .updateAvailable, latestVersion: "1.139.0")
+    cached.source = .vscodeUpdater
+    cached.currentVersion = "1.139.0"
+    cached.latestBuildVersion = "2242ebb"
+    var installed = cached
+    installed.buildVersion = "1.139.0"
+    installed.sourceIdentifier = "stable/2242ebbb54efeeb0129e08e919e7e8d43033cd83"
+    XCTAssertFalse(cached.hasNewerRelease(than: installed))
+    cached.buildVersion = installed.buildVersion
+    cached.sourceIdentifier = "stable/7debcd0e2acdea1c52de81bf9ee1620444407dda"
+    let merged = AppLibrary.mergeInstalledApplicationChanges([installed], previous: [cached])
+    XCTAssertEqual(merged.first?.status, .upToDate)
+    XCTAssertFalse(merged.first?.canAutomaticallyUpdate ?? true)
+    installed.sourceIdentifier = "stable/ffffffffffffffffffffffffffffffffffffffff"
+    XCTAssertTrue(cached.hasNewerRelease(than: installed))
+    installed.currentVersion = "1.140.0"
+    XCTAssertFalse(cached.hasNewerRelease(than: installed))
   }
 
   func testInstalledApplicationMergeRefreshesDetectedVSCodeCommit() {

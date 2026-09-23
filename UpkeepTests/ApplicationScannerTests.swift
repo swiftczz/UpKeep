@@ -1106,6 +1106,20 @@ final class ApplicationScannerTests: XCTestCase {
     )
     XCTAssertEqual(application.homepageURL?.absoluteString, "https://code.visualstudio.com")
     XCTAssertEqual(application.buildVersion, "110a328")
+    let installed = try XCTUnwrap(ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL))
+    XCTAssertEqual(installed.source, .vscodeUpdater)
+    XCTAssertEqual(installed.buildVersion, application.buildVersion)
+    XCTAssertEqual(installed.sourceIdentifier, application.sourceIdentifier)
+
+    // Reproduce a snapshot left by the old installed-only refresh: matching version/date,
+    // but stale commit and a semantic version in the build field.
+    var stale = application
+    stale.buildVersion = application.currentVersion
+    stale.sourceIdentifier = "stable/7debcd0e2acdea1c52de81bf9ee1620444407dda"
+    let refreshed = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL, reusing: stale))
+    XCTAssertEqual(refreshed.sourceIdentifier, application.sourceIdentifier)
+    XCTAssertEqual(refreshed.buildVersion, application.buildVersion)
+
   }
 
   func testDoesNotTreatLocalhostVSCodeUpdateURLAsAnUpdateSource() throws {
@@ -1173,6 +1187,38 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
     XCTAssertEqual(application.source, .electronBuilder)
+  }
+
+  func testElectronNativeServiceDetectionAndOldSnapshotRecovery() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("ServiceTest-\(UUID().uuidString)")
+    let app = root.appendingPathComponent("Example.app")
+    let contents = app.appendingPathComponent("Contents")
+    defer { try? fm.removeItem(at: root) }
+    for path in ["MacOS", "Resources/service", "Frameworks/Electron Framework.framework"] {
+      try fm.createDirectory(at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
+    }
+    try writePropertyList(basicInfo(bundleIdentifier: "com.example.service"),
+      to: contents.appendingPathComponent("Info.plist"))
+    let launcher = contents.appendingPathComponent("MacOS/Example")
+    try Data("https://runtime.example.com/latest.json".utf8).write(to: launcher)
+    XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
+    let old = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
+    let service = contents.appendingPathComponent("Resources/service/example-desktop")
+    try Data("prefixhttps://updates.example.com/latest/latest.jsonsuffix".utf8).write(to: service)
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: service.path)
+    var cached = old
+    let detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
+    XCTAssertEqual(detected.source, .tauri)
+    XCTAssertEqual(detected.sourceURL?.absoluteString, "https://updates.example.com/latest/latest.json")
+    // A legacy self-managed snapshot with exactly the current timestamp must be re-probed.
+    cached = detected
+    cached.source = .selfManaged
+    cached.sourceURL = nil
+    XCTAssertEqual(ApplicationScanner.makeRecord(from: app, reusing: cached)?.source, .tauri)
+    try fm.removeItem(at: service)
+    try fm.createSymbolicLink(at: service, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
+    XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
   }
 
   func testDetectsInstalledReasonixUpdaterWhenPresent() throws {

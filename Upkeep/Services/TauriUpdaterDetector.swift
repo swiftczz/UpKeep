@@ -15,15 +15,16 @@ enum ExecutableUpdaterDetector {
     if let endpoint = TauriUpdaterDetector.endpointFromConfiguration(in: bundleURL) {
       return ExecutableUpdaterDetection(tauriEndpoint: endpoint, releaseJSONEndpoint: nil)
     }
-    guard !TauriUpdaterDetector.hasElectronFramework(in: bundleURL) else {
-      return ExecutableUpdaterDetection(tauriEndpoint: nil, releaseJSONEndpoint: nil)
-    }
+    // Electron can delegate updates to its own native service. Never inspect the
+    // shared Electron runtime for application-specific endpoints.
+    let files = TauriUpdaterDetector.hasElectronFramework(in: bundleURL)
+      ? applicationServiceExecutables(in: bundleURL) : executableFiles(in: bundleURL)
 
     let suppressReleaseJSON = ReleaseJSONDetector.hasTauriConfiguration(in: bundleURL)
     var releaseJSONEndpoint: URL?
     var githubReleases: [GitHubReleasesMetadata] = []
     var seenGitHubReleases = Set<String>()
-    for fileURL in executableFiles(in: bundleURL) {
+    for fileURL in files {
       let detection = detect(fileURL: fileURL)
       if let tauriEndpoint = detection.tauriEndpoint {
         return ExecutableUpdaterDetection(
@@ -104,6 +105,23 @@ enum ExecutableUpdaterDetector {
       releaseJSONEndpoint: releaseJSONEndpoint,
       githubReleases: githubReleases
     )
+  }
+
+  static func hasApplicationService(in bundleURL: URL) -> Bool {
+    !applicationServiceExecutables(in: bundleURL).isEmpty
+  }
+
+  private static func applicationServiceExecutables(in bundleURL: URL) -> [URL] {
+    guard let name = Bundle(url: bundleURL)?.executableURL?.lastPathComponent.lowercased(),
+      !name.isEmpty else { return [] }
+    let root = bundleURL.resolvingSymlinksInPath().standardizedFileURL
+    let directory = root.appendingPathComponent("Contents/Resources/service")
+    return [name + "-desktop", name].compactMap { name in
+      let url = directory.appendingPathComponent(name).resolvingSymlinksInPath().standardizedFileURL
+      guard url.path.hasPrefix(root.path + "/"), isRegularFile(url),
+        FileManager.default.isExecutableFile(atPath: url.path) else { return nil }
+      return url
+    }
   }
 
   private static func executableFiles(in bundleURL: URL) -> [URL] {

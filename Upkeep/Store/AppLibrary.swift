@@ -55,7 +55,7 @@ final class AppLibrary {
       loadedCheckedAt = applications.isEmpty ? nil : .now
     }
 
-    self.applications = loadedApplications
+    self.applications = Self.uniqueApplications(loadedApplications)
     self.scanner = scanner
     self.coordinator = coordinator
     self.process = process
@@ -429,7 +429,7 @@ final class AppLibrary {
   }
 
   private func publish(_ applications: [AppRecord], selecting selection: AppRecord.ID?) {
-    self.applications = applications
+    self.applications = Self.uniqueApplications(applications)
     selectedApplicationID = Self.validSelection(
       selection,
       in: applications,
@@ -482,12 +482,19 @@ final class AppLibrary {
     }
   }
 
+  // Old snapshots or overlapping scan results may contain the same path twice.
+  // Keep distinct installations (different paths), even with the same bundle ID.
+  static func uniqueApplications(_ applications: [AppRecord]) -> [AppRecord] {
+    var seen = Set<AppRecord.ID>()
+    return applications.filter { seen.insert($0.id).inserted }
+  }
+
   static func mergeKeepingCheckResults(
     _ incoming: [AppRecord],
     previous: [AppRecord]
   ) -> [AppRecord] {
-    let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
-    return incoming.map { current in
+    let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    return uniqueApplications(incoming).map { current in
       guard let previous = previousByID[current.id] else {
         return current
       }
@@ -507,6 +514,7 @@ final class AppLibrary {
       let versionChanged =
         current.currentVersion != previous.currentVersion
         || current.buildVersion != previous.buildVersion
+        || (current.source == .vscodeUpdater && current.sourceIdentifier != previous.sourceIdentifier)
       if versionChanged {
         return carryingPendingUpdate(from: previous, onto: current)
       }
@@ -539,9 +547,9 @@ final class AppLibrary {
     _ installedApplications: [AppRecord],
     previous: [AppRecord]
   ) -> [AppRecord] {
-    let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+    let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-    return installedApplications.map { disk in
+    return uniqueApplications(installedApplications).map { disk in
       guard let existing = previousByID[disk.id] else {
         return disk
       }
@@ -549,6 +557,7 @@ final class AppLibrary {
       let versionChanged =
         disk.currentVersion != existing.currentVersion
         || disk.buildVersion != existing.buildVersion
+        || (disk.source == .vscodeUpdater && disk.sourceIdentifier != existing.sourceIdentifier)
       guard versionChanged else {
         return carryingInstalledState(from: existing, onto: disk)
       }

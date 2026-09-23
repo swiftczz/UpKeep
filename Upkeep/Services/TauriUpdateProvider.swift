@@ -385,52 +385,7 @@ enum TauriReleaseNotes {
   }
 
   static func plainText(fromHTML html: String) -> String? {
-    let removablePatterns = [
-      "(?is)<script\\b[^>]*>.*?</script\\s*>",
-      "(?is)<style\\b[^>]*>.*?</style\\s*>",
-      "(?is)<noscript\\b[^>]*>.*?</noscript\\s*>",
-    ]
-    let lineBreakPatterns = [
-      "(?i)<br\\s*/?>",
-      "(?i)</p\\s*>",
-      "(?i)</li\\s*>",
-      "(?i)</h[1-6]\\s*>",
-      "(?i)</tr\\s*>",
-    ]
-
-    var value = html
-    for pattern in removablePatterns {
-      value = value.replacingOccurrences(
-        of: pattern,
-        with: "",
-        options: .regularExpression
-      )
-    }
-    for pattern in lineBreakPatterns {
-      value = value.replacingOccurrences(
-        of: pattern,
-        with: "\n",
-        options: .regularExpression
-      )
-    }
-
-    value = value.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-    value =
-      value
-      .replacingOccurrences(of: "&nbsp;", with: " ")
-      .replacingOccurrences(of: "&amp;", with: "&")
-      .replacingOccurrences(of: "&lt;", with: "<")
-      .replacingOccurrences(of: "&gt;", with: ">")
-      .replacingOccurrences(of: "&quot;", with: "\"")
-      .replacingOccurrences(of: "&#39;", with: "'")
-
-    let lines =
-      value
-      .components(separatedBy: .newlines)
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-    let result = lines.joined(separator: "\n")
-    return result.isEmpty ? nil : result
+    ReleaseNotesHTML.text(html)
   }
 
   private static func fetchPlainText(from url: URL) async -> String? {

@@ -181,7 +181,9 @@ struct ApplicationScanner: ApplicationScanning {
     let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
     let hasAppStoreReceipt = FileManager.default.fileExists(atPath: receiptURL.path)
     let iOSAppStoreMetadata = iOSAppStoreMetadata(at: applicationURL, bundleInfo: info)
-    if let previous,
+    if let previous, previous.source != .vscodeUpdater,
+      !(previous.source == .selfManaged
+        && ExecutableUpdaterDetector.hasApplicationService(in: bundle.bundleURL)),
       canReuse(
         previous,
         bundleIdentifier: bundleIdentifier,
@@ -223,6 +225,17 @@ struct ApplicationScanner: ApplicationScanning {
           status: .upToDate,
           sourceIdentifier: iOSAppStoreMetadata.storeIdentifier
         )
+      }
+      if let metadata = VSCodeUpdaterDetector.detect(in: bundle.bundleURL) {
+        return AppRecord(
+          name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
+          currentVersion: currentVersion,
+          buildVersion: String(metadata.commit.prefix(7)),
+          applicationModificationDate: applicationModificationDate,
+          source: .vscodeUpdater, status: .checking,
+          sourceURL: metadata.updateURL, homepageURL: metadata.homepageURL,
+          sourceIdentifier: VSCodeUpdaterDetector.sourceIdentifier(
+            quality: metadata.quality, commit: metadata.commit))
       }
       return AppRecord(
         name: name,

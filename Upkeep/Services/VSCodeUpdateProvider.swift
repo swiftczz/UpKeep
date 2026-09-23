@@ -130,6 +130,7 @@ struct VSCodeUpdateProvider: Sendable {
       ) {
       case .upToDate:
         application.latestVersion = application.currentVersion
+        application.latestBuildVersion = application.buildVersion
         application.status = .upToDate
         application.canAutomaticallyUpdate = false
       case .update(let payload):
@@ -139,6 +140,7 @@ struct VSCodeUpdateProvider: Sendable {
           releaseNotes: payload.notes,
           canInstall: payload.packageURL != nil
         )
+        application.latestBuildVersion = payload.commit.map { String($0.prefix(7)) }
         if payload.productVersion.localizedCaseInsensitiveCompare(application.currentVersion)
           == .orderedSame
         {

@@ -266,10 +266,20 @@ struct AppDetailView: View {
       }
 
       if let notes = application.releaseNotes, !notes.isEmpty {
-        Text(notes)
-          .font(.body)
-          .textSelection(.enabled)
-          .lineSpacing(3)
+        let paragraphs = notes
+          .replacingOccurrences(of: "\r\n", with: "\n")
+          .replacingOccurrences(of: "\n[\\t ]*\n(?:[\\t ]*\n)*", with: "\n\n", options: .regularExpression)
+          .components(separatedBy: "\n\n")
+          .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        VStack(alignment: .leading, spacing: 6) {
+          ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+            Text(paragraph)
+              .font(.body)
+              .textSelection(.enabled)
+              .lineSpacing(2)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+        }
       } else {
         ContentUnavailableView(
           "没有发行说明",

@@ -18,6 +18,10 @@ enum SparkleUpdateProviderError: LocalizedError {
 }
 
 struct SparkleUpdateProvider: Sendable {
+  var fetchData: @Sendable (URL) async throws -> Data? = {
+    try await UpdateHTTP.successfulData(from: $0)
+  }
+
   func check(_ application: AppRecord) async -> AppRecord {
     var application = application
 
@@ -29,7 +33,7 @@ struct SparkleUpdateProvider: Sendable {
     }
 
     do {
-      guard let data = try await UpdateHTTP.successfulData(from: feedURL) else {
+      guard let data = try await fetchData(feedURL) else {
         application.status = .unavailable("Sparkle 更新源暂时无法访问。")
         return application
       }
@@ -75,11 +79,16 @@ struct SparkleUpdateProvider: Sendable {
       application.packageByteCount = candidate.packageByteCount
       application.updatePageURL = candidate.manualUpdateURL(relativeTo: feedURL)
 
-      if application.releaseNotes == nil,
-        let releaseNotesURL = candidate.releaseNotesURL,
-        SecureUpdateURL.https(releaseNotesURL) != nil
-      {
-        application.releaseNotes = await Self.fetchReleaseNotes(from: releaseNotesURL)
+      var visitedNotesURLs = Set<URL>()
+      for link in [candidate.releaseNotesURL, candidate.updatePageURL].compactMap({ $0 }) {
+        guard application.releaseNotes == nil else { break }
+        guard let url = URL(string: link.relativeString, relativeTo: feedURL)?.absoluteURL,
+          SecureUpdateURL.https(url) != nil, visitedNotesURLs.insert(url).inserted
+        else { continue }
+        // Retain a usable source link even when the page is unavailable or empty.
+        application.releaseNotesURL = url
+        application.releaseNotes = await fetchReleaseNotes(from: url)
+        if Task.isCancelled { return application }
       }
 
       let updateIsAvailable: Bool
@@ -322,17 +331,21 @@ struct SparkleUpdateProvider: Sendable {
     return value
   }
 
-  private static func fetchReleaseNotes(from url: URL) async -> String? {
+  private func fetchReleaseNotes(from url: URL) async -> String? {
     do {
+      if let apiURL = TauriReleaseNotes.githubReleaseAPIURL(from: url) {
+        guard let data = try await fetchData(apiURL), data.count <= 2_000_000 else { return nil }
+        return TauriReleaseNotes.parseGitHubRelease(data)
+      }
       guard
-        let data = try await UpdateHTTP.successfulData(from: url),
+        let data = try await fetchData(url),
         data.count <= 2_000_000,
         let html = String(data: data, encoding: .utf8)
       else {
         return nil
       }
 
-      return plainText(fromHTML: html)
+      return ReleaseNotesHTML.text(html)
     } catch {
       return nil
     }
@@ -564,6 +577,11 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       captureElement = key
       captureBuffer = ""
     }
+  }
+
+  func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
+    guard let text = String(data: CDATABlock, encoding: .utf8) else { return }
+    self.parser(parser, foundCharacters: text)
   }
 
   func parser(_ parser: XMLParser, foundCharacters string: String) {

@@ -281,9 +281,12 @@ final class ProtocolUpdateParserTests: XCTestCase {
       TauriReleaseNotes.plainText(fromHTML: html),
       """
       Reasonix Desktop v1.34.0
+
       Improved update handling & release notes.
-      Fixed updater display
-      Added changelog fallback
+
+      • Fixed updater display
+
+      • Added changelog fallback
       """
     )
   }

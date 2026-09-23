@@ -369,6 +369,16 @@ extension AppRecord {
   }
 
   func hasNewerRelease(than installed: AppRecord) -> Bool {
+    if source == .vscodeUpdater {
+      guard let latestVersion else { return false }
+      let commit = installed.source == .vscodeUpdater
+        ? installed.sourceIdentifier.flatMap(VSCodeUpdaterDetector.parseSourceIdentifier)?.commit
+        : nil
+      return VSCodeUpdatePayload(productVersion: latestVersion, commit: latestBuildVersion)
+        .shouldOfferUpdate(against: installed.currentVersion, currentCommit: commit,
+          currentBuildVersion: installed.buildVersion)
+    }
+
     if let latestBuild = latestBuildVersion, let installedBuild = installed.buildVersion {
       return VersionComparator.isNewer(latestBuild, than: installedBuild)
     }
