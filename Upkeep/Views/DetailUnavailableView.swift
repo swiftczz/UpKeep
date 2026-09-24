@@ -14,7 +14,7 @@ struct DetailUnavailableView: View {
       ContentUnavailableView(
         "选择一个应用",
         systemImage: "square.split.2x1",
-        description: Text("从左侧列表选择应用以查看版本和发行说明。")
+        description: Text("从左侧列表选择应用以查看版本和更新说明。")
       )
     }
   }

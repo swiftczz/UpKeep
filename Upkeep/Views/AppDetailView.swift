@@ -254,7 +254,7 @@ struct AppDetailView: View {
   private var releaseNotes: some View {
     VStack(alignment: .leading, spacing: 14) {
       HStack {
-        Text("发行说明")
+        Text("更新说明")
           .font(.headline)
 
         Spacer()
@@ -266,23 +266,10 @@ struct AppDetailView: View {
       }
 
       if let notes = application.releaseNotes, !notes.isEmpty {
-        let paragraphs = notes
-          .replacingOccurrences(of: "\r\n", with: "\n")
-          .replacingOccurrences(of: "\n[\\t ]*\n(?:[\\t ]*\n)*", with: "\n\n", options: .regularExpression)
-          .components(separatedBy: "\n\n")
-          .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        VStack(alignment: .leading, spacing: 6) {
-          ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-            Text(paragraph)
-              .font(.body)
-              .textSelection(.enabled)
-              .lineSpacing(2)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }
-        }
+        ReleaseNotesMarkdownView(source: notes, baseURL: application.releaseNotesURL)
       } else {
         ContentUnavailableView(
-          "没有发行说明",
+          "没有更新说明",
           systemImage: "doc.text.magnifyingglass",
           description: Text(releaseNotesPlaceholder)
         )
@@ -428,8 +415,8 @@ struct AppDetailView: View {
   private var releaseNotesPlaceholder: String {
     switch application.status {
     case .unavailable(let message): message
-    case .selfManaged: "此应用需在自身内检查更新，当前没有可读取的发行说明。"
-    default: "此版本未提供发行说明。"
+    case .selfManaged: "此应用需在自身内检查更新，当前没有可读取的更新说明。"
+    default: "此版本未提供更新说明。"
     }
   }
 }
