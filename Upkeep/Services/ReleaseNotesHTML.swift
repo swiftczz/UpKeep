@@ -2,6 +2,18 @@ import Foundation
 
 enum ReleaseNotesHTML {
   static func text(_ html: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String? {
+    text(html, preferredLanguages: preferredLanguages, requiredRootXPath: nil)
+  }
+
+  static func githubReleaseText(_ html: String) -> String? {
+    // GitHub pages contain navigation, other releases and repository content.
+    // If the release body is absent, never fall back to the whole page.
+    text(html, preferredLanguages: Locale.preferredLanguages,
+      requiredRootXPath: "//*[@data-test-selector='body-content' and contains(concat(' ', normalize-space(@class), ' '), ' markdown-body ')]")
+  }
+
+  private static func text(_ html: String, preferredLanguages: [String],
+    requiredRootXPath: String?) -> String? {
     // Foundation's HTML tidy predates HTML5 and otherwise discards semantic containers.
     var compatibleHTML = html
     for tag in ["article", "main", "section", "header", "footer", "nav", "aside", "template"] {
@@ -12,8 +24,14 @@ enum ReleaseNotesHTML {
     guard let document = try? XMLDocument(xmlString: compatibleHTML,
       options: [.documentTidyHTML, .nodeLoadExternalEntitiesNever]) else { return nil }
     func first(_ query: String) -> XMLNode? { (try? document.nodes(forXPath: query))?.first }
-    let root = first("//*[@data-upkeep-element='article'][contains(concat(' ', normalize-space(@class), ' '), ' release-paper ')]")
-      ?? first("//*[@data-upkeep-element='article'][.//h1]") ?? first("//*[@data-upkeep-element='main']") ?? first("//body") ?? document
+    let root: XMLNode
+    if let requiredRootXPath {
+      guard let matched = first(requiredRootXPath) else { return nil }
+      root = matched
+    } else {
+      root = first("//*[@data-upkeep-element='article'][contains(concat(' ', normalize-space(@class), ' '), ' release-paper ')]")
+        ?? first("//*[@data-upkeep-element='article'][.//h1]") ?? first("//*[@data-upkeep-element='main']") ?? first("//body") ?? document
+    }
     let chinese = preferredLanguages.first?.lowercased().hasPrefix("zh") == true
     let preferredClass = chinese ? "l-zh" : "l-en"
     let alternateClass = chinese ? "l-en" : "l-zh"

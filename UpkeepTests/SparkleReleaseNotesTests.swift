@@ -98,6 +98,31 @@ final class SparkleReleaseNotesTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(app.releaseNotesURL?.absoluteString, link)
   }
 
+  func testCompositorFallsBackToGitHubPageWhenAPIIsRateLimited() async {
+    let link = "https://github.com/robbietilton/Compositor/releases/tag/v1.2.10"
+    let api = "https://api.github.com/repos/robbietilton/Compositor/releases/tags/v1.2.10"
+    let page = """
+      <html><body><nav>Repositories Sign in</nav><main>
+        <h1>Compositor releases</h1><aside>Other release 1.2.9</aside>
+        <div data-test-selector="body-content" class="markdown-body tmp-my-3">
+          <p>SVG files import at canvas size.</p><p>Magic Wand no longer freezes.</p>
+        </div><footer>Legal</footer>
+      </main></body></html>
+      """
+    let app = await check("<link>\(link)</link>", pages: [api: "", link: page])
+    XCTAssertEqual(app.releaseNotes, "SVG files import at canvas size.\n\nMagic Wand no longer freezes.")
+    XCTAssertEqual(app.releaseNotesURL?.absoluteString, link)
+  }
+
+  func testGitHubPageWithoutReleaseBodyNeverShowsNavigation() async {
+    let link = "https://github.com/example/app/releases/tag/v1.1.4"
+    let api = "https://api.github.com/repos/example/app/releases/tags/v1.1.4"
+    let app = await check("<link>\(link)</link>", pages: [api: "", link:
+      "<html><body><nav>Sign in</nav><main><h1>Repository releases</h1></main></body></html>"])
+    XCTAssertNil(app.releaseNotes)
+    XCTAssertEqual(app.releaseNotesURL?.absoluteString, link)
+  }
+
   func testUnsafeLinkIsNotFetched() async {
     for link in ["http://example.com/notes", "file:///tmp/notes", "javascript:alert(1)"] {
       let app = await check("<link>\(link)</link>", pages: [:])
