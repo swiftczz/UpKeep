@@ -199,7 +199,8 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
       guard downloadLifecycle.beginFallbackInstall() else { return }
       Self.logger.info("App Store 安装失败，转交安装助手，应用编号：\(self.adamID)")
       progressHandler?(.indeterminate("正在连接安装助手…"))
-      DispatchQueue.global(qos: .userInitiated).async {
+      // Keep the session alive until installation and its completion callback finish.
+      DispatchQueue.global(qos: .userInitiated).async { [self] in
         let installError = Self.installDownloadedPackage(
           packageURL: packageHardLinkURL,
           receiptURL: receiptHardLinkURL,
