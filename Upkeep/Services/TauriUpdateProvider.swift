@@ -122,7 +122,7 @@ struct TauriUpdateManifest: Equatable, Sendable {
 }
 
 struct TauriUpdateProvider: Sendable {
-  func check(_ application: AppRecord) async -> AppRecord {
+  func check(_ application: AppRecord, fallbackNotes: AppRecord? = nil) async -> AppRecord {
     var application = application
 
     guard let endpoint = application.sourceURL,
@@ -136,8 +136,14 @@ struct TauriUpdateProvider: Sendable {
       let manifest = try await fetchManifest(from: endpoint)
       let selectedPlatform = manifest.selectedPlatform()
       let releaseNotes: String?
-      if let notes = manifest.notes {
+      var notesURL = manifest.releaseNotesURL
+      if let notes = manifest.notes?.nonBlankValue {
         releaseNotes = notes
+      } else if let fallbackNotes,
+        fallbackNotes.latestVersion?.split(separator: ",").first.map(String.init) == manifest.version,
+        let notes = fallbackNotes.releaseNotes?.nonBlankValue {
+        releaseNotes = notes
+        notesURL = fallbackNotes.releaseNotesURL
       } else if let releaseNotesURL = manifest.releaseNotesURL {
         releaseNotes = await TauriReleaseNotes.fetch(
           from: releaseNotesURL,
@@ -153,7 +159,7 @@ struct TauriUpdateProvider: Sendable {
         version: manifest.version,
         releaseDate: manifest.publicationDate,
         releaseNotes: releaseNotes,
-        releaseNotesURL: manifest.releaseNotesURL,
+        releaseNotesURL: notesURL,
         packageByteCount: selectedPlatform?.size,
         canInstall: selectedPlatform != nil
       )

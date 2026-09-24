@@ -83,7 +83,15 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
     if application.source == .homebrew,
       let alternate = application.alternateUpdateCheckRecord
     {
-      let checked = await checkDirectSource(alternate)
+      let checked: AppRecord
+      switch alternate.source {
+      case .sparkle:
+        checked = await sparkle.check(alternate, fallbackNotes: application)
+      case .tauri:
+        checked = await tauri.check(alternate, fallbackNotes: application)
+      default:
+        checked = await checkDirectSource(alternate)
+      }
       return HomebrewUpdateProvider.mergeAlternateCheckResult(
         checked,
         intoHomebrew: application

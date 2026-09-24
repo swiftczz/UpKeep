@@ -5,7 +5,7 @@ import XCTest
 final class SparkleReleaseNotesTests: XCTestCase, @unchecked Sendable {
   private let feed = URL(string: "https://example.com/appcast.xml")!
 
-  private func check(_ fields: String, pages: [String: String]) async -> AppRecord {
+  private func check(_ fields: String, pages: [String: String], fallback: AppRecord? = nil) async -> AppRecord {
     let xml = """
       <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
       <item><sparkle:version>10</sparkle:version><sparkle:shortVersionString>1.1.4</sparkle:shortVersionString>
@@ -22,7 +22,7 @@ final class SparkleReleaseNotesTests: XCTestCase, @unchecked Sendable {
     })
     return await provider.check(AppRecord(name: "Example", bundleIdentifier: "com.example.app",
       applicationURL: URL(fileURLWithPath: "/Applications/Example.app"), currentVersion: "1.1.4",
-      source: .sparkle, sourceURL: feed))
+      source: .sparkle, sourceURL: feed), fallbackNotes: fallback)
   }
 
   func testDescriptionTakesPriorityWithoutFetchingPages() async {
@@ -32,6 +32,42 @@ final class SparkleReleaseNotesTests: XCTestCase, @unchecked Sendable {
       <link>https://example.com/release</link>
       """, pages: [:])
     XCTAssertEqual(app.releaseNotes, "Inline notes")
+  }
+
+  func testInlineHTMLDescriptionRemovesStylesAndPreservesHeadingsAndLists() async {
+    let app = await check("""
+      <description><![CDATA[<!DOCTYPE html><html><head>
+      <style>body { font-family: -apple-system; } h3 { margin: 12px 0; }</style>
+      </head><body><h3>Added</h3><ul><li>Element snapping &amp; capture</li></ul>
+      <h3>Improved and fixed</h3><ul><li>Recording and export</li></ul>
+      <script>tracking()</script></body></html>]]></description>
+      """, pages: [:])
+    XCTAssertEqual(app.releaseNotes, "Added\n\n• Element snapping & capture\n\nImproved and fixed\n\n• Recording and export")
+  }
+
+  func testMacshotEscapedDescriptionRemovesStyleContents() async {
+    let app = await check("""
+      <description>&lt;style&gt;body { font-size: 13px; }&lt;/style&gt;
+      &lt;h3&gt;Added&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;&lt;b&gt;Element snapping&lt;/b&gt; — capture windows&lt;/li&gt;&lt;/ul&gt;</description>
+      """, pages: [:])
+    XCTAssertEqual(app.releaseNotes, "Added\n\n• Element snapping — capture windows")
+  }
+
+  func testHomebrewGitHubFallbackComesBetweenInlineNotesAndWebpage() async {
+    var fallback = AppRecord(name: "Example", bundleIdentifier: "com.example.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"), currentVersion: "1.1.4", source: .homebrew)
+    fallback.latestVersion = "1.1.4,10"
+    fallback.releaseNotes = "GitHub notes"
+    fallback.releaseNotesURL = URL(string: "https://github.com/example/app/releases/tag/v1.1.4")
+    let fields = "<link>https://example.com/release</link>"
+    let result = await check(fields, pages: [:], fallback: fallback)
+    XCTAssertEqual(result.releaseNotes, "GitHub notes")
+    XCTAssertEqual(result.releaseNotesURL, fallback.releaseNotesURL)
+    let inline = await check("<description>Inline notes</description>" + fields, pages: [:], fallback: fallback)
+    XCTAssertEqual(inline.releaseNotes, "Inline notes")
+    fallback.latestVersion = "1.1.3"
+    let different = await check(fields, pages: ["https://example.com/release": "<p>Correct version</p>"], fallback: fallback)
+    XCTAssertEqual(different.releaseNotes, "Correct version")
   }
 
   func testDedicatedLinkTakesPriority() async {

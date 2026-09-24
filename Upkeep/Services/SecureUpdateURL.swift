@@ -43,6 +43,9 @@ enum UpdateHTTP {
         guard let result = try await singleResponse(from: url) else {
           return nil
         }
+        if let error = GitHubAPIError.from(response: result.response, data: result.data) {
+          throw error
+        }
         if NetworkRetryPolicy.isRetryableHTTPStatus(result.response.statusCode),
           attempt < totalAttempts - 1
         {
@@ -115,6 +118,51 @@ enum UpdateHTTP {
     configuration.timeoutIntervalForRequest = 20
     configuration.timeoutIntervalForResource = 45
     return configuration
+  }
+}
+
+struct GitHubAPIError: LocalizedError {
+  let message: String
+  var errorDescription: String? { message }
+
+  static func from(response: HTTPURLResponse, data: Data, now: Date = .now) -> GitHubAPIError? {
+    guard response.url?.host?.lowercased() == "api.github.com",
+      !(200..<300).contains(response.statusCode) else { return nil }
+    let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    let detail = json?["message"] as? String ?? ""
+    let rateLimited = response.statusCode == 429 || (response.statusCode == 403 && (
+      response.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0"
+        || detail.lowercased().contains("rate limit")))
+    guard rateLimited else {
+      return nil
+    }
+
+    var lines = ["GitHub API 请求已被限流，请稍后重试。"]
+    // Only display an IP explicitly reported by GitHub; never infer proxy use.
+    if let range = detail.range(of: #"(?i)rate limit exceeded for ([0-9a-f:.]+)"#, options: .regularExpression) {
+      let ip = detail[range].split(separator: " ").last.map(String.init)?
+        .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+      if let ip, !ip.isEmpty { lines.append("当前请求出口 IP：\(ip)。") }
+    }
+    var retryDate: Date?
+    if response.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0",
+      let raw = response.value(forHTTPHeaderField: "X-RateLimit-Reset"),
+      let timestamp = TimeInterval(raw), timestamp.isFinite {
+      retryDate = Date(timeIntervalSince1970: timestamp)
+    }
+    if let raw = response.value(forHTTPHeaderField: "Retry-After"),
+      let seconds = TimeInterval(raw), seconds.isFinite, seconds >= 0 {
+      retryDate = max(retryDate ?? now, now.addingTimeInterval(seconds))
+    }
+    if let retryDate, retryDate > now {
+      let formatter = DateFormatter()
+      formatter.locale = Locale(identifier: "zh_CN")
+      formatter.timeZone = .current
+      formatter.dateFormat = "M月d日 HH:mm:ss zzz"
+      lines.append("预计可重试时间：\(formatter.string(from: retryDate))。")
+    }
+    lines.append("同一出口 IP 的请求可能共用额度；如使用代理，同一代理出口也可能共用额度。请避免反复刷新。")
+    return GitHubAPIError(message: lines.joined(separator: "\n\n"))
   }
 }
 

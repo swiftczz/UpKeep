@@ -22,7 +22,7 @@ struct SparkleUpdateProvider: Sendable {
     try await UpdateHTTP.successfulData(from: $0)
   }
 
-  func check(_ application: AppRecord) async -> AppRecord {
+  func check(_ application: AppRecord, fallbackNotes: AppRecord? = nil) async -> AppRecord {
     var application = application
 
     guard let feedURL = application.sourceURL,
@@ -78,6 +78,13 @@ struct SparkleUpdateProvider: Sendable {
       application.releaseNotes = candidate.summary.flatMap(Self.plainText(fromHTML:))
       application.packageByteCount = candidate.packageByteCount
       application.updatePageURL = candidate.manualUpdateURL(relativeTo: feedURL)
+
+      if application.releaseNotes == nil, let fallbackNotes,
+        fallbackNotes.latestVersion?.split(separator: ",").first.map(String.init) == latestVersion,
+        let notes = fallbackNotes.releaseNotes?.nonBlankValue {
+        application.releaseNotes = notes
+        application.releaseNotesURL = fallbackNotes.releaseNotesURL
+      }
 
       var visitedNotesURLs = Set<URL>()
       for link in [candidate.releaseNotesURL, candidate.updatePageURL].compactMap({ $0 }) {
@@ -352,38 +359,7 @@ struct SparkleUpdateProvider: Sendable {
   }
 
   private static func plainText(fromHTML html: String) -> String? {
-    let lineBreakPatterns = [
-      "(?i)<br\\s*/?>",
-      "(?i)</p\\s*>",
-      "(?i)</li\\s*>",
-    ]
-
-    var value = html
-    for pattern in lineBreakPatterns {
-      value = value.replacingOccurrences(
-        of: pattern,
-        with: "\n",
-        options: .regularExpression
-      )
-    }
-
-    value = value.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-    value =
-      value
-      .replacingOccurrences(of: "&nbsp;", with: " ")
-      .replacingOccurrences(of: "&amp;", with: "&")
-      .replacingOccurrences(of: "&lt;", with: "<")
-      .replacingOccurrences(of: "&gt;", with: ">")
-      .replacingOccurrences(of: "&quot;", with: "\"")
-      .replacingOccurrences(of: "&#39;", with: "'")
-
-    let lines =
-      value
-      .components(separatedBy: .newlines)
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-    let result = lines.joined(separator: "\n")
-    return result.isEmpty ? nil : result
+    ReleaseNotesHTML.text(html)
   }
 }
 

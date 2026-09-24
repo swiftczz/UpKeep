@@ -384,6 +384,8 @@ struct GitHubReleasesUpdateProvider: Sendable {
       )
     } catch is CancellationError {
       return application
+    } catch let error as GitHubAPIError {
+      application.status = .unavailable(error.localizedDescription)
     } catch {
       application.status = .unavailable("GitHub Releases 更新源暂时无法访问。")
     }
@@ -426,8 +428,14 @@ struct GitHubReleasesUpdateProvider: Sendable {
   }
 
   private func loadRelease(from url: URL) async throws -> GitHubReleaseManifest {
-    guard let data = try await UpdateHTTP.successfulData(from: url),
-      data.count <= 5_000_000,
+    guard let result = try await UpdateHTTP.response(from: url) else {
+      throw ProcessRunnerError.failed(status: 1, message: "未收到 GitHub 发布信息响应，请稍后重试。")
+    }
+    guard (200..<300).contains(result.statusCode) else {
+      throw GitHubAPIError(message: "GitHub 发布信息请求失败（HTTP \(result.statusCode)），请稍后重试。")
+    }
+    let data = result.data
+    guard data.count <= 5_000_000,
       let release = GitHubReleaseManifest.parse(data)
     else {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 GitHub Release。")

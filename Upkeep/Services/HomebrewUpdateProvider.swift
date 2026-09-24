@@ -2,6 +2,7 @@ import Foundation
 
 struct HomebrewUpdateProvider: Sendable {
   private let cache = SnapshotCache()
+  var fetchData: @Sendable (URL) async throws -> Data? = { try await UpdateHTTP.successfulData(from: $0) }
 
   func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
     await enrich(applications, cachePolicy: .allowed)
@@ -15,7 +16,7 @@ struct HomebrewUpdateProvider: Sendable {
       return applications
     }
     let claimed = applications.map { snapshot.applying(to: $0) }
-    return await fillingGitHubPackageSizes(claimed, snapshot: snapshot)
+    return await fillingGitHubReleaseMetadata(claimed, snapshot: snapshot)
   }
 
   func upgrade(
@@ -113,11 +114,12 @@ struct HomebrewUpdateProvider: Sendable {
       return alternate
     }
 
-    if checked.latestVersion == nil || checked.latestVersion == application.latestVersion {
-      if checked.releaseNotes != nil {
+    if checked.latestVersion != nil
+      && checked.latestVersion?.split(separator: ",").first == application.latestVersion?.split(separator: ",").first {
+      if checked.releaseNotes?.nonBlankValue != nil {
         merged.releaseNotes = checked.releaseNotes
-      }
-      if checked.releaseNotesURL != nil {
+        merged.releaseNotesURL = checked.releaseNotesURL
+      } else if merged.releaseNotes?.nonBlankValue == nil, checked.releaseNotesURL != nil {
         merged.releaseNotesURL = checked.releaseNotesURL
       }
       if checked.releaseDate != nil {
@@ -227,68 +229,74 @@ struct HomebrewUpdateProvider: Sendable {
     }
   }
 
-  private func fillingGitHubPackageSizes(
+  func fillingGitHubReleaseMetadata(
     _ applications: [AppRecord],
     snapshot: HomebrewSnapshot
   ) async -> [AppRecord] {
-    var started = Set<String>()
-    await withTaskGroup(of: (String, Int64)?.self) { group in
-      for application in applications {
-        guard application.source == .homebrew,
-          application.packageByteCount == nil,
-          let token = application.sourceIdentifier,
-          let download = snapshot.gitHubReleaseDownload(for: token),
-          cache.packageByteCount(for: download.cacheKey) == nil,
-          started.insert(download.cacheKey).inserted
-        else {
-          continue
-        }
-        group.addTask {
-          await Self.fetchGitHubAssetSize(download)
-        }
-      }
-
-      for await result in group {
-        guard let (key, size) = result else { continue }
-        cache.store(packageByteCount: size, for: key)
-      }
-    }
-
-    return applications.map { application in
-      var application = application
-      guard application.source == .homebrew,
-        application.packageByteCount == nil,
+    // Reuse the same release response for asset sizes and notes, including apps
+    // with multiple assets in a single release. Cache empty responses briefly too.
+    var requested = Set<URL>()
+    var urls: [URL] = []
+    for application in applications where application.source == .homebrew {
+      guard application.packageByteCount == nil || application.releaseNotes?.nonBlankValue == nil,
         let token = application.sourceIdentifier,
-        let download = snapshot.gitHubReleaseDownload(for: token),
-        let size = cache.packageByteCount(for: download.cacheKey)
-      else {
-        return application
+        let download = snapshot.gitHubReleaseDownload(for: token), let url = download.apiURL,
+        requested.insert(url).inserted, cache.releaseData(for: url) == nil else { continue }
+      urls.append(url)
+    }
+    await withTaskGroup(of: (URL, Data, Bool).self) { group in
+      var pending = urls.makeIterator()
+      let fetchData = fetchData
+      func enqueue(_ url: URL) {
+        group.addTask {
+          do {
+            let data = try await fetchData(url)
+            return (url, data.flatMap { $0.count <= 5_000_000 ? $0 : nil } ?? Data(), false)
+          } catch {
+            return (url, Data(), error is GitHubAPIError)
+          }
+        }
       }
-      application.packageByteCount = size
-      return application
+      for _ in 0..<4 {
+        if let url = pending.next() { enqueue(url) }
+      }
+      var limited = false
+      for await (url, data, rateLimited) in group {
+        if Task.isCancelled { group.cancelAll(); break }
+        cache.store(releaseData: data, for: url)
+        limited = limited || rateLimited
+        if !limited, let next = pending.next() { enqueue(next) }
+      }
+    }
+    return applications.map { application in
+      guard application.source == .homebrew, let token = application.sourceIdentifier,
+        let download = snapshot.gitHubReleaseDownload(for: token), let url = download.apiURL,
+        let data = cache.releaseData(for: url) else { return application }
+      return Self.applyingGitHubRelease(data, download: download, to: application)
     }
   }
 
-  private static func fetchGitHubAssetSize(
-    _ download: GitHubReleaseDownload
-  ) async -> (String, Int64)? {
-    guard let apiURL = download.apiURL else {
-      return nil
+  static func applyingGitHubRelease(_ data: Data, download: GitHubReleaseDownload,
+    to application: AppRecord) -> AppRecord {
+    var result = application
+    guard let release = GitHubReleaseManifest.parse(data),
+      let version = application.latestVersion?.split(separator: ",").first,
+      String(version) == release.version,
+      release.assets.contains(where: { $0.downloadURL == URL(string:
+        "https://github.com/\(download.owner)/\(download.repository)/releases/download/\(download.tag)/\(download.fileName)") })
+    else { return result }
+    if result.packageByteCount == nil {
+      result.packageByteCount = GitHubReleaseManifest.packageByteCount(named: download.fileName, in: data)
     }
-    do {
-      guard let data = try await UpdateHTTP.successfulData(from: apiURL),
-        data.count <= 5_000_000,
-        let size = GitHubReleaseManifest.packageByteCount(named: download.fileName, in: data)
-      else {
-        return nil
-      }
-      return (download.cacheKey, size)
-    } catch is CancellationError {
-      return nil
-    } catch {
-      return nil
+    if result.releaseNotes?.nonBlankValue == nil, let notes = release.releaseNotes?.nonBlankValue {
+      result.releaseNotes = notes
+      result.releaseNotesURL = URL(string:
+        "https://github.com/\(download.owner)/\(download.repository)/releases/tag/\(download.tag)")
+      result.releaseDate = result.releaseDate ?? release.releaseDate
     }
+    return result
   }
+
 }
 
 struct HomebrewSnapshot {
@@ -381,6 +389,7 @@ struct HomebrewSnapshot {
     onto application: AppRecord
   ) -> AppRecord {
     var application = application
+    let previousNotesVersion = application.latestVersion
     let remoteIsNewer = VersionComparator.isNewer(
       remoteVersion,
       than: application.currentVersion,
@@ -413,6 +422,11 @@ struct HomebrewSnapshot {
     case .selfManaged, .checking, .unavailable:
       application.latestVersion = remoteVersion == "latest" ? nil : remoteVersion
     }
+    if application.latestVersion != previousNotesVersion {
+      application.releaseNotes = nil
+      application.releaseNotesURL = nil
+      application.releaseDate = nil
+    }
     application.canAutomaticallyUpdate = application.status == .updateAvailable
     return application
   }
@@ -422,7 +436,7 @@ private final class SnapshotCache: @unchecked Sendable {
   private let lock = NSLock()
   private var stored: HomebrewSnapshot?
   private var storedAt: Date?
-  private var packageByteCountByDownload: [String: Int64] = [:]
+  private var releases: [URL: (data: Data, date: Date)] = [:]
   private let timeToLive: TimeInterval = 5 * 60
 
   func snapshot() -> HomebrewSnapshot? {
@@ -441,17 +455,19 @@ private final class SnapshotCache: @unchecked Sendable {
     lock.unlock()
   }
 
-  func packageByteCount(for cacheKey: String) -> Int64? {
+  func releaseData(for url: URL) -> Data? {
     lock.lock()
     defer { lock.unlock() }
-    return packageByteCountByDownload[cacheKey]
+    guard let entry = releases[url], Date().timeIntervalSince(entry.date) < timeToLive else { return nil }
+    return entry.data
   }
 
-  func store(packageByteCount: Int64, for cacheKey: String) {
+  func store(releaseData: Data, for url: URL) {
     lock.lock()
-    packageByteCountByDownload[cacheKey] = packageByteCount
+    releases[url] = (releaseData, Date())
     lock.unlock()
   }
+
 }
 
 final class HomebrewOutputProgressParser: @unchecked Sendable {

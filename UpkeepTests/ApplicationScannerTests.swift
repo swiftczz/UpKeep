@@ -1221,6 +1221,29 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
   }
 
+  func testElectronHostDetectionIgnoresExampleVersionsAndEscapingSymlinks() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("HostTest-\(UUID().uuidString)")
+    let app = root.appendingPathComponent("Example Studio.app")
+    let contents = app.appendingPathComponent("Contents")
+    defer { try? fm.removeItem(at: root) }
+    for path in ["MacOS", "Resources/bin", "Frameworks/Electron Framework.framework"] {
+      try fm.createDirectory(at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
+    }
+    var info = basicInfo(bundleIdentifier: "com.example.studio")
+    info["CFBundleExecutable"] = "Example Studio"
+    try writePropertyList(info, to: contents.appendingPathComponent("Info.plist"))
+    try Data().write(to: contents.appendingPathComponent("MacOS/Example Studio"))
+    let host = contents.appendingPathComponent("Resources/bin/example-studio-host")
+    try Data("tauri_plugin_updater https://example.com/studio-vX.Y.Z/latest.json https://example.com/studio/versions.json".utf8).write(to: host)
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: host.path)
+    XCTAssertEqual(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint?.absoluteString,
+      "https://example.com/studio/versions.json")
+    try fm.removeItem(at: host)
+    try fm.createSymbolicLink(at: host, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
+    XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
+  }
+
   func testDetectsInstalledReasonixUpdaterWhenPresent() throws {
     let applicationURL = URL(fileURLWithPath: "/Applications/Reasonix.app")
     guard FileManager.default.fileExists(atPath: applicationURL.path) else {
@@ -1287,11 +1310,6 @@ final class ApplicationScannerTests: XCTestCase {
     }
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    guard application.source == .tauri,
-      application.sourceURL?.absoluteString == "https://dl.reasonix.io/studio/versions.json"
-    else {
-      throw XCTSkip("Installed ReasonixStudio does not expose the expected Tauri updater metadata")
-    }
     XCTAssertEqual(application.source, .tauri)
     XCTAssertEqual(
       application.sourceURL?.absoluteString,

@@ -115,9 +115,11 @@ enum ExecutableUpdaterDetector {
     guard let name = Bundle(url: bundleURL)?.executableURL?.lastPathComponent.lowercased(),
       !name.isEmpty else { return [] }
     let root = bundleURL.resolvingSymlinksInPath().standardizedFileURL
-    let directory = root.appendingPathComponent("Contents/Resources/service")
-    return [name + "-desktop", name].compactMap { name in
-      let url = directory.appendingPathComponent(name).resolvingSymlinksInPath().standardizedFileURL
+    let slug = name.split(whereSeparator: \.isWhitespace).joined(separator: "-")
+    let candidates = ["service/\(name)-desktop", "service/\(name)", "bin/\(slug)-host"]
+    return candidates.compactMap { path in
+      let url = root.appendingPathComponent("Contents/Resources").appendingPathComponent(path)
+        .resolvingSymlinksInPath().standardizedFileURL
       guard url.path.hasPrefix(root.path + "/"), isRegularFile(url),
         FileManager.default.isExecutableFile(atPath: url.path) else { return nil }
       return url
@@ -299,7 +301,8 @@ enum TauriUpdaterDetector {
   }
 
   private static func validatedUpdaterJSONURL(_ rawValue: String) -> URL? {
-    if rawValue.contains("%s") || rawValue.contains("%d") || rawValue.contains("{{") {
+    if rawValue.contains("%s") || rawValue.contains("%d") || rawValue.contains("{{")
+      || rawValue.range(of: #"(?i)(?:^|[/_-])v?x\.y\.z(?:[/_-]|$)"#, options: .regularExpression) != nil {
       return nil
     }
     guard rawValue.unicodeScalars.allSatisfy({ urlAllowed.contains($0) }) else {
