@@ -5,9 +5,10 @@ struct UpkeepRootView: View {
   private let applicationLauncher: ApplicationLauncher
   private let applicationChangeMonitor: ApplicationChangeMonitor
   @State private var library: AppLibrary
-  @State private var searchText = ""
   @State private var uninstallingApplication: AppRecord?
-  @State private var pendingUpdateAllRelaunch: [AppRecord] = []
+  @State private var pendingUpdateAllPlan: UpdateAllPlan?
+  @State private var updateAllPreparationTask: Task<Void, Never>?
+  @State private var updateAllPreparationID: UUID?
   @State private var manualRefreshTask: Task<Void, Never>?
   @State private var isManualRefreshInProgress = false
   @State private var localApplicationChangeRefreshTask: Task<Void, Never>?
@@ -30,13 +31,12 @@ struct UpkeepRootView: View {
 
     NavigationSplitView {
       AppSidebarView(
-        applications: library.applications,
+        sections: library.sidebarSections,
         selection: $library.selectedApplicationID,
-        searchText: searchText,
+        searchText: library.searchText,
         phase: library.phase,
-        ignoredApplicationIDs: library.ignoredApplicationIDs,
         checkingApplicationIDs: library.checkingApplicationIDs,
-        updateProgressByID: library.updateProgressByID,
+        updateStatesByID: library.updateStatesByID,
         ignoreUpdates: { library.ignoreUpdates(for: $0) },
         stopIgnoringUpdates: { library.stopIgnoringUpdates(for: $0) }
       )
@@ -62,11 +62,10 @@ struct UpkeepRootView: View {
         } else {
           AppDetailView(
             application: application,
-            isUpdating: library.updatingApplicationIDs.contains(application.id),
-            updateProgress: library.updateProgressByID[application.id],
+            updateState: library.updateStatesByID[application.id],
             isUpdateIgnored: library.isUpdateIgnored(application),
             requiresRelaunchConfirmation: {
-              library.requiresRelaunchConfirmation(for: application)
+              await library.requiresRelaunchConfirmation(for: application)
             },
             primaryAction: {
               Task {
@@ -105,14 +104,22 @@ struct UpkeepRootView: View {
     }
     .navigationSplitViewStyle(.balanced)
     .animation(nil, value: library.selectedApplicationID)
-    .searchable(text: $searchText, placement: .sidebar, prompt: "搜索应用或更新来源")
+    .searchable(text: $library.searchText, placement: .sidebar, prompt: "搜索应用或更新来源")
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
         if !library.automaticUpdates.isEmpty {
-          Button("更新全部", systemImage: "arrow.down.circle") {
-            beginUpdateAll()
+          Button(action: beginUpdateAll) {
+            if updateAllPreparationID != nil {
+              HStack {
+                ProgressView().controlSize(.small)
+                Text("正在准备…")
+              }
+            } else {
+              Label("更新全部", systemImage: "arrow.down.circle")
+            }
           }
-          .disabled(!library.updatingApplicationIDs.isEmpty)
+          .disabled(!library.updatingApplicationIDs.isEmpty || updateAllPreparationID != nil)
+          .accessibilityLabel(updateAllPreparationID == nil ? "更新全部" : "正在准备更新全部")
           .help("更新 \(library.automaticUpdates.count) 个可自动更新的应用")
         }
 
@@ -153,6 +160,7 @@ struct UpkeepRootView: View {
       }
     }
     .onDisappear {
+      cancelUpdateAllPreparation()
       cancelManualRefresh()
       cancelRefreshAfterLocalApplicationChange()
     }
@@ -173,7 +181,7 @@ struct UpkeepRootView: View {
           confirmPendingUpdateAll()
         }
         Button("取消", role: .cancel) {
-          pendingUpdateAllRelaunch = []
+          pendingUpdateAllPlan = nil
         }
       } else {
         Button("好", role: .cancel) {
@@ -183,6 +191,10 @@ struct UpkeepRootView: View {
     } message: {
       Text(rootAlertMessage)
     }
+  }
+
+  private var pendingUpdateAllRelaunch: [AppRecord] {
+    pendingUpdateAllPlan?.runningApplications ?? []
   }
 
   private var presentedRootAlert: RootAlert? {
@@ -214,7 +226,7 @@ struct UpkeepRootView: View {
   }
 
   private func dismissRootAlert() {
-    pendingUpdateAllRelaunch = []
+    pendingUpdateAllPlan = nil
     library.alertMessage = nil
   }
 
@@ -234,21 +246,34 @@ struct UpkeepRootView: View {
   }
 
   private func beginUpdateAll() {
-    let running = library.automaticUpdatesRequiringRelaunch()
-    guard !running.isEmpty else {
-      Task {
-        await library.updateAll()
+    guard updateAllPreparationID == nil else { return }
+    let requestID = UUID()
+    updateAllPreparationID = requestID
+    updateAllPreparationTask = Task {
+      let plan = await library.prepareUpdateAll()
+      guard !Task.isCancelled, updateAllPreparationID == requestID else { return }
+      updateAllPreparationTask = nil
+      updateAllPreparationID = nil
+      if plan.runningApplications.isEmpty {
+        await library.updateAll(applicationIDs: plan.applicationIDs)
+      } else {
+        pendingUpdateAllPlan = plan
+        ApplicationProcess.activateHost()
       }
-      return
     }
-    pendingUpdateAllRelaunch = running
-    ApplicationProcess.activateHost()
+  }
+
+  private func cancelUpdateAllPreparation() {
+    updateAllPreparationTask?.cancel()
+    updateAllPreparationTask = nil
+    updateAllPreparationID = nil
   }
 
   private func confirmPendingUpdateAll() {
-    pendingUpdateAllRelaunch = []
+    guard let plan = pendingUpdateAllPlan else { return }
+    pendingUpdateAllPlan = nil
     Task {
-      await library.updateAll()
+      await library.updateAll(applicationIDs: plan.applicationIDs)
     }
   }
 

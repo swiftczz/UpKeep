@@ -2,10 +2,9 @@ import SwiftUI
 
 struct AppDetailView: View {
   let application: AppRecord
-  let isUpdating: Bool
-  let updateProgress: UpdateProgress?
+  let updateState: ApplicationUpdateState?
   let isUpdateIgnored: Bool
-  let requiresRelaunchConfirmation: () -> Bool
+  let requiresRelaunchConfirmation: () async -> Bool
   let primaryAction: () -> Void
   let openApplication: () -> Void
   let showInFinder: () -> Void
@@ -14,10 +13,12 @@ struct AppDetailView: View {
   let uninstallApplication: () -> Void
 
   @State private var isConfirmingRelaunch = false
+  @State private var preparationTask: Task<Void, Never>?
+  @State private var preparationID: UUID?
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 28) {
+      LazyVStack(alignment: .leading, spacing: 28) {
         header
 
         Divider()
@@ -31,11 +32,15 @@ struct AppDetailView: View {
       .padding(32)
       .frame(maxWidth: 900, alignment: .leading)
     }
+    // Each application's lazy layout starts at the top with fresh height estimates.
+    .id(application.id)
     .navigationTitle(application.name)
     .background(.background)
     .onChange(of: application.id) { _, _ in
+      cancelPreparation()
       isConfirmingRelaunch = false
     }
+    .onDisappear { cancelPreparation() }
     .alert(
       "将关闭并重新打开「\(application.name)」",
       isPresented: $isConfirmingRelaunch
@@ -77,8 +82,8 @@ struct AppDetailView: View {
 
       Spacer(minLength: 24)
 
-      if isUpdating {
-        updateProgressControl
+      if let updateState, updateState.isUpdating {
+        AppUpdateProgressView(state: updateState)
       } else {
         splitActionControl
       }
@@ -118,6 +123,7 @@ struct AppDetailView: View {
       .accessibilityLabel("更多操作")
     }
     .glassEffect(primaryActionGlass, in: .rect(cornerRadius: 8))
+    .disabled(preparationID != nil)
   }
 
   private var primaryActionGlass: Glass {
@@ -147,49 +153,18 @@ struct AppDetailView: View {
     Button("卸载", systemImage: "trash", role: .destructive, action: uninstallApplication)
   }
 
-  private var updateProgressControl: some View {
-    VStack(alignment: .trailing, spacing: 6) {
-      if let fraction = updateProgress?.fractionCompleted {
-        ProgressView(value: fraction)
-          .progressViewStyle(.linear)
-          .tint(.blue)
-          .frame(width: 168)
-        Text(progressCaption)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .monospacedDigit()
-      } else {
-        ProgressView(updateProgress?.status ?? "正在更新…")
-          .controlSize(.small)
-      }
-    }
-    .frame(minWidth: 168, alignment: .trailing)
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(progressAccessibilityLabel)
-  }
-
-  private var progressCaption: String {
-    let status = updateProgress?.status ?? "正在更新…"
-    if let percentText = updateProgress?.percentText {
-      return "\(status) \(percentText)"
-    }
-    return status
-  }
-
-  private var progressAccessibilityLabel: String {
-    if let percentText = updateProgress?.percentText {
-      return "\(updateProgress?.status ?? "正在更新")，\(percentText)"
-    }
-    return updateProgress?.status ?? "正在更新"
-  }
-
   private var primaryActionLabel: some View {
     HStack(spacing: 6) {
-      Label(primaryActionTitle, systemImage: primaryActionSystemImage)
+      if preparationID != nil {
+        ProgressView().controlSize(.small)
+        Text("正在准备…")
+      } else {
+        Label(primaryActionTitle, systemImage: primaryActionSystemImage)
+      }
     }
     .foregroundStyle(primaryActionForeground)
     .help(primaryActionHelp)
-    .accessibilityLabel(primaryActionTitle)
+    .accessibilityLabel(preparationID == nil ? primaryActionTitle : "正在准备更新")
     .accessibilityHint(primaryActionHelp)
   }
 
@@ -400,12 +375,27 @@ struct AppDetailView: View {
   }
 
   private func handlePrimaryAction() {
-    if requiresRelaunchConfirmation() {
-      ApplicationProcess.activateHost()
-      isConfirmingRelaunch = true
-      return
+    guard preparationID == nil else { return }
+    let requestID = UUID()
+    preparationID = requestID
+    preparationTask = Task {
+      let requiresConfirmation = await requiresRelaunchConfirmation()
+      guard !Task.isCancelled, preparationID == requestID else { return }
+      preparationTask = nil
+      preparationID = nil
+      if requiresConfirmation {
+        ApplicationProcess.activateHost()
+        isConfirmingRelaunch = true
+      } else {
+        primaryAction()
+      }
     }
-    primaryAction()
+  }
+
+  private func cancelPreparation() {
+    preparationTask?.cancel()
+    preparationTask = nil
+    preparationID = nil
   }
 
   private var canOpenAppStore: Bool {

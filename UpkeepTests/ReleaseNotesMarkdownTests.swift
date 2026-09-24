@@ -56,4 +56,22 @@ final class ReleaseNotesMarkdownTests: XCTestCase {
     XCTAssertEqual(String(ReleaseNotesMarkdown.parse("修复问题。\n\n• 优化性能。")[0].text.characters), "修复问题。")
     XCTAssertTrue(ReleaseNotesMarkdown.parse("").isEmpty)
   }
+
+  func testDocumentPreservesParagraphOrderAndSparseTableColumns() {
+    let document = ReleaseNotesMarkdown.Document(blocks: ReleaseNotesMarkdown.parse(
+      "Before\n\n| A | B | C | D |\n|---|---|---|---|\n| One | | | Four |\n\nAfter"
+    ))
+    XCTAssertEqual(document.sections.count, 3)
+    XCTAssertEqual(Set(document.sections.map(\.id)).count, 3)
+    guard case .paragraph(let before) = document.sections[0].content,
+      case .table(let rows) = document.sections[1].content,
+      case .paragraph(let after) = document.sections[2].content
+    else { return XCTFail("Expected paragraph, table, paragraph") }
+    XCTAssertEqual(String(before.text.characters), "Before")
+    XCTAssertEqual(String(after.text.characters), "After")
+    XCTAssertEqual(rows.count, 2)
+    XCTAssertTrue(rows[0].isHeader)
+    XCTAssertFalse(rows[1].isHeader)
+    XCTAssertEqual(rows[1].cells.map { $0.map { String($0.text.characters) } }, ["One", nil, nil, "Four"])
+  }
 }

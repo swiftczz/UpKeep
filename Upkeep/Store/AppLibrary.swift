@@ -4,15 +4,28 @@ import Observation
 @MainActor
 @Observable
 final class AppLibrary {
-  var applications: [AppRecord]
+  var applications: [AppRecord] {
+    didSet { rebuildApplicationSections() }
+  }
   var selectedApplicationID: AppRecord.ID?
+  var searchText = "" {
+    didSet {
+      guard searchText != oldValue else { return }
+      sidebarSections = applicationSections.matching(searchText)
+    }
+  }
+  private var applicationSections = AppSidebarSections()
+  private(set) var sidebarSections = AppSidebarSections()
+  private(set) var automaticUpdates: [AppRecord] = []
   var phase: LibraryPhase = .idle
   var lastCheckedAt: Date?
   var alertMessage: String?
   private(set) var checkingApplicationIDs = Set<AppRecord.ID>()
   private(set) var updatingApplicationIDs = Set<AppRecord.ID>()
-  private(set) var updateProgressByID: [AppRecord.ID: UpdateProgress] = [:]
-  private(set) var ignoredBundleIdentifiers: Set<String>
+  private(set) var updateStatesByID: [AppRecord.ID: ApplicationUpdateState] = [:]
+  private(set) var ignoredBundleIdentifiers: Set<String> {
+    didSet { rebuildApplicationSections() }
+  }
 
   private let scanner: any ApplicationScanning
   private let coordinator: any UpdateCoordinating
@@ -68,6 +81,7 @@ final class AppLibrary {
       in: loadedApplications,
       ignoring: ignoredBundleIdentifiers
     )
+    rebuildApplicationSections()
   }
 
   var selectedApplication: AppRecord? {
@@ -76,37 +90,48 @@ final class AppLibrary {
   }
 
   var availableUpdates: [AppRecord] {
-    applications.availableUpdates(ignoredIDs: ignoredApplicationIDs)
+    applicationSections.availableUpdates
   }
 
   var ignoredUpdates: [AppRecord] {
-    applications.ignoredUpdates(ignoredIDs: ignoredApplicationIDs)
+    applicationSections.ignoredUpdates
   }
 
   var ignoredApplicationIDs: Set<AppRecord.ID> {
-    Set(
-      applications.lazy
-        .filter(isUpdateIgnored)
-        .map(\.id)
+    applicationSections.ignoredApplicationIDs
+  }
+
+  private func rebuildApplicationSections() {
+    applicationSections = AppSidebarSections(
+      applications: applications, ignoredBundleIdentifiers: ignoredBundleIdentifiers
+    )
+    sidebarSections = applicationSections.matching(searchText)
+    automaticUpdates = applicationSections.availableUpdates.filter(\.canAutomaticallyUpdate)
+    let retainedIDs = applicationSections.applicationIDs.union(updatingApplicationIDs)
+    for id in updateStatesByID.keys where !retainedIDs.contains(id) {
+      updateStatesByID[id] = nil
+    }
+    for application in applications where updateStatesByID[application.id] == nil {
+      updateStatesByID[application.id] = ApplicationUpdateState()
+    }
+  }
+
+  func requiresRelaunchConfirmation(for application: AppRecord) async -> Bool {
+    guard application.needsUpdate, application.canAutomaticallyUpdate else { return false }
+    return await process.isRunning(application)
+  }
+
+  func prepareUpdateAll() async -> UpdateAllPlan {
+    let updates = automaticUpdates
+    let runningIDs = await process.runningApplicationIDs(updates)
+    return UpdateAllPlan(
+      applicationIDs: updates.map(\.id),
+      runningApplications: updates.filter { runningIDs.contains($0.id) }
     )
   }
 
-  var automaticUpdates: [AppRecord] {
-    availableUpdates.filter(\.canAutomaticallyUpdate)
-  }
-
-  func isRunning(_ application: AppRecord) -> Bool {
-    process.isRunning(application)
-  }
-
-  func requiresRelaunchConfirmation(for application: AppRecord) -> Bool {
-    application.needsUpdate
-      && application.canAutomaticallyUpdate
-      && isRunning(application)
-  }
-
-  func automaticUpdatesRequiringRelaunch() -> [AppRecord] {
-    automaticUpdates.filter(isRunning)
+  func automaticUpdatesRequiringRelaunch() async -> [AppRecord] {
+    await prepareUpdateAll().runningApplications
   }
 
   var isRefreshing: Bool {
@@ -744,12 +769,14 @@ final class AppLibrary {
     return Self.nativeAppStoreURL(from: sourceURL)
   }
 
-  func updateAll() async {
+  func updateAll(applicationIDs: [AppRecord.ID]? = nil) async {
     guard !automaticUpdates.isEmpty else { return }
-    let updates = automaticUpdates
+    let ids = applicationIDs ?? automaticUpdates.map(\.id)
     var failures: [String] = []
 
-    for application in updates {
+    for id in ids {
+      guard !Task.isCancelled else { break }
+      guard let application = automaticUpdates.first(where: { $0.id == id }) else { continue }
       do {
         _ = try await performVisibleUpdate(application)
       } catch {
@@ -776,7 +803,7 @@ final class AppLibrary {
       failureMessage = error.localizedDescription
     }
 
-    if let selectionToRestore,
+    if let selectionToRestore, selectedApplicationID == nil,
       applications.contains(where: { $0.id == selectionToRestore })
     {
       selectedApplicationID = selectionToRestore
@@ -789,15 +816,17 @@ final class AppLibrary {
   @discardableResult
   private func performVisibleUpdate(_ application: AppRecord) async throws -> Bool {
     let applicationID = application.id
-    updatingApplicationIDs.insert(applicationID)
-    updateProgressByID[applicationID] = .indeterminate("正在更新…")
+    guard updatingApplicationIDs.insert(applicationID).inserted else { return false }
+    let state = updateStatesByID[applicationID] ?? ApplicationUpdateState()
+    if updateStatesByID[applicationID] == nil { updateStatesByID[applicationID] = state }
+    state.begin()
 
     do {
-      try await performCoordinatorUpdate(application)
-      updateProgressByID[applicationID] = UpdateProgress(
+      try await performCoordinatorUpdate(application, state: state)
+      state.report(UpdateProgress(
         fractionCompleted: 1,
         status: "正在完成…"
-      )
+      ))
       let diskRecord = await waitForInstalledDiskRecord(application)
       guard let diskRecord else {
         clearUpdateProgress(for: application)
@@ -818,28 +847,31 @@ final class AppLibrary {
   }
 
   private func clearUpdateProgress(for application: AppRecord) {
-    updateProgressByID[application.id] = nil
+    updateStatesByID[application.id]?.finish()
     updatingApplicationIDs.remove(application.id)
+    if !applications.contains(where: { $0.id == application.id }) {
+      updateStatesByID[application.id] = nil
+    }
   }
 
-  private func performCoordinatorUpdate(_ application: AppRecord) async throws {
-    let applicationID = application.id
-    let (stream, continuation) = AsyncStream.makeStream(of: UpdateProgress.self)
+  private func performCoordinatorUpdate(
+    _ application: AppRecord, state: ApplicationUpdateState
+  ) async throws {
+    let relay = UpdateProgressRelay()
     let consumeProgress = Task { @MainActor in
-      for await progress in stream {
-        guard self.updatingApplicationIDs.contains(applicationID) else { return }
-        self.updateProgressByID[applicationID] = progress
+      for await progress in relay.stream {
+        state.report(progress)
       }
     }
 
     do {
       try await coordinator.update(application) { progress in
-        continuation.yield(progress)
+        relay.submit(progress)
       }
-      continuation.finish()
+      relay.finish()
       await consumeProgress.value
     } catch {
-      continuation.finish()
+      relay.finish()
       await consumeProgress.value
       throw error
     }

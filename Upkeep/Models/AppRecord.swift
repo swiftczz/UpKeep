@@ -280,17 +280,30 @@ extension AppRecord {
     return appStorePlatform?.systemImage
   }
 
-  func matchesSearch(_ searchText: String) -> Bool {
-    let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !query.isEmpty else { return true }
+  struct SearchQuery: Sendable {
+    let text: String
+    let isSourceQuery: Bool
 
-    if UpdateSource.isSourceSearchQuery(query) {
-      return matchesSourceSearch(query)
+    init(_ searchText: String) {
+      text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+      isSourceQuery = !text.isEmpty && UpdateSource.isSourceSearchQuery(text)
+    }
+  }
+
+  func matchesSearch(_ searchText: String) -> Bool {
+    matchesSearch(SearchQuery(searchText))
+  }
+
+  func matchesSearch(_ query: SearchQuery) -> Bool {
+    guard !query.text.isEmpty else { return true }
+
+    if query.isSourceQuery {
+      return matchesSourceSearch(query.text)
     }
 
-    return name.localizedCaseInsensitiveContains(query)
-      || bundleIdentifier.localizedCaseInsensitiveContains(query)
-      || sourceTitle.localizedCaseInsensitiveContains(query)
+    return name.localizedCaseInsensitiveContains(query.text)
+      || bundleIdentifier.localizedCaseInsensitiveContains(query.text)
+      || sourceTitle.localizedCaseInsensitiveContains(query.text)
   }
 
   private func matchesSourceSearch(_ query: String) -> Bool {

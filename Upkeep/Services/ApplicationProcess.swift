@@ -14,8 +14,44 @@ enum ApplicationProcessError: LocalizedError {
 }
 
 enum ApplicationProcess {
-  static func isRunning(_ application: AppRecord) -> Bool {
-    !processIDs(inside: application.applicationURL).isEmpty
+  static func isRunning(_ application: AppRecord) async -> Bool {
+    await runningApplicationIDs(in: [application]).contains(application.id)
+  }
+
+  static func runningApplicationIDs(
+    in applications: [AppRecord],
+    snapshot: @escaping @Sendable () -> [String] = executablePathSnapshot
+  ) async -> Set<AppRecord.ID> {
+    guard !applications.isEmpty, !Task.isCancelled else { return [] }
+    let worker = Task.detached(priority: .userInitiated) {
+      // Resolve every process path once, even when preparing an update for many apps.
+      let paths = snapshot()
+      var running = Set<AppRecord.ID>()
+      for application in applications {
+        guard !Task.isCancelled else { return Set<AppRecord.ID>() }
+        let root = application.applicationURL.resolvingSymlinksInPath().path
+        guard !root.isEmpty else { continue }
+        if paths.contains(where: { $0 == root || $0.hasPrefix(root + "/") }) {
+          running.insert(application.id)
+        }
+      }
+      return running
+    }
+    return await withTaskCancellationHandler {
+      await worker.value
+    } onCancel: {
+      worker.cancel()
+    }
+  }
+
+  private static func executablePathSnapshot() -> [String] {
+    var paths: [String] = []
+    for pid in allProcessIDs() {
+      guard !Task.isCancelled else { return [] }
+      let path = processPath(pid)
+      if !path.isEmpty { paths.append(path) }
+    }
+    return paths
   }
 
   @MainActor
@@ -149,14 +185,35 @@ enum ApplicationProcess {
 }
 
 struct ApplicationProcessClient: Sendable {
-  var isRunning: @Sendable (AppRecord) -> Bool
+  var isRunning: @Sendable (AppRecord) async -> Bool
+  var runningApplicationIDs: @Sendable ([AppRecord]) async -> Set<AppRecord.ID>
   var quit: @Sendable (AppRecord) async throws -> Void
   var launch: @Sendable (URL) async throws -> Void
 
+  init(
+    isRunning: @escaping @Sendable (AppRecord) async -> Bool,
+    quit: @escaping @Sendable (AppRecord) async throws -> Void,
+    launch: @escaping @Sendable (URL) async throws -> Void,
+    runningApplicationIDs: (@Sendable ([AppRecord]) async -> Set<AppRecord.ID>)? = nil
+  ) {
+    self.isRunning = isRunning
+    self.quit = quit
+    self.launch = launch
+    self.runningApplicationIDs = runningApplicationIDs ?? { applications in
+      var running = Set<AppRecord.ID>()
+      for application in applications {
+        guard !Task.isCancelled else { return [] }
+        if await isRunning(application) { running.insert(application.id) }
+      }
+      return running
+    }
+  }
+
   static let live = ApplicationProcessClient(
-    isRunning: { ApplicationProcess.isRunning($0) },
+    isRunning: { await ApplicationProcess.isRunning($0) },
     quit: { try await ApplicationProcess.quit($0) },
-    launch: { try await ApplicationLauncher.live.launch($0) }
+    launch: { try await ApplicationLauncher.live.launch($0) },
+    runningApplicationIDs: { await ApplicationProcess.runningApplicationIDs(in: $0) }
   )
 }
 
@@ -167,7 +224,8 @@ enum UpdateRelaunch {
     progress: @escaping @Sendable (UpdateProgress) -> Void,
     operation: () async throws -> Void
   ) async throws {
-    let wasRunning = process.isRunning(application)
+    let wasRunning = await process.isRunning(application)
+    try Task.checkCancellation()
 
     func restoreIfNeeded() async {
       guard wasRunning else { return }

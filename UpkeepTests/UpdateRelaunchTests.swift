@@ -32,10 +32,11 @@ final class UpdateRelaunchTests: XCTestCase {
     XCTAssertEqual(events, [.launch(application.applicationURL)])
   }
 
-  func testDoesNotTreatMissingApplicationBundleAsRunning() {
+  func testDoesNotTreatMissingApplicationBundleAsRunning() async {
     let application = makeApplication(source: .sparkle)
     XCTAssertTrue(ApplicationProcess.processIDs(inside: application.applicationURL).isEmpty)
-    XCTAssertFalse(ApplicationProcess.isRunning(application))
+    let isRunning = await ApplicationProcess.isRunning(application)
+    XCTAssertFalse(isRunning)
   }
 
   func testDetectsCurrentProcessByExecutableDirectory() {
@@ -92,7 +93,8 @@ final class UpdateRelaunchTests: XCTestCase {
       applicationURL: applicationURL,
       currentVersion: "1.0"
     )
-    XCTAssertTrue(ApplicationProcess.isRunning(application))
+    let isRunning = await ApplicationProcess.isRunning(application)
+    XCTAssertTrue(isRunning)
 
     try await ApplicationProcess.quit(application)
     for _ in 0..<40 where helper.isRunning {

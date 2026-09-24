@@ -2,7 +2,7 @@ import Foundation
 
 /// Foundation parses Markdown; this model retains block structure for native layout.
 enum ReleaseNotesMarkdown {
-  struct Block: Identifiable {
+  struct Block: Identifiable, Equatable, Sendable {
     let id: Int
     var text = AttributedString()
     var heading: Int?
@@ -15,6 +15,59 @@ enum ReleaseNotesMarkdown {
     var headerCell = false
     var column = 0
     var columnCount = 0
+  }
+
+  struct Document: Equatable, Sendable {
+    let sections: [Section]
+    let blockCount: Int
+
+    init(blocks: [Block]) {
+      var sections: [Section] = []
+      var index = 0
+      while index < blocks.count {
+        let block = blocks[index]
+        guard let tableID = block.tableID else {
+          sections.append(Section(id: block.id, content: .paragraph(block)))
+          index += 1
+          continue
+        }
+
+        var rows: [TableRow] = []
+        while index < blocks.count, blocks[index].tableID == tableID {
+          let cell = blocks[index]
+          let rowID = cell.rowID ?? cell.id
+          if rows.last?.id != rowID {
+            rows.append(TableRow(
+              id: rowID, cells: Array(repeating: nil, count: block.columnCount),
+              isHeader: cell.headerCell
+            ))
+          }
+          if rows[rows.count - 1].cells.indices.contains(cell.column) {
+            rows[rows.count - 1].cells[cell.column] = cell
+          }
+          index += 1
+        }
+        sections.append(Section(id: tableID, content: .table(rows)))
+      }
+      self.sections = sections
+      blockCount = blocks.count
+    }
+  }
+
+  struct Section: Identifiable, Equatable, Sendable {
+    enum Content: Equatable, Sendable {
+      case paragraph(Block)
+      case table([TableRow])
+    }
+
+    let id: Int
+    let content: Content
+  }
+
+  struct TableRow: Identifiable, Equatable, Sendable {
+    let id: Int
+    var cells: [Block?]
+    let isHeader: Bool
   }
 
   static func parse(_ source: String, baseURL: URL? = nil) -> [Block] {

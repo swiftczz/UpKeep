@@ -20,7 +20,8 @@ final class AppLibraryUpdateTests: XCTestCase {
     let library = try makeLibrary(
       applications: [restored], runningBundleIdentifiers: [application.bundleIdentifier]
     )
-    XCTAssertFalse(library.requiresRelaunchConfirmation(for: restored))
+    let requiresConfirmation = await library.requiresRelaunchConfirmation(for: restored)
+    XCTAssertFalse(requiresConfirmation)
     XCTAssertTrue(library.automaticUpdates.isEmpty)
     let destination = await library.performPrimaryAction(for: application.id)
     XCTAssertEqual(destination, application.updatePageURL)
@@ -44,29 +45,33 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertNil(current.manualUpdateURL)
   }
 
-  func testRequiresRelaunchConfirmationWhenUpdatableApplicationIsRunning() throws {
+  func testRequiresRelaunchConfirmationWhenUpdatableApplicationIsRunning() async throws {
     let application = makeUpdateApplication(name: "Running", bundleIdentifier: "com.example.running")
     let library = try makeLibrary(
       applications: [application],
       runningBundleIdentifiers: ["com.example.running"]
     )
 
-    XCTAssertTrue(library.requiresRelaunchConfirmation(for: application))
-    XCTAssertEqual(library.automaticUpdatesRequiringRelaunch().map(\.id), [application.id])
+    let requiresConfirmation = await library.requiresRelaunchConfirmation(for: application)
+    XCTAssertTrue(requiresConfirmation)
+    let runningApplications = await library.automaticUpdatesRequiringRelaunch()
+    XCTAssertEqual(runningApplications.map(\.id), [application.id])
   }
 
-  func testDoesNotRequireRelaunchConfirmationWhenApplicationIsNotRunning() throws {
+  func testDoesNotRequireRelaunchConfirmationWhenApplicationIsNotRunning() async throws {
     let application = makeUpdateApplication(name: "Closed", bundleIdentifier: "com.example.closed")
     let library = try makeLibrary(
       applications: [application],
       runningBundleIdentifiers: []
     )
 
-    XCTAssertFalse(library.requiresRelaunchConfirmation(for: application))
-    XCTAssertTrue(library.automaticUpdatesRequiringRelaunch().isEmpty)
+    let requiresConfirmation = await library.requiresRelaunchConfirmation(for: application)
+    XCTAssertFalse(requiresConfirmation)
+    let runningApplications = await library.automaticUpdatesRequiringRelaunch()
+    XCTAssertTrue(runningApplications.isEmpty)
   }
 
-  func testDoesNotRequireRelaunchConfirmationWhenPrimaryActionOpensTheApp() throws {
+  func testDoesNotRequireRelaunchConfirmationWhenPrimaryActionOpensTheApp() async throws {
     let application = AppRecord(
       name: "Open",
       bundleIdentifier: "com.example.open",
@@ -80,10 +85,11 @@ final class AppLibraryUpdateTests: XCTestCase {
       runningBundleIdentifiers: ["com.example.open"]
     )
 
-    XCTAssertFalse(library.requiresRelaunchConfirmation(for: application))
+    let requiresConfirmation = await library.requiresRelaunchConfirmation(for: application)
+    XCTAssertFalse(requiresConfirmation)
   }
 
-  func testAutomaticUpdatesRequiringRelaunchIgnoresClosedAndIgnoredApps() throws {
+  func testAutomaticUpdatesRequiringRelaunchIgnoresClosedAndIgnoredApps() async throws {
     let running = makeUpdateApplication(name: "Running", bundleIdentifier: "com.example.running")
     let closed = makeUpdateApplication(name: "Closed", bundleIdentifier: "com.example.closed")
     let ignored = makeUpdateApplication(name: "Ignored", bundleIdentifier: "com.example.ignored")
@@ -93,7 +99,8 @@ final class AppLibraryUpdateTests: XCTestCase {
     )
     library.ignoreUpdates(for: ignored.id)
 
-    XCTAssertEqual(library.automaticUpdatesRequiringRelaunch().map(\.name), ["Running"])
+    let runningApplications = await library.automaticUpdatesRequiringRelaunch()
+    XCTAssertEqual(runningApplications.map(\.name), ["Running"])
   }
 
   func testIPhoneAppStoreUpdateOpensUpdatesPage() async throws {

@@ -1,12 +1,10 @@
 import SwiftUI
 
 struct AppRowView: View {
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
   let application: AppRecord
   let isUpdateIgnored: Bool
   var isChecking = false
-  var updateProgress: UpdateProgress? = nil
+  var updateState: ApplicationUpdateState? = nil
 
   private var listDate: Date? {
     application.sidebarDate(isUpdateIgnored: isUpdateIgnored)
@@ -49,12 +47,12 @@ struct AppRowView: View {
               .help("已忽略更新")
           }
 
-          sourceAccessory
-            .frame(width: 16, height: 16)
-            .animation(
-              reduceMotion ? nil : .easeInOut(duration: 0.16),
-              value: accessoryState
-            )
+          AppRowAccessoryView(
+            sourceSystemImage: application.sourceSystemImage,
+            sourceTitle: application.sourceTitle,
+            isChecking: isChecking || application.status == .checking,
+            updateState: updateState
+          )
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -71,56 +69,6 @@ struct AppRowView: View {
     } else {
       Text(application.versionDescription)
     }
-  }
-
-  @ViewBuilder
-  private var sourceAccessory: some View {
-    if let updateProgress {
-      if let fraction = updateProgress.fractionCompleted {
-        ProgressView(value: fraction)
-          .progressViewStyle(.circular)
-          .controlSize(.small)
-          .help(updateProgress.status)
-          .accessibilityLabel(progressAccessibilityLabel(updateProgress))
-          .transition(.opacity)
-      } else {
-        ProgressView()
-          .controlSize(.small)
-          .help(updateProgress.status)
-          .accessibilityLabel(updateProgress.status)
-          .transition(.opacity)
-      }
-    } else if isChecking || application.status == .checking {
-      ProgressView()
-        .controlSize(.small)
-        .help("正在检查更新")
-        .accessibilityLabel("正在检查更新")
-        .transition(.opacity)
-    } else {
-      Image(systemName: application.sourceSystemImage)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .help(application.sourceTitle)
-        .accessibilityLabel(application.sourceTitle)
-        .transition(.opacity)
-    }
-  }
-
-  private var accessoryState: Int {
-    if updateProgress != nil {
-      return 2
-    }
-    if isChecking || application.status == .checking {
-      return 1
-    }
-    return 0
-  }
-
-  private func progressAccessibilityLabel(_ progress: UpdateProgress) -> String {
-    if let percentText = progress.percentText {
-      return "\(progress.status)，\(percentText)"
-    }
-    return progress.status
   }
 
   private var usesReleaseDate: Bool {
@@ -143,6 +91,72 @@ extension AppRowView: Equatable {
     lhs.application == rhs.application
       && lhs.isUpdateIgnored == rhs.isUpdateIgnored
       && lhs.isChecking == rhs.isChecking
-      && lhs.updateProgress == rhs.updateProgress
+      && lhs.updateState === rhs.updateState
+  }
+}
+
+private struct AppRowAccessoryView: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  let sourceSystemImage: String
+  let sourceTitle: String
+  let isChecking: Bool
+  let updateState: ApplicationUpdateState?
+
+  private var updateProgress: UpdateProgress? { updateState?.progress }
+
+  var body: some View {
+    accessory
+      .frame(width: 16, height: 16)
+      .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: accessoryState)
+  }
+
+  @ViewBuilder
+  private var accessory: some View {
+    if let updateProgress {
+      if let fraction = updateProgress.fractionCompleted {
+        ProgressView(value: fraction)
+          .progressViewStyle(.circular)
+          .controlSize(.small)
+          .help(updateProgress.status)
+          .accessibilityLabel(progressAccessibilityLabel(updateProgress))
+          .transition(.opacity)
+      } else {
+        ProgressView()
+          .controlSize(.small)
+          .help(updateProgress.status)
+          .accessibilityLabel(updateProgress.status)
+          .transition(.opacity)
+      }
+    } else if isChecking {
+      ProgressView()
+        .controlSize(.small)
+        .help("正在检查更新")
+        .accessibilityLabel("正在检查更新")
+        .transition(.opacity)
+    } else {
+      Image(systemName: sourceSystemImage)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help(sourceTitle)
+        .accessibilityLabel(sourceTitle)
+        .transition(.opacity)
+    }
+  }
+
+  private var accessoryState: Int {
+    if updateProgress != nil {
+      return 2
+    }
+    if isChecking {
+      return 1
+    }
+    return 0
+  }
+
+  private func progressAccessibilityLabel(_ progress: UpdateProgress) -> String {
+    if let percentText = progress.percentText {
+      return "\(progress.status)，\(percentText)"
+    }
+    return progress.status
   }
 }

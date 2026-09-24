@@ -3,39 +3,14 @@ import SwiftUI
 struct AppSidebarView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-  let applications: [AppRecord]
+  let sections: AppSidebarSections
   @Binding var selection: AppRecord.ID?
   let searchText: String
   let phase: LibraryPhase
-  let ignoredApplicationIDs: Set<AppRecord.ID>
   let checkingApplicationIDs: Set<AppRecord.ID>
-  let updateProgressByID: [AppRecord.ID: UpdateProgress]
+  let updateStatesByID: [AppRecord.ID: ApplicationUpdateState]
   let ignoreUpdates: (AppRecord.ID) -> Void
   let stopIgnoringUpdates: (AppRecord.ID) -> Void
-
-  private var filteredApplications: [AppRecord] {
-    applications.filter { $0.matchesSearch(searchText) }
-  }
-
-  private var availableUpdates: [AppRecord] {
-    filteredApplications.availableUpdates(ignoredIDs: ignoredApplicationIDs)
-  }
-
-  private var installedApplications: [AppRecord] {
-    filteredApplications.installedApplications()
-  }
-
-  private var ignoredUpdates: [AppRecord] {
-    filteredApplications.ignoredUpdates(ignoredIDs: ignoredApplicationIDs)
-  }
-
-  private var layoutSnapshot: LayoutSnapshot {
-    LayoutSnapshot(
-      availableUpdateIDs: availableUpdates.map(\.id),
-      installedApplicationIDs: installedApplications.map(\.id),
-      ignoredUpdateIDs: ignoredUpdates.map(\.id)
-    )
-  }
 
   private var stableSelection: Binding<AppRecord.ID?> {
     Binding(
@@ -43,7 +18,7 @@ struct AppSidebarView: View {
       set: { proposedSelection in
         if proposedSelection == nil,
           let selection,
-          applications.contains(where: { $0.id == selection })
+          sections.applicationIDs.contains(selection)
         {
           return
         }
@@ -61,14 +36,14 @@ struct AppSidebarView: View {
 
   var body: some View {
     List(selection: stableSelection) {
-      if !availableUpdates.isEmpty {
+      if !sections.availableUpdates.isEmpty {
         Section {
-          ForEach(availableUpdates) { application in
+          ForEach(sections.availableUpdates) { application in
             AppRowView(
               application: application,
               isUpdateIgnored: false,
               isChecking: checkingApplicationIDs.contains(application.id),
-              updateProgress: updateProgressByID[application.id]
+              updateState: updateStatesByID[application.id]
             )
             .equatable()
             .id(application.id)
@@ -84,18 +59,18 @@ struct AppSidebarView: View {
             }
           }
         } header: {
-          sectionHeader("可用更新", count: availableUpdates.count)
+          sectionHeader("可用更新", count: sections.availableUpdates.count)
         }
       }
 
-      if !installedApplications.isEmpty {
+      if !sections.installedApplications.isEmpty {
         Section {
-          ForEach(installedApplications) { application in
+          ForEach(sections.installedApplications) { application in
             AppRowView(
               application: application,
               isUpdateIgnored: false,
               isChecking: checkingApplicationIDs.contains(application.id),
-              updateProgress: updateProgressByID[application.id]
+              updateState: updateStatesByID[application.id]
             )
             .equatable()
             .id(application.id)
@@ -103,18 +78,18 @@ struct AppSidebarView: View {
             .transition(rowTransition)
           }
         } header: {
-          sectionHeader("已安装的应用", count: installedApplications.count)
+          sectionHeader("已安装的应用", count: sections.installedApplications.count)
         }
       }
 
-      if !ignoredUpdates.isEmpty {
+      if !sections.ignoredUpdates.isEmpty {
         Section {
-          ForEach(ignoredUpdates) { application in
+          ForEach(sections.ignoredUpdates) { application in
             AppRowView(
               application: application,
               isUpdateIgnored: true,
               isChecking: checkingApplicationIDs.contains(application.id),
-              updateProgress: updateProgressByID[application.id]
+              updateState: updateStatesByID[application.id]
             )
             .equatable()
             .id(application.id)
@@ -130,18 +105,18 @@ struct AppSidebarView: View {
             }
           }
         } header: {
-          sectionHeader("已忽略的更新", count: ignoredUpdates.count)
+          sectionHeader("已忽略的更新", count: sections.ignoredUpdates.count)
         }
       }
     }
     .listStyle(.sidebar)
     .animation(
       reduceMotion ? nil : .smooth(duration: 0.24),
-      value: layoutSnapshot
+      value: sections.layout
     )
     .navigationTitle("Upkeep")
     .overlay {
-      if applications.isEmpty {
+      if sections.applicationIDs.isEmpty {
         if phase != .idle {
           VStack(spacing: 10) {
             ProgressView()
@@ -156,7 +131,7 @@ struct AppSidebarView: View {
             description: Text("Upkeep 会扫描“应用程序”和用户应用目录。")
           )
         }
-      } else if filteredApplications.isEmpty, !searchText.isEmpty {
+      } else if sections.isEmpty, !searchText.isEmpty {
         ContentUnavailableView.search(text: searchText)
       }
     }
@@ -169,10 +144,4 @@ struct AppSidebarView: View {
         .foregroundStyle(.tertiary)
     }
   }
-}
-
-private struct LayoutSnapshot: Equatable {
-  let availableUpdateIDs: [AppRecord.ID]
-  let installedApplicationIDs: [AppRecord.ID]
-  let ignoredUpdateIDs: [AppRecord.ID]
 }

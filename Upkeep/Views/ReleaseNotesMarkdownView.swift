@@ -3,45 +3,61 @@ import SwiftUI
 struct ReleaseNotesMarkdownView: View {
   let source: String
   let baseURL: URL?
-  @State private var blocks: [ReleaseNotesMarkdown.Block] = []
-
-  private struct Section: Identifiable {
-    let id: Int
-    var blocks: [ReleaseNotesMarkdown.Block]
-  }
-
-  private var sections: [Section] {
-    var result: [Section] = []
-    for block in blocks {
-      let id = block.tableID ?? block.id
-      if block.tableID != nil && result.last?.id == id {
-        result[result.count - 1].blocks.append(block)
-      } else {
-        result.append(Section(id: id, blocks: [block]))
-      }
-    }
-    return result
-  }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 7) {
-      ForEach(sections) { section in
-        if section.blocks.first?.tableID != nil {
-          table(section.blocks)
-        } else if let block = section.blocks.first {
-          paragraph(block)
+    let request = ReleaseNotesCache.Request(source: source, baseURL: baseURL)
+    ReleaseNotesContentView(request: request)
+      .id(request)
+  }
+}
+
+private struct ReleaseNotesContentView: View {
+  let request: ReleaseNotesCache.Request
+  @State private var document: ReleaseNotesMarkdown.Document?
+
+  var body: some View {
+    LazyVStack(alignment: .leading, spacing: 7) {
+      if let document {
+        ForEach(document.sections) { section in
+          ReleaseNotesSectionView(section: section)
         }
+      } else {
+        ProgressView("正在加载更新说明…")
+          .controlSize(.small)
       }
     }
     .textSelection(.enabled)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .task(id: source + (baseURL?.absoluteString ?? "")) {
-      blocks = ReleaseNotesMarkdown.parse(source, baseURL: baseURL)
+    .task {
+      await loadDocument()
     }
   }
 
-  @ViewBuilder
-  private func paragraph(_ block: ReleaseNotesMarkdown.Block) -> some View {
+  private func loadDocument() async {
+    guard let loaded = try? await ReleaseNotesCache.shared.document(for: request),
+      !Task.isCancelled
+    else { return }
+    document = loaded
+  }
+}
+
+private struct ReleaseNotesSectionView: View {
+  let section: ReleaseNotesMarkdown.Section
+
+  var body: some View {
+    switch section.content {
+    case .paragraph(let block):
+      ReleaseNotesParagraphView(block: block)
+    case .table(let rows):
+      ReleaseNotesTableView(rows: rows)
+    }
+  }
+}
+
+private struct ReleaseNotesParagraphView: View {
+  let block: ReleaseNotesMarkdown.Block
+
+  var body: some View {
     if block.code {
       ScrollView(.horizontal) {
         Text(block.text)
@@ -77,29 +93,23 @@ struct ReleaseNotesMarkdownView: View {
     case nil: .body
     }
   }
+}
 
-  private func table(_ cells: [ReleaseNotesMarkdown.Block]) -> some View {
-    var rows: [Section] = []
-    for cell in cells {
-      let id = cell.rowID ?? cell.id
-      if rows.last?.id == id {
-        rows[rows.count - 1].blocks.append(cell)
-      } else {
-        rows.append(Section(id: id, blocks: [cell]))
-      }
-    }
-    return ScrollView(.horizontal) {
+private struct ReleaseNotesTableView: View {
+  let rows: [ReleaseNotesMarkdown.TableRow]
+
+  var body: some View {
+    ScrollView(.horizontal) {
       Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
         ForEach(rows) { row in
           GridRow {
-            ForEach(0..<(cells.first?.columnCount ?? 0), id: \.self) { column in
-              let cell = row.blocks.first { $0.column == column }
-              let header = row.blocks.first?.headerCell == true
+            ForEach(row.cells.indices, id: \.self) { column in
+              let cell = row.cells[column]
               Text(cell?.text ?? AttributedString(" "))
-                .font(header ? .headline : .body)
+                .font(row.isHeader ? .headline : .body)
                 .frame(minWidth: 80, maxWidth: 320, alignment: .leading)
                 .padding(8)
-                .background(header ? Color.secondary.opacity(0.12) : .clear)
+                .background(row.isHeader ? Color.secondary.opacity(0.12) : .clear)
                 .overlay(alignment: .bottom) { Divider() }
             }
           }

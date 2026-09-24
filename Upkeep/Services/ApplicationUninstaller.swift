@@ -61,13 +61,13 @@ enum ApplicationUninstaller {
       $0.url.standardizedFileURL == application.applicationURL.standardizedFileURL
     }
 
-    if process.isRunning(application) {
+    if await process.isRunning(application) {
       do {
         try await process.quit(application)
       } catch is ApplicationProcessError {
         throw ApplicationUninstallerError.applicationStillRunning(application.name)
       }
-      if process.isRunning(application) {
+      if await process.isRunning(application) {
         throw ApplicationUninstallerError.applicationStillRunning(application.name)
       }
     }
