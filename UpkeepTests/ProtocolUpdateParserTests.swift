@@ -234,11 +234,11 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
 
     XCTAssertEqual(
-      TauriReleaseNotes.githubReleaseAPIURL(from: releaseURL)?.absoluteString,
+      GitHubReleaseNotes.apiURL(from: releaseURL)?.absoluteString,
       "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/studio-v2.7.0"
     )
     XCTAssertEqual(
-      TauriReleaseNotes.parseGitHubRelease(
+      GitHubReleaseNotes.parseAPIResponse(
         Data("{\"body\":\"## 新增\\n\\n- 运行图\"}".utf8)
       ),
       "## 新增\n\n- 运行图"
@@ -254,7 +254,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
 
     XCTAssertEqual(
-      TauriReleaseNotes.githubReleaseAPIURL(from: packageURL)?.absoluteString,
+      GitHubReleaseNotes.apiURL(from: packageURL)?.absoluteString,
       "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/desktop-v1.34.0"
     )
   }
@@ -278,7 +278,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
       """
 
     XCTAssertEqual(
-      TauriReleaseNotes.plainText(fromHTML: html),
+      ReleaseNotesHTML.text(html),
       """
       Reasonix Desktop v1.34.0
 

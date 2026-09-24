@@ -94,7 +94,7 @@ struct SparkleUpdateProvider: Sendable {
         else { continue }
         // Retain a usable source link even when the page is unavailable or empty.
         application.releaseNotesURL = url
-        application.releaseNotes = await fetchReleaseNotes(from: url)
+        application.releaseNotes = await ReleaseNotesFetcher.fetch(from: url, fetchData: fetchData)
         if Task.isCancelled { return application }
       }
 
@@ -336,32 +336,6 @@ struct SparkleUpdateProvider: Sendable {
     }
 
     return value
-  }
-
-  private func fetchReleaseNotes(from url: URL) async -> String? {
-    do {
-      if let apiURL = TauriReleaseNotes.githubReleaseAPIURL(from: url) {
-        if let data = try? await fetchData(apiURL), data.count <= 2_000_000,
-          let notes = TauriReleaseNotes.parseGitHubRelease(data) {
-          return notes
-        }
-        guard !Task.isCancelled else { return nil }
-        guard let data = try await fetchData(url), data.count <= 2_000_000,
-          let html = String(data: data, encoding: .utf8) else { return nil }
-        return ReleaseNotesHTML.githubReleaseText(html)
-      }
-      guard
-        let data = try await fetchData(url),
-        data.count <= 2_000_000,
-        let html = String(data: data, encoding: .utf8)
-      else {
-        return nil
-      }
-
-      return ReleaseNotesHTML.text(html)
-    } catch {
-      return nil
-    }
   }
 
   private static func plainText(fromHTML html: String) -> String? {

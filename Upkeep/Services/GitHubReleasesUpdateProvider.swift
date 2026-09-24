@@ -222,7 +222,7 @@ struct GitHubReleaseManifest: Equatable, Sendable {
     return GitHubReleaseManifest(
       version: version,
       releaseDate: (json["published_at"] as? String).flatMap(ISO8601Parsing.date),
-      releaseNotes: (json["body"] as? String)?.nonBlankValue,
+      releaseNotes: GitHubReleaseNotes.body(in: json),
       releaseURL: (json["html_url"] as? String).flatMap(SecureUpdateURL.https(string:)),
       assets: assets
     )

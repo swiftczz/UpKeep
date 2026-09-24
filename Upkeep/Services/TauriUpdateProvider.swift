@@ -122,6 +122,10 @@ struct TauriUpdateManifest: Equatable, Sendable {
 }
 
 struct TauriUpdateProvider: Sendable {
+  var fetchData: @Sendable (URL) async throws -> Data? = {
+    try await UpdateHTTP.successfulData(from: $0)
+  }
+
   func check(_ application: AppRecord, fallbackNotes: AppRecord? = nil) async -> AppRecord {
     var application = application
 
@@ -145,12 +149,15 @@ struct TauriUpdateProvider: Sendable {
         releaseNotes = notes
         notesURL = fallbackNotes.releaseNotesURL
       } else if let releaseNotesURL = manifest.releaseNotesURL {
-        releaseNotes = await TauriReleaseNotes.fetch(
+        releaseNotes = await ReleaseNotesFetcher.fetch(
           from: releaseNotesURL,
-          packageURL: selectedPlatform?.url
+          packageURL: selectedPlatform?.url,
+          fetchData: fetchData
         )
       } else {
-        releaseNotes = await TauriReleaseNotes.fetch(from: nil, packageURL: selectedPlatform?.url)
+        releaseNotes = await ReleaseNotesFetcher.fetch(
+          from: nil, packageURL: selectedPlatform?.url, fetchData: fetchData
+        )
       }
       if let homepageURL = manifest.homepageURL(endpoint: endpoint) {
         application.homepageURL = homepageURL
@@ -198,7 +205,7 @@ struct TauriUpdateProvider: Sendable {
   }
 
   private func fetchManifest(from url: URL) async throws -> TauriUpdateManifest {
-    guard let data = try await UpdateHTTP.successfulData(from: url) else {
+    guard let data = try await fetchData(url) else {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
     }
     if let manifest = TauriUpdateManifest.parse(data) {
@@ -208,7 +215,7 @@ struct TauriUpdateProvider: Sendable {
     guard
       let catalogURL = TauriUpdateCatalog.parse(data)?.latestManifestURL,
       catalogURL != url,
-      let catalogData = try await UpdateHTTP.successfulData(from: catalogURL),
+      let catalogData = try await fetchData(catalogURL),
       let manifest = TauriUpdateManifest.parse(catalogData)
     else {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
@@ -303,120 +310,6 @@ enum TauriHomepage {
   }
 }
 
-enum TauriReleaseNotes {
-  static func fetch(from releaseURL: URL?, packageURL: URL? = nil) async -> String? {
-    if let releaseURL {
-      if let apiURL = githubReleaseAPIURL(from: releaseURL),
-        let notes = await fetchGitHubRelease(from: apiURL)
-      {
-        return notes
-      }
-
-      if let notes = await fetchPlainText(from: releaseURL) {
-        return notes
-      }
-    }
-
-    if let packageURL,
-      let apiURL = githubReleaseAPIURL(from: packageURL),
-      let notes = await fetchGitHubRelease(from: apiURL)
-    {
-      return notes
-    }
-
-    return nil
-  }
-
-  private static func fetchGitHubRelease(from apiURL: URL) async -> String? {
-    do {
-      guard
-        let data = try await UpdateHTTP.successfulData(from: apiURL),
-        data.count <= 2_000_000
-      else {
-        return nil
-      }
-      return parseGitHubRelease(data)
-    } catch {
-      return nil
-    }
-  }
-
-  static func githubReleaseAPIURL(from releaseURL: URL) -> URL? {
-    guard releaseURL.host?.lowercased() == "github.com" else {
-      return nil
-    }
-
-    let components = releaseURL.pathComponents
-      .filter { $0 != "/" }
-      .map { $0.removingPercentEncoding ?? $0 }
-    guard components.count >= 5, components[2].lowercased() == "releases" else {
-      return nil
-    }
-
-    let owner = components[0]
-    let repository = components[1]
-    let tag: String
-    switch components[3].lowercased() {
-    case "tag":
-      tag = components[4...].joined(separator: "/")
-    case "download":
-      tag = components[4]
-    default:
-      return nil
-    }
-
-    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
-    guard
-      let encodedOwner = owner.addingPercentEncoding(withAllowedCharacters: allowed),
-      let encodedRepository = repository.addingPercentEncoding(withAllowedCharacters: allowed),
-      let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: allowed),
-      let url = URL(
-        string:
-          "https://api.github.com/repos/\(encodedOwner)/\(encodedRepository)/releases/tags/\(encodedTag)"
-      )
-    else {
-      return nil
-    }
-    return url
-  }
-
-  static func parseGitHubRelease(_ data: Data) -> String? {
-    guard
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let body = json["body"] as? String
-    else {
-      return nil
-    }
-    return body.nonBlankValue
-  }
-
-  static func plainText(fromHTML html: String) -> String? {
-    ReleaseNotesHTML.text(html)
-  }
-
-  private static func fetchPlainText(from url: URL) async -> String? {
-    guard SecureUpdateURL.https(url) != nil else {
-      return nil
-    }
-
-    do {
-      guard
-        let data = try await UpdateHTTP.successfulData(from: url),
-        data.count <= 2_000_000,
-        let text = String(data: data, encoding: .utf8)
-      else {
-        return nil
-      }
-
-      if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
-        return plainText(fromHTML: text)
-      }
-      return text.nonBlankValue
-    } catch {
-      return nil
-    }
-  }
-}
 
 struct TauriUpdateCatalog: Equatable, Sendable {
   struct Release: Equatable, Sendable {
