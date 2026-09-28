@@ -34,6 +34,40 @@ final class SparkleReleaseNotesTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(app.releaseNotes, "Inline notes")
   }
 
+  func testTableProMarkdownPreservesParagraphsAndHeadingScope() async throws {
+    let notes = """
+      # What's New in TablePro 0.76.0
+
+      Agent mode: one AI session that works across the whole connection window, with every statement it ran.
+      A Data Files window for CSV, JSON, Excel and compressed files, with find and replace, column statistics and cleanup.
+      MongoDB documents inserted and edited as Extended JSON, and fields renamed or removed from the Structure tab.
+      Tools from your own MCP servers, available to AI sessions from Settings > Integrations.
+      The table list beside the table browser on iPad, and a sample database on iPhone and iPad.
+
+      [View full changelog](https://docs.tablepro.app/changelog)
+      """
+    let app = await check("""
+      <description sparkle:format="markdown"><![CDATA[\(notes)]]></description>
+      <sparkle:releaseNotesLink>https://example.com/notes</sparkle:releaseNotesLink>
+      """, pages: [:])
+    XCTAssertEqual(app.releaseNotes, notes)
+    let blocks = ReleaseNotesMarkdown.parse(try XCTUnwrap(app.releaseNotes))
+    XCTAssertEqual(blocks.count, 3)
+    XCTAssertEqual(blocks.first?.heading, 1)
+    XCTAssertEqual(blocks.first.map { String($0.text.characters) }, "What's New in TablePro 0.76.0")
+    XCTAssertTrue(blocks.dropFirst().allSatisfy { $0.heading == nil })
+    XCTAssertEqual(blocks.last?.text.runs.first?.link, URL(string: "https://docs.tablepro.app/changelog"))
+  }
+
+  func testExplicitHTMLAndUnknownFormatsKeepHTMLConversion() async {
+    for format in ["html", "unknown"] {
+      let app = await check("""
+        <description sparkle:format="\(format)"><![CDATA[<h2>Added</h2><ul><li>New feature</li></ul>]]></description>
+        """, pages: [:])
+      XCTAssertEqual(app.releaseNotes, "Added\n\n• New feature")
+    }
+  }
+
   func testInlineHTMLDescriptionRemovesStylesAndPreservesHeadingsAndLists() async {
     let app = await check("""
       <description><![CDATA[<!DOCTYPE html><html><head>

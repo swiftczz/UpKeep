@@ -7,6 +7,7 @@ struct UpkeepRootView: View {
   @State private var library: AppLibrary
   @State private var uninstallingApplication: AppRecord?
   @State private var pendingUpdateAllPlan: UpdateAllPlan?
+  @State private var pendingAppStoreUpdate: (name: String, destination: URL)?
   @State private var updateAllPreparationTask: Task<Void, Never>?
   @State private var updateAllPreparationID: UUID?
   @State private var manualRefreshTask: Task<Void, Never>?
@@ -70,7 +71,11 @@ struct UpkeepRootView: View {
             primaryAction: {
               Task {
                 if let destination = await library.performPrimaryAction(for: application.id) {
-                  open(destination)
+                  if destination.scheme == "macappstore" {
+                    pendingAppStoreUpdate = (application.name, destination)
+                  } else {
+                    open(destination)
+                  }
                 }
               }
             },
@@ -176,7 +181,17 @@ struct UpkeepRootView: View {
         set: { if !$0 { dismissRootAlert() } }
       )
     ) {
-      if case .relaunchAll = presentedRootAlert {
+      if case .appStoreUpdate = presentedRootAlert,
+        let pending = pendingAppStoreUpdate
+      {
+        Button("确定") {
+          pendingAppStoreUpdate = nil
+          open(pending.destination)
+        }
+        Button("取消", role: .cancel) {
+          pendingAppStoreUpdate = nil
+        }
+      } else if case .relaunchAll = presentedRootAlert {
         Button("更新全部") {
           confirmPendingUpdateAll()
         }
@@ -198,6 +213,9 @@ struct UpkeepRootView: View {
   }
 
   private var presentedRootAlert: RootAlert? {
+    if pendingAppStoreUpdate != nil {
+      return .appStoreUpdate
+    }
     if !pendingUpdateAllRelaunch.isEmpty {
       return .relaunchAll
     }
@@ -209,6 +227,8 @@ struct UpkeepRootView: View {
 
   private var rootAlertTitle: String {
     switch presentedRootAlert {
+    case .appStoreUpdate:
+      return "前往 App Store 更新"
     case .relaunchAll:
       return updateAllRelaunchTitle
     case .failure, .none:
@@ -218,6 +238,9 @@ struct UpkeepRootView: View {
 
   private var rootAlertMessage: String {
     switch presentedRootAlert {
+    case .appStoreUpdate:
+      let name = pendingAppStoreUpdate?.name ?? "此应用"
+      return "「\(name)」需要在 App Store 中完成更新。点击“确定”将打开 App Store，请在那里继续更新。"
     case .relaunchAll:
       return updateAllRelaunchMessage
     case .failure, .none:
@@ -226,6 +249,10 @@ struct UpkeepRootView: View {
   }
 
   private func dismissRootAlert() {
+    if pendingAppStoreUpdate != nil {
+      pendingAppStoreUpdate = nil
+      return
+    }
     pendingUpdateAllPlan = nil
     library.alertMessage = nil
   }
@@ -343,6 +370,7 @@ struct UpkeepRootView: View {
 }
 
 private enum RootAlert {
+  case appStoreUpdate
   case relaunchAll
   case failure
 }

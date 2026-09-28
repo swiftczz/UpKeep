@@ -75,7 +75,9 @@ struct SparkleUpdateProvider: Sendable {
       application.latestBuildVersion = candidate.buildVersion
       application.releaseDate = candidate.publicationDate.flatMap(Self.parsePublicationDate)
       application.releaseNotesURL = candidate.releaseNotesURL
-      application.releaseNotes = candidate.summary.flatMap(Self.plainText(fromHTML:))
+      application.releaseNotes = candidate.summaryFormat == "markdown"
+        ? candidate.summary?.nonBlankValue
+        : candidate.summary.flatMap(Self.plainText(fromHTML:))
       application.packageByteCount = candidate.packageByteCount
       application.updatePageURL = candidate.manualUpdateURL(relativeTo: feedURL)
 
@@ -348,6 +350,7 @@ struct SparkleCandidate: Hashable, Sendable {
   var shortVersion: String?
   var buildVersion: String?
   var summary: String?
+  var summaryFormat: String?
   var publicationDate: String?
   var releaseNotesURL: URL?
   var updatePageURL: URL?
@@ -530,6 +533,10 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
     ]
 
     if capturable.contains(key) {
+      if key == "description" {
+        currentCandidate?.summaryFormat = Self.attribute(named: "format", in: attributeDict)?
+          .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      }
       captureElement = key
       captureBuffer = ""
     }
