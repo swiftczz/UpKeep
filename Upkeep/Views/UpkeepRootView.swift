@@ -112,6 +112,22 @@ struct UpkeepRootView: View {
     .searchable(text: $library.searchText, placement: .sidebar, prompt: "搜索应用或更新来源")
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
+        if !library.automaticUpdates.isEmpty {
+          Button(action: beginUpdateAll) {
+            if updateAllPreparationID != nil {
+              HStack {
+                ProgressView().controlSize(.small)
+                Text("正在准备…")
+              }
+            } else {
+              Label("更新全部", systemImage: "arrow.down.circle")
+            }
+          }
+          .disabled(!library.updatingApplicationIDs.isEmpty || updateAllPreparationID != nil)
+          .accessibilityLabel(updateAllPreparationID == nil ? "更新全部" : "正在准备更新全部")
+          .help("更新 \(library.automaticUpdates.count) 个可自动更新的应用")
+        }
+
         Button {
           beginManualRefresh()
         } label: {
@@ -130,22 +146,6 @@ struct UpkeepRootView: View {
         .disabled(!library.updatingApplicationIDs.isEmpty || manualRefreshTask != nil)
         .help(isManualRefreshInProgress ? library.phase.title ?? "正在刷新…" : "重新扫描并检查所有应用")
         .accessibilityLabel(isManualRefreshInProgress ? "正在检查更新" : "检查更新")
-
-        if !library.automaticUpdates.isEmpty {
-          Button(action: beginUpdateAll) {
-            if updateAllPreparationID != nil {
-              HStack {
-                ProgressView().controlSize(.small)
-                Text("正在准备…")
-              }
-            } else {
-              Label("更新全部", systemImage: "arrow.down.circle")
-            }
-          }
-          .disabled(!library.updatingApplicationIDs.isEmpty || updateAllPreparationID != nil)
-          .accessibilityLabel(updateAllPreparationID == nil ? "更新全部" : "正在准备更新全部")
-          .help("更新 \(library.automaticUpdates.count) 个可自动更新的应用")
-        }
       }
     }
     .task {
