@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AppSidebarView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var hasShownInitialRows = false
+  @State private var initialVisibleRowCount = 0
 
   let sections: AppSidebarSections
   @Binding var selection: AppRecord.ID?
@@ -35,10 +37,24 @@ struct AppSidebarView: View {
   }
 
   var body: some View {
+    let orderedIDs = sections.layout.availableUpdateIDs
+      + sections.layout.installedApplicationIDs + sections.layout.ignoredUpdateIDs
+    let visibleIDs = Set(orderedIDs.prefix(
+      hasShownInitialRows || reduceMotion ? orderedIDs.count : initialVisibleRowCount
+    ))
+    let availableUpdates = sections.availableUpdates.filter { visibleIDs.contains($0.id) }
+    let installedApplications = sections.installedApplications.filter { visibleIDs.contains($0.id) }
+    let ignoredUpdates = sections.ignoredUpdates.filter { visibleIDs.contains($0.id) }
+    let visibleLayout = AppSidebarSections.Layout(
+      availableUpdateIDs: availableUpdates.map(\.id),
+      installedApplicationIDs: installedApplications.map(\.id),
+      ignoredUpdateIDs: ignoredUpdates.map(\.id)
+    )
+
     List(selection: stableSelection) {
-      if !sections.availableUpdates.isEmpty {
+      if !availableUpdates.isEmpty {
         Section {
-          ForEach(sections.availableUpdates) { application in
+          ForEach(availableUpdates) { application in
             AppRowView(
               application: application,
               isUpdateIgnored: false,
@@ -63,9 +79,9 @@ struct AppSidebarView: View {
         }
       }
 
-      if !sections.installedApplications.isEmpty {
+      if !installedApplications.isEmpty {
         Section {
-          ForEach(sections.installedApplications) { application in
+          ForEach(installedApplications) { application in
             AppRowView(
               application: application,
               isUpdateIgnored: false,
@@ -82,9 +98,9 @@ struct AppSidebarView: View {
         }
       }
 
-      if !sections.ignoredUpdates.isEmpty {
+      if !ignoredUpdates.isEmpty {
         Section {
-          ForEach(sections.ignoredUpdates) { application in
+          ForEach(ignoredUpdates) { application in
             AppRowView(
               application: application,
               isUpdateIgnored: true,
@@ -111,9 +127,40 @@ struct AppSidebarView: View {
     }
     .listStyle(.sidebar)
     .animation(
-      reduceMotion ? nil : .smooth(duration: 0.24),
-      value: sections.layout
+      reduceMotion ? nil : .smooth(duration: hasShownInitialRows ? 0.24 : 0.32),
+      value: visibleLayout
     )
+    .task(id: sections.isEmpty) {
+      guard !sections.isEmpty, !hasShownInitialRows else { return }
+      if !reduceMotion {
+        // Insert whole rows in batches so the list expands as it fills.
+        do {
+          try await Task.sleep(for: .milliseconds(80))
+          let animatedRowCount = min(orderedIDs.count, 16)
+          while initialVisibleRowCount < animatedRowCount {
+            guard !Task.isCancelled else { return }
+            initialVisibleRowCount = min(initialVisibleRowCount + 4, animatedRowCount)
+            try await Task.sleep(for: .milliseconds(180))
+          }
+        } catch {
+          return
+        }
+      }
+      guard !Task.isCancelled else { return }
+      hasShownInitialRows = true
+    }
+    .onDisappear {
+      var transaction = Transaction(animation: nil)
+      transaction.disablesAnimations = true
+      withTransaction(transaction) {
+        hasShownInitialRows = false
+        initialVisibleRowCount = 0
+      }
+    }
+    .onChange(of: searchText) { _, _ in
+      // Search remains immediate even during the entrance.
+      hasShownInitialRows = true
+    }
     .navigationTitle("Upkeep")
     .overlay {
       if sections.applicationIDs.isEmpty {

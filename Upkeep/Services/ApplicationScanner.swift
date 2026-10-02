@@ -181,9 +181,17 @@ struct ApplicationScanner: ApplicationScanning {
     let receiptURL = contentsURL.appendingPathComponent("_MASReceipt/receipt")
     let hasAppStoreReceipt = FileManager.default.fileExists(atPath: receiptURL.path)
     let iOSAppStoreMetadata = iOSAppStoreMetadata(at: applicationURL, bundleInfo: info)
+    let sparkleURL = contentsURL.appendingPathComponent(
+      "Frameworks/Sparkle.framework", isDirectory: true)
+    let feedURL = (info["SUFeedURL"] as? String).flatMap(SecureUpdateURL.https(string:))
+    let hasSparkleSource = feedURL != nil
+      || FileManager.default.fileExists(atPath: sparkleURL.path)
+
     if let previous, previous.source != .vscodeUpdater,
+      previous.source != .sparkle || previous.sourceURL == feedURL,
       !(previous.source == .selfManaged
-        && ExecutableUpdaterDetector.hasApplicationService(in: bundle.bundleURL)),
+        && (hasSparkleSource
+          || ExecutableUpdaterDetector.hasApplicationService(in: bundle.bundleURL))),
       canReuse(
         previous,
         bundleIdentifier: bundleIdentifier,
@@ -226,6 +234,15 @@ struct ApplicationScanner: ApplicationScanning {
           sourceIdentifier: iOSAppStoreMetadata.storeIdentifier
         )
       }
+      if hasSparkleSource {
+        return AppRecord(
+          name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
+          currentVersion: currentVersion, buildVersion: buildVersion,
+          applicationModificationDate: applicationModificationDate,
+          source: .sparkle, status: feedURL == nil ? .selfManaged : .checking,
+          sourceURL: feedURL
+        )
+      }
       if let metadata = VSCodeUpdaterDetector.detect(in: bundle.bundleURL) {
         return AppRecord(
           name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
@@ -249,11 +266,6 @@ struct ApplicationScanner: ApplicationScanning {
       )
     }
 
-    let sparkleURL = contentsURL.appendingPathComponent(
-      "Frameworks/Sparkle.framework", isDirectory: true)
-    let hasSparkle = FileManager.default.fileExists(atPath: sparkleURL.path)
-    let feedURL = (info["SUFeedURL"] as? String).flatMap(SecureUpdateURL.https(string:))
-
     let source: UpdateSource
     let appStorePlatform: AppStorePlatform?
     let status: UpdateStatus
@@ -271,7 +283,7 @@ struct ApplicationScanner: ApplicationScanning {
       source = .appStore
       appStorePlatform = iOSAppStoreMetadata.platform
       status = .checking
-    } else if hasSparkle {
+    } else if hasSparkleSource {
       source = .sparkle
       appStorePlatform = nil
       status = feedURL == nil ? .selfManaged : .checking
