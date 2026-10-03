@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum FinderTrashError: LocalizedError {
@@ -72,40 +73,6 @@ enum FinderTrash {
     )
   }
 
-  static func execute(
-    _ source: String,
-    arguments: [String]
-  ) async throws {
-    do {
-      _ = try await ProcessRunner.run(
-        executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
-        arguments: ["-e", source, "--"] + arguments
-      )
-    } catch let error as ProcessRunnerError {
-      throw mapProcessError(error)
-    } catch {
-      throw FinderTrashError.failed(error.localizedDescription)
-    }
-  }
-
-  private static func mapProcessError(_ error: ProcessRunnerError) -> FinderTrashError {
-    let message = error.localizedDescription
-    if message.contains("(-1743)") {
-      return .automationDenied
-    }
-    if message.contains("(-128)") {
-      return .authorizationCancelled
-    }
-    return .failed(cleanAppleScriptMessage(message))
-  }
-
-  private static func cleanAppleScriptMessage(_ message: String) -> String {
-    let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let range = trimmed.range(of: "execution error: ") else {
-      return trimmed
-    }
-    return String(trimmed[range.upperBound...])
-  }
 }
 
 enum UserTrashMove {
@@ -212,11 +179,19 @@ enum UserTrashMove {
 }
 
 enum FinderBatchTrash {
+  typealias Recycle = @Sendable ([URL]) async throws -> [URL: URL]
+  typealias AuthorizedRecycle = @Sendable ([URL]) async throws -> Void
+
   static func moveToTrash(
     _ urls: [URL],
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    recycle: Recycle = recycleUsingWorkspace,
+    authorizedRecycle: AuthorizedRecycle = { try await recycleWithAuthorization($0) },
+    exists: @Sendable (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
   ) async throws {
     let targets = urls.map(\.standardizedFileURL)
+    guard !targets.isEmpty else { return }
+    try Task.checkCancellation()
     let unsafeTargets = targets.filter {
       !isAllowedTarget($0, homeDirectory: homeDirectory)
     }
@@ -224,10 +199,39 @@ enum FinderBatchTrash {
       throw FinderTrashError.unsafeTargets(unsafeTargets)
     }
 
-    try await FinderTrash.execute(
-      scriptSource,
-      arguments: targets.map(\.path)
-    )
+    do {
+      let moved = try await recycle(targets)
+      let missing = targets.filter { moved[$0] == nil }
+      guard missing.isEmpty else {
+        throw FinderTrashError.failed("系统未确认 \(missing.count) 项已移到废纸篓。")
+      }
+    } catch {
+      let nsError = error as NSError
+      if (nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError)
+        || (nsError.domain == NSOSStatusErrorDomain && nsError.code == -128) {
+        throw FinderTrashError.authorizationCancelled
+      }
+      guard isPermissionError(nsError) else { throw error }
+      try Task.checkCancellation()
+      // The native API cannot elevate privileges for some root-owned app bundles.
+      // Retry only files that remain after any partial native move.
+      let remaining = targets.filter(exists)
+      if !remaining.isEmpty { try await authorizedRecycle(remaining) }
+      return
+    }
+  }
+
+  private static func isPermissionError(_ error: NSError, depth: Int = 0) -> Bool {
+    if error.domain == NSCocoaErrorDomain && error.code == NSFileWriteNoPermissionError {
+      return true
+    }
+    if error.domain == NSPOSIXErrorDomain && [Int(EACCES), Int(EPERM)].contains(error.code) {
+      return true
+    }
+    guard depth < 8, let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError else {
+      return false
+    }
+    return isPermissionError(underlying, depth: depth + 1)
   }
 
   static func isAllowedTarget(
@@ -254,13 +258,50 @@ enum FinderBatchTrash {
     }
   }
 
+  @MainActor
+  private static func recycleUsingWorkspace(_ urls: [URL]) async throws -> [URL: URL] {
+    try await withCheckedThrowingContinuation { continuation in
+      NSWorkspace.shared.recycle(urls) { moved, error in
+        if let error {
+          continuation.resume(throwing: error)
+        } else {
+          continuation.resume(returning: moved)
+        }
+      }
+    }
+  }
+
+  static func recycleWithAuthorization(
+    _ urls: [URL],
+    privilegedRecycle: @Sendable ([URL]) async throws -> Bool = { try await PrivilegedApplicationTrash.moveToTrash($0) },
+    finderRecycle: AuthorizedRecycle = recycleUsingFinder
+  ) async throws {
+    let applications = urls.filter(PrivilegedApplicationTrash.supports)
+    let handled = applications.isEmpty ? false : try await privilegedRecycle(applications)
+    let remaining = handled ? urls.filter { !applications.contains($0) } : urls
+    if !remaining.isEmpty { try await finderRecycle(remaining) }
+  }
+
+  private static func recycleUsingFinder(_ urls: [URL]) async throws {
+    do {
+      _ = try await ProcessRunner.run(
+        executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
+        arguments: ["-e", scriptSource, "--"] + urls.map(\.path)
+      )
+    } catch let error as ProcessRunnerError {
+      let message = error.localizedDescription
+      if message.contains("(-128)") { throw FinderTrashError.authorizationCancelled }
+      if message.contains("(-1743)") { throw FinderTrashError.automationDenied }
+      throw FinderTrashError.failed(message)
+    }
+  }
+
   static let scriptSource = """
     on run argv
       set targetItems to {}
       repeat with targetPath in argv
         set end of targetItems to (POSIX file (targetPath as text))
       end repeat
-
       tell application "Finder"
         delete targetItems
       end tell

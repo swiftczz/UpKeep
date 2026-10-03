@@ -41,8 +41,9 @@ struct GitHubReleaseDownload: Equatable, Sendable {
       return nil
     }
 
-    let parts = url.pathComponents.filter { $0 != "/" }
-    guard parts.count == 6,
+    let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? ""
+    let parts = path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
+    guard parts.count >= 6,
       parts[2].lowercased() == "releases",
       parts[3].lowercased() == "download"
     else {
@@ -55,8 +56,8 @@ struct GitHubReleaseDownload: Equatable, Sendable {
       with: "",
       options: [.anchored, .backwards]
     )
-    let tag = parts[4]
-    let fileName = parts[5]
+    let tag = parts[4..<parts.count - 1].joined(separator: "/")
+    let fileName = parts[parts.count - 1]
     guard !owner.isEmpty, owner != "." && owner != "..",
       !repository.isEmpty, repository != "." && repository != "..",
       !tag.isEmpty, !fileName.isEmpty
@@ -303,7 +304,7 @@ struct GitHubReleaseManifest: Equatable, Sendable {
     for candidate in [tag, fallback].compactMap({ $0 }) {
       guard
         let expression = try? NSRegularExpression(
-          pattern: #"(?i)(?:^|[-_ ])v?(\d+(?:[._-]\d+)+(?:[-._]?[A-Za-z][A-Za-z0-9.-]*)?)"#
+          pattern: #"(?i)(?:^|[-_/ ])v?(\d+(?:[._-]\d+)+(?:[-._]?[A-Za-z][A-Za-z0-9.-]*)?)"#
         ),
         let match = expression.firstMatch(
           in: candidate,

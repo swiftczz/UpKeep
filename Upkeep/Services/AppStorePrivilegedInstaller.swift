@@ -7,7 +7,7 @@ import UpkeepPrivilegedHelperProtocol
 enum AppStorePrivilegedInstaller {
   private static let registeredHelperFingerprintKey =
     "AppStorePrivilegedInstaller.registeredHelperFingerprint"
-  // Registration changes must never terminate an installation already in progress.
+  // Registration changes must never terminate an installation or trash operation in progress.
   private static let operationLock = NSLock()
   private static let logger = Logger(
     subsystem: "com.chengzhong.Upkeep",
@@ -94,6 +94,17 @@ enum AppStorePrivilegedInstaller {
         isReachable: helperIsReachable
       )
     )
+  }
+
+  static func withRegisteredHelper<Value>(_ operation: () throws -> Value) throws -> Value? {
+    operationLock.lock()
+    defer { operationLock.unlock() }
+    guard bundledLaunchDaemonPlistExists else { return nil }
+    switch registerBundledHelper() {
+    case .enabled: return try operation()
+    case .unavailable: return nil
+    case .failed(let error): throw error
+    }
   }
 
   static func registerBundledHelper(

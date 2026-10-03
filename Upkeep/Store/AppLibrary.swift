@@ -662,20 +662,22 @@ final class AppLibrary {
     if merged.appStoreAccountCountryCode == nil, previous.source == merged.source {
       merged.appStoreAccountCountryCode = previous.appStoreAccountCountryCode
     }
-    if merged.releaseNotes == nil {
-      merged.releaseNotes = previous.releaseNotes
-    }
-    if merged.releaseDate == nil {
-      merged.releaseDate = previous.releaseDate
-    }
-    if merged.releaseNotesURL == nil {
-      merged.releaseNotesURL = previous.releaseNotesURL
-    }
-    if merged.packageByteCount == nil {
-      merged.packageByteCount = previous.packageByteCount
-    }
-    if merged.latestBuildVersion == nil {
-      merged.latestBuildVersion = previous.latestBuildVersion
+    if merged.hasSameRelease(as: previous) {
+      if merged.releaseNotes == nil {
+        merged.releaseNotes = previous.releaseNotes
+      }
+      if merged.releaseDate == nil {
+        merged.releaseDate = previous.releaseDate
+      }
+      if merged.releaseNotesURL == nil {
+        merged.releaseNotesURL = previous.releaseNotesURL
+      }
+      if merged.packageByteCount == nil {
+        merged.packageByteCount = previous.packageByteCount
+      }
+      if merged.latestBuildVersion == nil {
+        merged.latestBuildVersion = previous.latestBuildVersion
+      }
     }
     if merged.lastInstalledAt == nil {
       merged.lastInstalledAt = previous.lastInstalledAt

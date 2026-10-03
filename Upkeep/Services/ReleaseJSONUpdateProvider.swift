@@ -142,9 +142,7 @@ struct ReleaseJSONUpdateProvider: Sendable {
     do {
       switch try await fetchManifest(from: requestURL) {
       case .upToDate:
-        application.latestVersion = application.currentVersion
-        application.status = .upToDate
-        application.canAutomaticallyUpdate = false
+        application.applyInstalledRelease()
       case .update(let manifest):
         let package = manifest.selectedPackage()
         application.applyRemoteRelease(

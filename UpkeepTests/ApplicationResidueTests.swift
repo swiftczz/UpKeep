@@ -781,23 +781,116 @@ final class ApplicationResidueTests: XCTestCase {
     XCTAssertTrue(movedTargets.contains { fileManager.fileExists(atPath: $0.path) })
   }
 
-  @MainActor
-  func testTrashAppleScriptsCompile() throws {
-    for source in [FinderBatchTrash.scriptSource] {
-      let script = try XCTUnwrap(NSAppleScript(source: source))
-      var errorInfo: NSDictionary?
-      XCTAssertTrue(script.compileAndReturnError(&errorInfo), "\(errorInfo ?? [:])")
+  func testFinderBatchTrashUsesOneNativeBatch() async throws {
+    let targets = [URL(fileURLWithPath: "/Applications/Example.app"),
+      URL(fileURLWithPath: "/Library/Caches/com.example.app")]
+    let calls = LockedCounter()
+    try await FinderBatchTrash.moveToTrash(targets, recycle: { urls in
+      calls.increment()
+      XCTAssertEqual(urls, targets)
+      return Dictionary(uniqueKeysWithValues: urls.map { ($0, $0) })
+    })
+    XCTAssertEqual(calls.value, 1)
+  }
+
+  func testFinderBatchTrashRejectsUnsafeBatchBeforeNativeRequest() async {
+    do {
+      try await FinderBatchTrash.moveToTrash([
+        URL(fileURLWithPath: "/Applications/Example.app"),
+        URL(fileURLWithPath: "/System/Library")
+      ], recycle: { _ in
+        XCTFail("Unsafe batch must not reach the system")
+        return [:]
+      })
+      XCTFail("Expected unsafe targets to be rejected")
+    } catch let error as FinderTrashError {
+      guard case .unsafeTargets = error else { return XCTFail("Unexpected error: \(error)") }
+    } catch { XCTFail("Unexpected error: \(error)") }
+  }
+
+  func testFinderBatchTrashReportsCancelledAuthorizationWithoutRetrying() async {
+    let calls = LockedCounter()
+    do {
+      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+        recycle: { _ in
+          calls.increment()
+          throw NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
+        }, authorizedRecycle: { _ in XCTFail("Cancelled authorization must not prompt again") })
+      XCTFail("Expected cancellation")
+    } catch let error as FinderTrashError {
+      guard case .authorizationCancelled = error else { return XCTFail("Unexpected error: \(error)") }
+    } catch { XCTFail("Unexpected error: \(error)") }
+    XCTAssertEqual(calls.value, 1)
+  }
+
+  func testNativePermissionFailureRequestsFinderAuthorizationForRemainingFiles() async throws {
+    let removed = URL(fileURLWithPath: "/Library/Caches/com.example.app")
+    let application = URL(fileURLWithPath: "/Applications/Example.app")
+    let calls = LockedCounter()
+    try await FinderBatchTrash.moveToTrash([removed, application], recycle: { _ in
+      throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
+    }, authorizedRecycle: { urls in
+      calls.increment()
+      XCTAssertEqual(urls, [application])
+    }, exists: { $0 == application })
+    XCTAssertEqual(calls.value, 1)
+  }
+
+  func testUnderlyingPermissionErrorAlsoRequestsAuthorization() async throws {
+    let application = URL(fileURLWithPath: "/Applications/Example.app")
+    let calls = LockedCounter()
+    try await FinderBatchTrash.moveToTrash([application], recycle: { _ in
+      throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
+        userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))])
+    }, authorizedRecycle: { urls in
+      calls.increment()
+      XCTAssertEqual(urls, [application])
+    }, exists: { _ in true })
+    XCTAssertEqual(calls.value, 1)
+  }
+
+  func testOtherNativeFailuresDoNotRequestAuthorization() async {
+    do {
+      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+        recycle: { _ in throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError) },
+        authorizedRecycle: { _ in XCTFail("A full disk cannot be fixed by authorization") })
+      XCTFail("Expected the native error")
+    } catch {
+      XCTAssertEqual((error as NSError).code, NSFileWriteOutOfSpaceError)
     }
   }
 
-  func testFinderBatchTrashUsesOneFinderBatchWithoutMutatingPackageContents() {
-    let batchDelete = "delete targetItems"
-    XCTAssertEqual(
-      FinderBatchTrash.scriptSource.components(separatedBy: batchDelete).count - 1,
-      1
-    )
-    XCTAssertTrue(FinderBatchTrash.scriptSource.contains("tell application \"Finder\""))
-    XCTAssertFalse(FinderBatchTrash.scriptSource.contains("chown"))
+  func testCancelledFinderAuthorizationIsReturnedWithoutRetrying() async {
+    let calls = LockedCounter()
+    do {
+      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+        recycle: { _ in throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError) },
+        authorizedRecycle: { _ in
+          calls.increment()
+          throw FinderTrashError.authorizationCancelled
+        }, exists: { _ in true })
+      XCTFail("Expected cancellation")
+    } catch let error as FinderTrashError {
+      guard case .authorizationCancelled = error else { return XCTFail("Unexpected error: \(error)") }
+    } catch { XCTFail("Unexpected error: \(error)") }
+    XCTAssertEqual(calls.value, 1)
+  }
+
+  @MainActor
+  func testAuthorizedTrashScriptCompiles() throws {
+    let script = try XCTUnwrap(NSAppleScript(source: FinderBatchTrash.scriptSource))
+    var errorInfo: NSDictionary?
+    XCTAssertTrue(script.compileAndReturnError(&errorInfo), "\(errorInfo ?? [:])")
+  }
+
+  func testFinderBatchTrashDoesNotReportPartialNativeResultAsSuccess() async {
+    do {
+      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+        recycle: { _ in [:] })
+      XCTFail("Expected incomplete deletion to be reported")
+    } catch let error as FinderTrashError {
+      guard case .failed = error else { return XCTFail("Unexpected error: \(error)") }
+    } catch { XCTFail("Unexpected error: \(error)") }
   }
 
   func testUserTrashMoveRejectsNonVolatileTargets() async throws {
@@ -824,16 +917,20 @@ final class ApplicationResidueTests: XCTestCase {
   }
 
   @MainActor
-  func testTrashAppleScriptDoesNotBlockMainActor() async throws {
+  func testNativeTrashDoesNotBlockMainActorWhileAwaitingAuthorization() async throws {
     let clock = ContinuousClock()
     let startedAt = clock.now
-    let scriptTask = Task {
-      try await FinderTrash.execute("delay 0.25", arguments: [])
+    let trashTask = Task {
+      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+        recycle: { urls in
+          try await Task.sleep(for: .milliseconds(250))
+          return Dictionary(uniqueKeysWithValues: urls.map { ($0, $0) })
+        })
     }
 
     try await Task.sleep(for: .milliseconds(40))
     XCTAssertLessThan(startedAt.duration(to: clock.now), .milliseconds(180))
-    try await scriptTask.value
+    try await trashTask.value
   }
 
   private func createDirectory(_ url: URL) throws {

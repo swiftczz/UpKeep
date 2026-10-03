@@ -129,10 +129,7 @@ struct VSCodeUpdateProvider: Sendable {
         currentBuildVersion: application.buildVersion
       ) {
       case .upToDate:
-        application.latestVersion = application.currentVersion
-        application.latestBuildVersion = application.buildVersion
-        application.status = .upToDate
-        application.canAutomaticallyUpdate = false
+        application.applyInstalledRelease()
       case .update(let payload):
         application.applyRemoteRelease(
           version: payload.productVersion,

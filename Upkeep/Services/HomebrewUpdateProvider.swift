@@ -114,8 +114,7 @@ struct HomebrewUpdateProvider: Sendable {
       return alternate
     }
 
-    if checked.latestVersion != nil
-      && checked.latestVersion?.split(separator: ",").first == application.latestVersion?.split(separator: ",").first {
+    if checked.latestVersion != nil && checked.hasSameRelease(as: application) {
       if checked.releaseNotes?.nonBlankValue != nil {
         merged.releaseNotes = checked.releaseNotes
         merged.releaseNotesURL = checked.releaseNotesURL
@@ -130,11 +129,13 @@ struct HomebrewUpdateProvider: Sendable {
     if merged.latestVersion == nil {
       merged.latestVersion = checked.latestVersion
     }
-    if merged.latestBuildVersion == nil {
-      merged.latestBuildVersion = checked.latestBuildVersion
-    }
-    if merged.packageByteCount == nil {
-      merged.packageByteCount = checked.packageByteCount
+    if merged.hasSameRelease(as: checked) {
+      if merged.latestBuildVersion == nil {
+        merged.latestBuildVersion = checked.latestBuildVersion
+      }
+      if merged.packageByteCount == nil {
+        merged.packageByteCount = checked.packageByteCount
+      }
     }
     return merged
   }
@@ -282,8 +283,7 @@ struct HomebrewUpdateProvider: Sendable {
     guard let release = GitHubReleaseManifest.parse(data),
       let version = application.latestVersion?.split(separator: ",").first,
       String(version) == release.version,
-      release.assets.contains(where: { $0.downloadURL == URL(string:
-        "https://github.com/\(download.owner)/\(download.repository)/releases/download/\(download.tag)/\(download.fileName)") })
+      release.assets.contains(where: { GitHubReleaseDownload.parse($0.downloadURL) == download })
     else { return result }
     if result.packageByteCount == nil {
       result.packageByteCount = GitHubReleaseManifest.packageByteCount(named: download.fileName, in: data)

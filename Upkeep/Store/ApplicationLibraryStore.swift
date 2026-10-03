@@ -3,6 +3,14 @@ import Foundation
 struct ApplicationLibrarySnapshot: Codable, Sendable {
   var lastCheckedAt: Date?
   var applications: [AppRecord]
+  var releaseMetadataRevision: Int? = 1
+
+  mutating func migrateReleaseMetadataIfNeeded() {
+    guard releaseMetadataRevision != 1 else { return }
+    // Older snapshots may pair a new version with notes copied from an older release.
+    for index in applications.indices { applications[index].clearReleaseMetadata() }
+    releaseMetadataRevision = 1
+  }
 }
 
 struct ApplicationLibraryStore: Sendable {
@@ -14,7 +22,9 @@ struct ApplicationLibraryStore: Sendable {
     return ApplicationLibraryStore(
       load: {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(ApplicationLibrarySnapshot.self, from: data)
+        guard var snapshot = try? JSONDecoder().decode(ApplicationLibrarySnapshot.self, from: data) else { return nil }
+        snapshot.migrateReleaseMetadataIfNeeded()
+        return snapshot
       },
       save: { snapshot in
         do {

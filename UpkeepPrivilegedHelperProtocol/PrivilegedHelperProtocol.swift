@@ -10,6 +10,13 @@ public enum UpkeepPrivilegedHelperConstants {
 public protocol UpkeepPrivilegedHelperProtocol: NSObjectProtocol {
   func ping(withReply reply: @escaping () -> Void)
 
+  func canTrashApplications(withReply reply: @escaping (Bool) -> Void)
+
+  func trashApplications(
+    paths: [String],
+    withReply reply: @escaping (String?) -> Void
+  )
+
   func installAppStorePackage(
     packagePath: String,
     receiptPath: String,

@@ -218,6 +218,9 @@ extension AppRecord {
     application.status = .checking
     application.latestVersion = nil
     application.latestBuildVersion = nil
+    application.releaseNotes = nil
+    application.releaseNotesURL = nil
+    application.releaseDate = nil
     application.packageByteCount = nil
     application.updatePageURL = nil
     application.canAutomaticallyUpdate = false
@@ -360,6 +363,39 @@ extension AppRecord {
     return formatter.string(fromByteCount: packageByteCount)
   }
 
+  /// Release metadata can only be shared when both records describe the same release.
+  func hasSameRelease(as other: AppRecord) -> Bool {
+    func identity(_ app: AppRecord) -> (String, String?) {
+      let parts = (app.latestVersion ?? app.currentVersion).split(separator: ",", maxSplits: 1)
+      var version = parts.first.map(String.init)?.lowercased() ?? ""
+      if version.hasPrefix("v") { version.removeFirst() }
+      let build = app.latestBuildVersion
+        ?? (parts.count > 1 ? String(parts[1]) : nil)
+        ?? (app.latestVersion == nil || app.latestVersion == app.currentVersion ? app.buildVersion : nil)
+      return (version, build)
+    }
+    let lhs = identity(self), rhs = identity(other)
+    guard !lhs.0.isEmpty, lhs.0 == rhs.0 else { return false }
+    if let leftBuild = lhs.1, let rightBuild = rhs.1 { return leftBuild == rightBuild }
+    return true
+  }
+
+  mutating func clearReleaseMetadata() {
+    releaseNotes = nil
+    releaseNotesURL = nil
+    releaseDate = nil
+    packageByteCount = nil
+  }
+
+  mutating func applyInstalledRelease() {
+    let previous = self
+    latestVersion = currentVersion
+    latestBuildVersion = buildVersion
+    if !hasSameRelease(as: previous) { clearReleaseMetadata() }
+    status = .upToDate
+    canAutomaticallyUpdate = false
+  }
+
   mutating func applyRemoteRelease(
     version: String,
     releaseDate: Date? = nil,
@@ -371,9 +407,7 @@ extension AppRecord {
     latestVersion = version
     self.releaseDate = releaseDate
     self.releaseNotes = releaseNotes
-    if let releaseNotesURL {
-      self.releaseNotesURL = releaseNotesURL
-    }
+    self.releaseNotesURL = releaseNotesURL
     self.packageByteCount = packageByteCount
 
     let newer = VersionComparator.isNewer(version, than: currentVersion, build: buildVersion)

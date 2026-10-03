@@ -19,9 +19,14 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
     _ listener: NSXPCListener,
     shouldAcceptNewConnection newConnection: NSXPCConnection
   ) -> Bool {
-    guard isAllowedClient(newConnection) else {
+    guard let requirement = expectedClientRequirement,
+      let requirementString = Self.requirementString(requirement)
+    else {
       return false
     }
+
+    // Bind trust to the actual XPC peer, rather than a PID that can be reused.
+    newConnection.setCodeSigningRequirement(requirementString)
 
     newConnection.exportedInterface = NSXPCInterface(
       with: UpkeepPrivilegedHelperProtocol.self
@@ -48,22 +53,38 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
     reply()
   }
 
-  private func isAllowedClient(_ connection: NSXPCConnection) -> Bool {
-    guard let requirement = expectedClientRequirement else {
-      return false
-    }
+  func canTrashApplications(withReply reply: @escaping (Bool) -> Void) {
+    guard let connection = NSXPCConnection.current() else { reply(false); return }
+    reply(geteuid() == 0 && PrivilegedTrashPolicy.isAdministrator(connection.effectiveUserIdentifier))
+  }
 
-    let attributes = [
-      kSecGuestAttributePid as String: NSNumber(value: connection.processIdentifier)
-    ] as CFDictionary
-    var guestCode: SecCode?
-    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &guestCode) == errSecSuccess,
-      let guestCode
+  func trashApplications(paths: [String], withReply reply: @escaping (String?) -> Void) {
+    // The signed client performs LocalAuthentication for every request. The helper
+    // independently restricts the caller to administrators; biometrics alone do
+    // not give a standard account permission to remove system-wide applications.
+    guard geteuid() == 0, let connection = NSXPCConnection.current(),
+      PrivilegedTrashPolicy.isAdministrator(connection.effectiveUserIdentifier)
     else {
-      return false
+      reply("当前账户没有卸载受保护应用所需的管理员权限。")
+      return
     }
+    do {
+      let uid = connection.effectiveUserIdentifier
+      let home = try PrivilegedApplicationTrashOperation.homeDirectory(for: uid)
+      try PrivilegedApplicationTrashOperation.moveApplications(
+        paths, callerUID: uid, homeDirectory: home,
+        hostApplicationURL: Self.hostApplicationURL()
+      )
+      reply(nil)
+    } catch {
+      reply(error.localizedDescription)
+    }
+  }
 
-    return SecCodeCheckValidity(guestCode, [], requirement) == errSecSuccess
+  private static func requirementString(_ requirement: SecRequirement) -> String? {
+    var value: CFString?
+    guard SecRequirementCopyString(requirement, [], &value) == errSecSuccess else { return nil }
+    return value as String?
   }
 
   private static func clientRequirementFromHostApp() -> SecRequirement? {

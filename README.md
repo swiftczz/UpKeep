@@ -43,6 +43,8 @@ Upkeep 会扫描本机已安装的 `.app`，识别各应用的更新来源，集
 
 选中应用后，右侧展示版本和更新说明。主按钮右侧的菜单提供“在 Finder 中显示”和“卸载”等操作；在侧栏右键点击应用，可以忽略更新或取消忽略。
 
+卸载需要管理员权限的应用时，已启用后台助手的管理员账户可以通过 Touch ID 确认；Touch ID 不可用时，系统会提供密码验证。首次使用可能需要在“系统设置 → 通用 → 登录项与扩展”中允许 Upkeep 的后台项目，这一步由 macOS 授权。该方式仅用于将 `/Applications` 下的应用本体移到当前用户的废纸篓；其他关联文件仍按原有权限处理。
+
 | 操作 | 用途 |
 | --- | --- |
 | 检查更新 / `⌘R` | 重新扫描本机应用并检查更新。 |
@@ -103,10 +105,10 @@ Upkeep/
   Services/                         扫描、更新源、说明解析、安装与卸载
   Store/                            应用列表状态与本地缓存
   Views/                            侧栏、详情与卸载界面
-UpkeepPrivilegedHelper/             App Store pkg 安装助手
+UpkeepPrivilegedHelper/             App Store pkg 安装与受保护应用卸载助手
 UpkeepPrivilegedHelperProtocol/     主程序与助手共用的 XPC 协议
 UpkeepTests/                        主程序测试
-UpkeepPrivilegedHelperTests/        安装助手测试
+UpkeepPrivilegedHelperTests/        后台助手测试
 ```
 
 ### 修改图标

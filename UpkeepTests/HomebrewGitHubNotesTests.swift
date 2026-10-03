@@ -23,6 +23,25 @@ final class HomebrewGitHubNotesTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(result.status, .updateAvailable)
   }
 
+  func testFoloSlashTagMatchesEncodedAndUnencodedAssetURLs() throws {
+    let raw = "https://github.com/RSSNext/Folo/releases/download/desktop/v1.15.0/Folo.dmg"
+    let encoded = raw.replacingOccurrences(of: "desktop/v", with: "desktop%2Fv")
+    let download = try XCTUnwrap(GitHubReleaseDownload.parse(encoded))
+    XCTAssertEqual(download, GitHubReleaseDownload.parse(raw))
+    XCTAssertEqual(download.apiURL?.absoluteString,
+      "https://api.github.com/repos/RSSNext/Folo/releases/tags/desktop%2Fv1.15.0")
+    for assetURL in [raw, encoded] {
+      let data = try JSONSerialization.data(withJSONObject: [
+        "tag_name": "desktop/v1.15.0", "body": "What's new in v1.15.0",
+        "assets": [["name": "Folo.dmg", "browser_download_url": assetURL, "size": 42]]
+      ])
+      let result = HomebrewUpdateProvider.applyingGitHubRelease(data, download: download,
+        to: app(version: "1.15.0"))
+      XCTAssertEqual(result.releaseNotes, "What's new in v1.15.0")
+      XCTAssertEqual(result.packageByteCount, 42)
+    }
+  }
+
   func testPreservesFirstPartyNotesAndLink() {
     var original = app(notes: "Official notes")
     original.releaseNotesURL = URL(string: "https://example.com/notes")
