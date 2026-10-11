@@ -59,6 +59,10 @@ struct SparkleUpdateProvider: Sendable {
       guard !releasedCandidates.isEmpty else {
         application.status = .upToDate
         application.canAutomaticallyUpdate = false
+        application.latestVersion = nil
+        application.latestBuildVersion = nil
+        application.updatePageURL = nil
+        application.clearReleaseMetadata()
         return application
       }
       guard let candidate = Self.bestCandidate(from: releasedCandidates) else {
@@ -384,6 +388,18 @@ struct SparkleCandidate: Hashable, Sendable {
     channel != nil
       || VersionComparator.isPrerelease(shortVersion ?? "")
       || VersionComparator.isPrerelease(displayVersion ?? "")
+      || [title, releaseNotesURL?.path, updatePageURL?.path, downloadURL?.path]
+        .compactMap { $0 }
+        .contains { value in
+          // Some feeds (e.g. PlayCover) publish a plain shortVersionString
+          // while labeling the title and release asset as a prerelease.
+          // Require a version next to the label so app names such as
+          // "BetaApp" or a generic /beta/ directory do not exclude releases.
+          value.range(
+            of: #"(?i)(?:^|[^a-z0-9])v?\d+(?:\.\d+)*[-_ ]+(?:alpha|beta|rc|pre(?:[-_ ]?release)?|preview|nightly|dev)(?=$|[^a-z])"#,
+            options: .regularExpression
+          ) != nil
+        }
   }
 
   func hasSecureDownload(relativeTo feedURL: URL) -> Bool {
