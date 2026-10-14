@@ -240,6 +240,10 @@ struct AppDetailView: View {
         }
       }
 
+      if let message = githubConnectionIssue {
+        GitHubConnectionNotice(message: message)
+      }
+
       if let notes = application.releaseNotes, !notes.isEmpty {
         ReleaseNotesMarkdownView(source: notes, baseURL: application.releaseNotesURL)
       } else {
@@ -403,11 +407,18 @@ struct AppDetailView: View {
   }
 
   private var releaseNotesPlaceholder: String {
-    switch application.status {
+    if githubConnectionIssue != nil { return "暂时无法获取更新说明。" }
+    return switch application.status {
     case .unavailable(let message): message
     case .selfManaged: "此应用需在自身内检查更新，当前没有可读取的更新说明。"
     default: "此版本未提供更新说明。"
     }
+  }
+
+  private var githubConnectionIssue: String? {
+    guard case .unavailable(let message) = application.status,
+      GitHubConnectionNotice.recognizes(message) else { return nil }
+    return message
   }
 }
 

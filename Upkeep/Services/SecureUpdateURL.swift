@@ -30,7 +30,11 @@ enum SecureUpdateURL {
 }
 
 enum UpdateHTTP {
-  private static let session = URLSession(configuration: sessionConfiguration())
+  private static let session = URLSession(
+    configuration: sessionConfiguration(),
+    delegate: GitHubMetadataRedirectDelegate(),
+    delegateQueue: nil
+  )
 
   static func response(
     from url: URL,
@@ -73,10 +77,18 @@ enum UpdateHTTP {
   private static func singleResponse(
     from url: URL
   ) async throws -> (response: HTTPURLResponse, data: Data)? {
-    let request = request(for: url)
+    let token = GitHubRequestAuthorization.isAPIURL(url)
+      ? await GitHubAccount.shared.authorizationToken() : nil
+    let request = request(for: url, githubToken: token)
     let (data, response) = try await session.data(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
       return nil
+    }
+    if httpResponse.statusCode == 401, let token,
+      httpResponse.url.map(GitHubRequestAuthorization.isAPIURL) == true
+    {
+      await GitHubAccount.shared.reject(token: token)
+      throw GitHubAuthenticationError.invalidToken
     }
     return (httpResponse, data)
   }
@@ -94,7 +106,7 @@ enum UpdateHTTP {
     return result.data
   }
 
-  static func request(for url: URL) -> URLRequest {
+  static func request(for url: URL, githubToken: String? = nil) -> URLRequest {
     var request = URLRequest(
       url: url,
       cachePolicy: .reloadIgnoringLocalCacheData,
@@ -106,6 +118,7 @@ enum UpdateHTTP {
       request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
       request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
     }
+    GitHubRequestAuthorization.authorize(&request, token: githubToken)
     return request
   }
 
@@ -118,6 +131,38 @@ enum UpdateHTTP {
     configuration.timeoutIntervalForRequest = 20
     configuration.timeoutIntervalForResource = 45
     return configuration
+  }
+}
+
+enum GitHubRequestAuthorization {
+  static func isAPIURL(_ url: URL) -> Bool {
+    url.scheme?.lowercased() == "https" && url.host?.lowercased() == "api.github.com"
+      && url.user == nil && url.password == nil && (url.port == nil || url.port == 443)
+  }
+
+  static func authorize(_ request: inout URLRequest, token: String?) {
+    guard request.url.map(isAPIURL) == true, let token,
+      GitHubAuthenticationClient.isValidToken(token)
+    else { return }
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+  }
+
+  static func redirectedRequest(_ request: URLRequest) -> URLRequest {
+    var request = request
+    if request.url.map(isAPIURL) != true {
+      request.setValue(nil, forHTTPHeaderField: "Authorization")
+    }
+    return request
+  }
+}
+
+private final class GitHubMetadataRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+  func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    completionHandler(GitHubRequestAuthorization.redirectedRequest(request))
   }
 }
 

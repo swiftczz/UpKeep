@@ -248,7 +248,7 @@ enum ApplicationPackageInstaller {
     return Int(components[5]) != nil
   }
 
-  static func downloadRequest(for url: URL) -> URLRequest {
+  static func downloadRequest(for url: URL, githubToken: String? = nil) -> URLRequest {
     var request = URLRequest(
       url: url,
       cachePolicy: .reloadIgnoringLocalCacheData,
@@ -261,6 +261,7 @@ enum ApplicationPackageInstaller {
       request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
       request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
     }
+    GitHubRequestAuthorization.authorize(&request, token: githubToken)
     return request
   }
 
@@ -490,10 +491,13 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
   }
 
   func download(from url: URL) async throws -> DownloadedFile {
-    try await withTaskCancellationHandler {
+    let token = GitHubRequestAuthorization.isAPIURL(url)
+      ? await GitHubAccount.shared.authorizationToken() : nil
+    let request = ApplicationPackageInstaller.downloadRequest(for: url, githubToken: token)
+    return try await withTaskCancellationHandler {
       try Task.checkCancellation()
       return try await withCheckedThrowingContinuation { continuation in
-        start(url, continuation: continuation)
+        start(request, continuation: continuation)
       }
     } onCancel: {
       cancel()
@@ -506,7 +510,7 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
   }
 
   private func start(
-    _ url: URL,
+    _ request: URLRequest,
     continuation: CheckedContinuation<DownloadedFile, any Error>
   ) {
     lock.lock()
@@ -518,9 +522,7 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
 
     self.continuation = continuation
     stagedURL = nil
-    let task = session.downloadTask(
-      with: ApplicationPackageInstaller.downloadRequest(for: url)
-    )
+    let task = session.downloadTask(with: request)
     activeTask = task
     lock.unlock()
     task.resume()
@@ -532,6 +534,14 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
     let task = activeTask
     lock.unlock()
     task?.cancel()
+  }
+
+  func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    completionHandler(GitHubRequestAuthorization.redirectedRequest(request))
   }
 
   func urlSession(
@@ -586,6 +596,16 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
     if let response = task.response as? HTTPURLResponse,
       !(200..<300).contains(response.statusCode)
     {
+      if response.statusCode == 401,
+        response.url.map(GitHubRequestAuthorization.isAPIURL) == true,
+        let header = task.originalRequest?.value(forHTTPHeaderField: "Authorization"),
+        header.hasPrefix("Bearer ")
+      {
+        let token = String(header.dropFirst(7))
+        Task { @MainActor in GitHubAccount.shared.reject(token: token) }
+        finish(.failure(GitHubAuthenticationError.invalidToken))
+        return
+      }
       finish(
         .failure(
           UpdateHTTPError.statusCode(

@@ -4,6 +4,34 @@ import XCTest
 @testable import Upkeep
 
 final class UpdateHTTPTests: XCTestCase {
+  func testCredentialsAreOnlyAttachedToSecureGitHubAPIRequests() throws {
+    let trusted = try XCTUnwrap(URL(string: "https://api.github.com/repos/example/app/releases/latest"))
+    XCTAssertEqual(
+      UpdateHTTP.request(for: trusted, githubToken: "test-token").value(forHTTPHeaderField: "Authorization"),
+      "Bearer test-token"
+    )
+    for value in ["https://github.com/example/app/releases/download/v1/App.dmg",
+      "https://release-assets.githubusercontent.com/App.dmg", "https://example.com/appcast.xml",
+      "https://api.github.com.example.com/repos/app", "http://api.github.com/repos/app",
+      "https://api.github.com:8443/repos/app", "https://someone@api.github.com/repos/app"] {
+      let url = try XCTUnwrap(URL(string: value))
+      XCTAssertNil(UpdateHTTP.request(for: url, githubToken: "test-token").value(forHTTPHeaderField: "Authorization"))
+      XCTAssertNil(ApplicationPackageInstaller.downloadRequest(for: url, githubToken: "test-token").value(forHTTPHeaderField: "Authorization"))
+    }
+  }
+
+  func testAssetAPIDownloadUsesCredentialAndRedirectStripsItFromCDNRequest() throws {
+    let url = try XCTUnwrap(URL(string: "https://api.github.com/repos/example/app/releases/assets/123"))
+    var request = ApplicationPackageInstaller.downloadRequest(for: url, githubToken: "test-token")
+    XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+    XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/octet-stream")
+    XCTAssertEqual(GitHubRequestAuthorization.redirectedRequest(request).value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+    request.url = URL(string: "https://release-assets.githubusercontent.com/App.dmg")
+    XCTAssertNil(GitHubRequestAuthorization.redirectedRequest(request).value(forHTTPHeaderField: "Authorization"))
+    request.url = URL(string: "http://api.github.com/repos/app")
+    XCTAssertNil(GitHubRequestAuthorization.redirectedRequest(request).value(forHTTPHeaderField: "Authorization"))
+  }
+
   func testUpdateRequestIgnoresCachedManifests() throws {
     let url = try XCTUnwrap(URL(string: "https://example.com/appcast.xml"))
 

@@ -186,11 +186,13 @@ struct ApplicationScanner: ApplicationScanning {
     let feedURL = (info["SUFeedURL"] as? String).flatMap(SecureUpdateURL.https(string:))
     let hasSparkleSource = feedURL != nil
       || FileManager.default.fileExists(atPath: sparkleURL.path)
+    let knownGitHubSource = KnownGitHubReleaseSources.metadata(for: bundleIdentifier)
 
     if let previous, previous.source != .vscodeUpdater,
       previous.source != .sparkle || previous.sourceURL == feedURL,
       !(previous.source == .selfManaged
         && (hasSparkleSource
+          || knownGitHubSource != nil
           || ExecutableUpdaterDetector.hasApplicationService(in: bundle.bundleURL))),
       canReuse(
         previous,
@@ -253,6 +255,16 @@ struct ApplicationScanner: ApplicationScanning {
           sourceURL: metadata.updateURL, homepageURL: metadata.homepageURL,
           sourceIdentifier: VSCodeUpdaterDetector.sourceIdentifier(
             quality: metadata.quality, commit: metadata.commit))
+      }
+      if let metadata = knownGitHubSource {
+        return AppRecord(
+          name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
+          currentVersion: currentVersion, buildVersion: buildVersion,
+          applicationModificationDate: applicationModificationDate,
+          source: .githubReleases, status: .checking,
+          sourceURL: metadata.apiURL, homepageURL: metadata.homepageURL,
+          sourceIdentifier: metadata.identifier
+        )
       }
       return AppRecord(
         name: name,
@@ -318,7 +330,7 @@ struct ApplicationScanner: ApplicationScanning {
           name: name,
           bundleIdentifier: bundleIdentifier
         )
-      }) {
+      }) ?? knownGitHubSource {
         source = .githubReleases
         appStorePlatform = nil
         status = .checking

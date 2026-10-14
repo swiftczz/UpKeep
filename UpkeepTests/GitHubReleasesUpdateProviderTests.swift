@@ -145,6 +145,25 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
     )
   }
 
+  func testSelectsCraftUniversalDMGInsteadOfCLIOrOtherPlatforms() throws {
+    let package = "photocraft-0.7.0-macos-universal.dmg"
+    let release = try XCTUnwrap(GitHubReleaseManifest.parse(releaseData(
+      tag: "v0.7.0",
+      assets: [
+        "photocraft-0.7.0-linux-aarch64.tar.gz",
+        "photocraft-0.7.0-windows-x64.zip",
+        package,
+        "photocraft-cli-0.7.0-macos-universal.zip",
+        "photocraft-web-0.7.0.zip",
+        "SHA256SUMS.txt",
+      ]
+    )))
+
+    XCTAssertEqual(release.selectedPackage(architecture: .arm64)?.name, package)
+    XCTAssertEqual(release.selectedPackage(architecture: .x64)?.name, package)
+    XCTAssertEqual(release.checksumsAsset?.name, "SHA256SUMS.txt")
+  }
+
   func testSelectsWhatCableAppInsteadOfCLIRegardlessOfAssetOrder() throws {
     for assets in [["whatcable-cli-1.5.0.zip", "WhatCable.zip"],
       ["WhatCable.zip", "whatcable-cli-1.5.0.zip"]] {

@@ -1,0 +1,149 @@
+import Foundation
+import XCTest
+
+@testable import Upkeep
+
+final class KnownGitHubReleaseSourcesTests: XCTestCase {
+  func testDetectsCraftRepositoriesWithoutEmbeddedUpdateURLs() throws {
+    for slug in [
+      "photocraft", "vectorcraft", "filmcraft", "lightcraft", "pdfcraft", "effectcraft",
+      "designcraft", "wordcraft", "deckcraft", "gridcraft", "cadcraft", "soundcraft",
+    ] {
+      let url = try makeApplication(bundleIdentifier: "ai.storyteller.\(slug)")
+      defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+      let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+
+      XCTAssertEqual(record.source, .githubReleases, slug)
+      XCTAssertEqual(record.sourceIdentifier, "storytold/\(slug)", slug)
+      XCTAssertEqual(
+        record.sourceURL?.absoluteString,
+        "https://api.github.com/repos/storytold/\(slug)/releases/latest", slug)
+      XCTAssertEqual(
+        record.homepageURL?.absoluteString, "https://github.com/storytold/\(slug)", slug)
+      XCTAssertEqual(record.status, .checking, slug)
+      XCTAssertEqual(record.currentVersion, "0.7.0", slug)
+    }
+  }
+
+  func testRequiresExactKnownBundleIdentifierEvenWhenNameMatches() throws {
+    for identifier in [
+      "com.example.photocraft", "ai.storyteller.photocraft.beta", "ai.storyteller.unknowncraft",
+    ] {
+      let url = try makeApplication(bundleIdentifier: identifier)
+      defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+      let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+
+      XCTAssertEqual(record.source, .selfManaged, identifier)
+      XCTAssertNil(record.sourceURL, identifier)
+    }
+  }
+
+  func testInstalledScanIdentifiesKnownRepositoryWithoutReadingExecutable() throws {
+    let url = try makeApplication()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let record = try XCTUnwrap(ApplicationScanner.makeInstalledApplicationRecord(from: url))
+
+    XCTAssertEqual(record.source, .githubReleases)
+    XCTAssertEqual(record.sourceIdentifier, "storytold/photocraft")
+  }
+
+  func testRecoversUnchangedApplicationPreviouslyCachedWithoutAnUpdateSource() throws {
+    let url = try makeApplication()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+    cached.source = .selfManaged
+    cached.sourceURL = nil
+    cached.sourceIdentifier = nil
+    cached.status = .selfManaged
+
+    let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url, reusing: cached))
+
+    XCTAssertEqual(record.applicationModificationDate, cached.applicationModificationDate)
+    XCTAssertEqual(record.source, .githubReleases)
+    XCTAssertEqual(record.sourceIdentifier, "storytold/photocraft")
+    XCTAssertEqual(record.status, .checking)
+  }
+
+  func testPreservesCheckedKnownSourceMetadataOnUnchangedApplication() throws {
+    let url = try makeApplication()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+    cached.latestVersion = "0.8.0"
+    cached.releaseNotes = "New release"
+    cached.status = .updateAvailable
+
+    let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url, reusing: cached))
+
+    XCTAssertEqual(record.latestVersion, "0.8.0")
+    XCTAssertEqual(record.releaseNotes, "New release")
+    XCTAssertEqual(record.status, .updateAvailable)
+  }
+
+  func testExplicitSparkleFeedTakesPriorityOverKnownRepository() throws {
+    let feed = "https://example.com/appcast.xml"
+    let url = try makeApplication(extraInfo: ["SUFeedURL": feed])
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+    for record in [
+      ApplicationScanner.makeRecord(from: url),
+      ApplicationScanner.makeInstalledApplicationRecord(from: url),
+    ] {
+      let record = try XCTUnwrap(record)
+      XCTAssertEqual(record.source, .sparkle)
+      XCTAssertEqual(record.sourceURL?.absoluteString, feed)
+    }
+  }
+
+  func testAppStoreReceiptTakesPriorityOverKnownRepository() throws {
+    let url = try makeApplication()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let receipt = url.appendingPathComponent("Contents/_MASReceipt/receipt")
+    try FileManager.default.createDirectory(
+      at: receipt.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data().write(to: receipt)
+
+    for record in [
+      ApplicationScanner.makeRecord(from: url),
+      ApplicationScanner.makeInstalledApplicationRecord(from: url),
+    ] {
+      XCTAssertEqual(try XCTUnwrap(record).source, .appStore)
+    }
+  }
+
+  func testRecognizesInstalledCraftApplicationsWhenPresent() throws {
+    var checked = 0
+    for name in [
+      "PhotoCraft", "VectorCraft", "FilmCraft", "PdfCraft", "WordCraft", "DeckCraft", "GridCraft",
+    ] {
+      let url = URL(fileURLWithPath: "/Applications/\(name).app")
+      guard FileManager.default.fileExists(atPath: url.path) else { continue }
+      let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+      XCTAssertEqual(record.source, .githubReleases, name)
+      XCTAssertEqual(record.sourceIdentifier, "storytold/\(name.lowercased())", name)
+      checked += 1
+    }
+    if checked == 0 { throw XCTSkip("No Craft applications installed on this machine.") }
+  }
+
+  private func makeApplication(
+    bundleIdentifier: String = "ai.storyteller.photocraft",
+    extraInfo: [String: Any] = [:]
+  ) throws -> URL {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "UpkeepCraftTests-\(UUID().uuidString)")
+    let url = directory.appendingPathComponent("PhotoCraft.app")
+    let contents = url.appendingPathComponent("Contents")
+    try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+    var info: [String: Any] = [
+      "CFBundleIdentifier": bundleIdentifier,
+      "CFBundleName": "PhotoCraft",
+      "CFBundlePackageType": "APPL",
+      "CFBundleShortVersionString": "0.7.0",
+      "CFBundleVersion": "0.7.0",
+    ]
+    info.merge(extraInfo) { _, new in new }
+    let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+    try data.write(to: contents.appendingPathComponent("Info.plist"))
+    return url
+  }
+}

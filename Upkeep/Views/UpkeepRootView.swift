@@ -2,6 +2,7 @@ import SwiftUI
 
 struct UpkeepRootView: View {
   @Environment(\.openURL) private var openURL
+  @Environment(GitHubAccount.self) private var githubAccount
   private let applicationLauncher: ApplicationLauncher
   private let applicationChangeMonitor: ApplicationChangeMonitor
   @State private var library: AppLibrary
@@ -12,6 +13,7 @@ struct UpkeepRootView: View {
   @State private var updateAllPreparationID: UUID?
   @State private var manualRefreshTask: Task<Void, Never>?
   @State private var isManualRefreshInProgress = false
+  @State private var needsGitHubConnectionRefresh = false
   @State private var localApplicationChangeRefreshTask: Task<Void, Never>?
 
   private static let periodicRefreshInterval: TimeInterval = 10 * 60
@@ -111,6 +113,13 @@ struct UpkeepRootView: View {
     .animation(nil, value: library.selectedApplicationID)
     .searchable(text: $library.searchText, placement: .sidebar, prompt: "搜索应用或更新来源")
     .toolbar {
+      ToolbarItem(placement: .automatic) {
+        SettingsLink {
+          Label("设置", systemImage: "gearshape")
+        }
+        .help("设置更新来源")
+        .accessibilityIdentifier("upkeep.settings")
+      }
       ToolbarItemGroup(placement: .primaryAction) {
         if !library.automaticUpdates.isEmpty {
           Button(action: beginUpdateAll) {
@@ -165,6 +174,7 @@ struct UpkeepRootView: View {
       }
     }
     .onDisappear {
+      needsGitHubConnectionRefresh = false
       cancelUpdateAllPreparation()
       cancelManualRefresh()
       cancelRefreshAfterLocalApplicationChange()
@@ -173,6 +183,13 @@ struct UpkeepRootView: View {
       if uninstallingApplication?.id != selectedID {
         uninstallingApplication = nil
       }
+    }
+    .onChange(of: githubAccount.connectionRevision) { _, _ in
+      needsGitHubConnectionRefresh = githubAccount.isConnected
+      refreshAfterGitHubConnectionIfReady()
+    }
+    .onChange(of: isManualRefreshInProgress) { _, isRefreshing in
+      if !isRefreshing { refreshAfterGitHubConnectionIfReady() }
     }
     .alert(
       rootAlertTitle,
@@ -320,6 +337,12 @@ struct UpkeepRootView: View {
     }
   }
 
+  private func refreshAfterGitHubConnectionIfReady() {
+    guard needsGitHubConnectionRefresh, manualRefreshTask == nil else { return }
+    needsGitHubConnectionRefresh = false
+    beginManualRefresh()
+  }
+
   private func cancelManualRefresh() {
     manualRefreshTask?.cancel()
     manualRefreshTask = nil
@@ -366,6 +389,7 @@ struct UpkeepRootView: View {
 
 #Preview("Upkeep") {
   UpkeepRootView(library: AppLibrary(applications: AppRecord.previewApps))
+    .environment(GitHubAccount.preview())
     .frame(width: 1160, height: 760)
 }
 

@@ -90,6 +90,11 @@ $icon_entry
 </plist>
 PLIST
 
+  # Public OAuth app identifier; device flow never embeds a client secret.
+  if [[ -n "${UPKEEP_GITHUB_CLIENT_ID:-}" ]]; then
+    plutil -insert GitHubOAuthClientID -string "$UPKEEP_GITHUB_CLIENT_ID" "$INFO_PLIST"
+  fi
+
   plutil -lint "$INFO_PLIST" >/dev/null
 }
 
