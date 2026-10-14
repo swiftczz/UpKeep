@@ -94,13 +94,49 @@ final class UpdateRelaunchTests: XCTestCase {
       currentVersion: "1.0"
     )
     let isRunning = await ApplicationProcess.isRunning(application)
-    XCTAssertTrue(isRunning)
+    XCTAssertFalse(isRunning, "An orphaned helper must not cause the main app to relaunch")
+    let hasRunningProcesses = await ApplicationProcess.hasRunningProcesses(application)
+    XCTAssertTrue(hasRunningProcesses)
 
     try await ApplicationProcess.quit(application)
     for _ in 0..<40 where helper.isRunning {
       try await Task.sleep(for: .milliseconds(25))
     }
     XCTAssertFalse(helper.isRunning)
+  }
+
+  func testDetectsRunningMainExecutableWithDifferentBundleName() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("UpkeepMainProcess-\(UUID().uuidString)")
+    let applicationURL = root.appendingPathComponent("Renamed.app")
+    let executable = applicationURL.appendingPathComponent("Contents/MacOS/ActualExecutable")
+    try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(),
+      withIntermediateDirectories: true)
+    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: executable)
+    let info: [String: Any] = ["CFBundleIdentifier": "com.example.main",
+      "CFBundleExecutable": "ActualExecutable", "CFBundlePackageType": "APPL"]
+    try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+      .write(to: applicationURL.appendingPathComponent("Contents/Info.plist"))
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = ["30"]
+    try process.run()
+    defer {
+      if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+      try? FileManager.default.removeItem(at: root)
+    }
+    let application = AppRecord(name: "Display Name", bundleIdentifier: "com.example.main",
+      applicationURL: applicationURL, currentVersion: "1.0")
+    var running = false
+    for _ in 0..<20 {
+      running = await ApplicationProcess.isRunning(application)
+      if running { break }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    XCTAssertTrue(running)
+    try await ApplicationProcess.quit(application)
+    let afterQuit = await ApplicationProcess.isRunning(application)
+    XCTAssertFalse(afterQuit)
   }
 
   func testQuitsHomebrewApplicationBeforeUpdatingThenRelaunches() async throws {
@@ -141,6 +177,15 @@ final class UpdateRelaunchTests: XCTestCase {
       let events = recorder.events()
       XCTAssertEqual(events, [.launch(application.applicationURL)])
     }
+  }
+
+  func testHomebrewStopsBackgroundProcessesWithoutOpeningClosedMainApp() async throws {
+    let recorder = ProcessRecorder(isRunning: false)
+    var process = recorder.client
+    process.hasRunningProcesses = { _ in true }
+    let application = makeApplication(source: .homebrew)
+    try await UpdateRelaunch.perform(application, process: process, progress: { _ in }, operation: {})
+    XCTAssertEqual(recorder.events(), [.quit(application.bundleIdentifier)])
   }
 
   private func makeApplication(source: UpdateSource) -> AppRecord {

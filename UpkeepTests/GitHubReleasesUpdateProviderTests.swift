@@ -145,6 +145,38 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
     )
   }
 
+  func testSelectsWhatCableAppInsteadOfCLIRegardlessOfAssetOrder() throws {
+    for assets in [["whatcable-cli-1.5.0.zip", "WhatCable.zip"],
+      ["WhatCable.zip", "whatcable-cli-1.5.0.zip"]] {
+      let release = try XCTUnwrap(GitHubReleaseManifest.parse(releaseData(tag: "v1.5.0", assets: assets)))
+      for architecture in [MacCPUArchitecture.arm64, .x64] {
+        XCTAssertEqual(release.selectedPackage(architecture: architecture)?.name, "WhatCable.zip")
+      }
+    }
+  }
+
+  func testMacSpecificCLIIsNotPreferredToGenericApplicationArchive() throws {
+    let release = try XCTUnwrap(GitHubReleaseManifest.parse(releaseData(tag: "v1.0", assets: [
+      "Example.zip", "example-cli-macos-arm64.dmg", "example-command-line-darwin.zip",
+      "example-commandline-macos-universal.zip",
+    ])))
+    XCTAssertEqual(release.selectedPackage()?.name, "Example.zip")
+  }
+
+  func testCLIOnlyReleaseHasNoDesktopInstallPackage() throws {
+    let release = try XCTUnwrap(GitHubReleaseManifest.parse(releaseData(tag: "v1.0", assets: [
+      "example-cli-macos-arm64.zip", "example_cli_universal.dmg",
+    ])))
+    XCTAssertNil(release.selectedPackage())
+  }
+
+  func testAppNameContainingCLIIsStillEligible() throws {
+    let release = try XCTUnwrap(GitHubReleaseManifest.parse(releaseData(tag: "v1.0", assets: [
+      "CLion-macos-arm64.dmg",
+    ])))
+    XCTAssertEqual(release.selectedPackage()?.name, "CLion-macos-arm64.dmg")
+  }
+
   func testReadsGitHubReleaseAssetSizeByFileName() {
     let data = releaseData(
       tag: "v2026.3",

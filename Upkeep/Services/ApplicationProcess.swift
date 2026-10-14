@@ -18,6 +18,12 @@ enum ApplicationProcess {
     await runningApplicationIDs(in: [application]).contains(application.id)
   }
 
+  static func hasRunningProcesses(_ application: AppRecord) async -> Bool {
+    await Task.detached(priority: .userInitiated) {
+      !processIDs(inside: application.applicationURL).isEmpty
+    }.value
+  }
+
   static func runningApplicationIDs(
     in applications: [AppRecord],
     snapshot: @escaping @Sendable () -> [String] = executablePathSnapshot
@@ -29,9 +35,13 @@ enum ApplicationProcess {
       var running = Set<AppRecord.ID>()
       for application in applications {
         guard !Task.isCancelled else { return Set<AppRecord.ID>() }
-        let root = application.applicationURL.resolvingSymlinksInPath().path
-        guard !root.isEmpty else { continue }
-        if paths.contains(where: { $0 == root || $0.hasPrefix(root + "/") }) {
+        let root = application.applicationURL.resolvingSymlinksInPath()
+        let executable = Bundle(url: root)?.executableURL
+          ?? root.appendingPathComponent("Contents/MacOS")
+            .appendingPathComponent(root.deletingPathExtension().lastPathComponent)
+        // Widgets, extensions and orphaned helpers do not mean the app was open.
+        // Only the main executable should trigger confirmation and relaunch.
+        if paths.contains(executable.resolvingSymlinksInPath().path) {
           running.insert(application.id)
         }
       }
@@ -186,6 +196,7 @@ enum ApplicationProcess {
 
 struct ApplicationProcessClient: Sendable {
   var isRunning: @Sendable (AppRecord) async -> Bool
+  var hasRunningProcesses: @Sendable (AppRecord) async -> Bool
   var runningApplicationIDs: @Sendable ([AppRecord]) async -> Set<AppRecord.ID>
   var quit: @Sendable (AppRecord) async throws -> Void
   var launch: @Sendable (URL) async throws -> Void
@@ -194,9 +205,11 @@ struct ApplicationProcessClient: Sendable {
     isRunning: @escaping @Sendable (AppRecord) async -> Bool,
     quit: @escaping @Sendable (AppRecord) async throws -> Void,
     launch: @escaping @Sendable (URL) async throws -> Void,
-    runningApplicationIDs: (@Sendable ([AppRecord]) async -> Set<AppRecord.ID>)? = nil
+    runningApplicationIDs: (@Sendable ([AppRecord]) async -> Set<AppRecord.ID>)? = nil,
+    hasRunningProcesses: (@Sendable (AppRecord) async -> Bool)? = nil
   ) {
     self.isRunning = isRunning
+    self.hasRunningProcesses = hasRunningProcesses ?? isRunning
     self.quit = quit
     self.launch = launch
     self.runningApplicationIDs = runningApplicationIDs ?? { applications in
@@ -213,7 +226,8 @@ struct ApplicationProcessClient: Sendable {
     isRunning: { await ApplicationProcess.isRunning($0) },
     quit: { try await ApplicationProcess.quit($0) },
     launch: { try await ApplicationLauncher.live.launch($0) },
-    runningApplicationIDs: { await ApplicationProcess.runningApplicationIDs(in: $0) }
+    runningApplicationIDs: { await ApplicationProcess.runningApplicationIDs(in: $0) },
+    hasRunningProcesses: { await ApplicationProcess.hasRunningProcesses($0) }
   )
 }
 
@@ -234,7 +248,7 @@ enum UpdateRelaunch {
     }
 
     do {
-      if wasRunning, application.source == .homebrew {
+      if application.source == .homebrew, await process.hasRunningProcesses(application) {
         progress(.indeterminate("正在退出…"))
         try await process.quit(application)
       }

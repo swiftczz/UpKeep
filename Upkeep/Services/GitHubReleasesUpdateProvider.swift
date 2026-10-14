@@ -331,6 +331,12 @@ struct GitHubReleaseManifest: Equatable, Sendable {
   private func macOSScore(of fileName: String) -> Int {
     let name = fileName.lowercased()
     guard ApplicationPackageInstaller.packageKindScore(of: name) > 0 else { return 0 }
+    // A release can contain a desktop app and a standalone command-line tool.
+    // Match whole tokens so application names such as CLion remain eligible.
+    let tokens = name.split { !$0.isLetter && !$0.isNumber }
+    if tokens.contains("cli") || tokens.contains("commandline") || name.contains("command-line") {
+      return 0
+    }
     if name.contains("linux") || name.contains("windows") || name.contains("win32")
       || name.contains("win64")
     {

@@ -15,7 +15,8 @@ final class UpdatePerformanceTests: XCTestCase {
     let running = await ApplicationProcess.runningApplicationIDs(in: [first, second, prefixCollision]) {
       XCTAssertFalse(Thread.isMainThread)
       calls.withLock { $0 += 1 }
-      return [first.applicationURL.path + "/Contents/MacOS/First", second.applicationURL.path]
+      return [first.applicationURL.path + "/Contents/MacOS/First",
+        second.applicationURL.path + "/Contents/MacOS/Second"]
     }
     XCTAssertEqual(running, [first.id, second.id])
     XCTAssertEqual(calls.withLock { $0 }, 1)
@@ -31,7 +32,7 @@ final class UpdatePerformanceTests: XCTestCase {
     let app = application("Alias", url: alias)
     let path = actual.resolvingSymlinksInPath().path
     let running = await ApplicationProcess.runningApplicationIDs(in: [app]) {
-      [path + "/Contents/Helpers/Helper"]
+      [path + "/Contents/MacOS/Actual"]
     }
     XCTAssertEqual(running, [app.id])
     let siblingOnly = await ApplicationProcess.runningApplicationIDs(in: [app]) {
@@ -56,6 +57,44 @@ final class UpdatePerformanceTests: XCTestCase {
     XCTAssertTrue(empty.isEmpty)
     XCTAssertTrue(cancelled.isEmpty)
     XCTAssertEqual(calls.withLock { $0 }, 0)
+  }
+
+  func testWidgetAndHelperDoNotTriggerMainApplicationRelaunch() async {
+    let app = application("WhatCable")
+    let root = app.applicationURL.path
+    let running = await ApplicationProcess.runningApplicationIDs(in: [app]) {
+      [root + "/Contents/PlugIns/WhatCableWidget.appex/Contents/MacOS/WhatCableWidget",
+        root + "/Contents/Helpers/WhatCableHelper",
+        root + "/Contents/MacOS/whatcable-cli"]
+    }
+    XCTAssertTrue(running.isEmpty)
+    let withMain = await ApplicationProcess.runningApplicationIDs(in: [app]) {
+      [root + "/Contents/MacOS/WhatCable",
+        root + "/Contents/PlugIns/WhatCableWidget.appex/Contents/MacOS/WhatCableWidget"]
+    }
+    XCTAssertEqual(withMain, [app.id])
+  }
+
+  func testUsesDeclaredExecutableInsteadOfDisplayOrBundleName() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let url = root.appendingPathComponent("Renamed.app")
+    let contents = url.appendingPathComponent("Contents")
+    try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let info: [String: Any] = ["CFBundleIdentifier": "com.example.renamed",
+      "CFBundleExecutable": "ActualExecutable", "CFBundlePackageType": "APPL"]
+    try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+      .write(to: contents.appendingPathComponent("Info.plist"))
+    let executable = contents.appendingPathComponent("MacOS/ActualExecutable")
+    try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(),
+      withIntermediateDirectories: false)
+    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: executable)
+    let app = application("Display Name", url: url)
+    let path = url.resolvingSymlinksInPath().path
+    let running = await ApplicationProcess.runningApplicationIDs(in: [app]) {
+      [path + "/Contents/MacOS/ActualExecutable"]
+    }
+    XCTAssertEqual(running, [app.id])
   }
 
   func testProgressBurstPublishesAtMostTenTimesPerSecondAndKeepsLatest() {
