@@ -263,8 +263,17 @@ enum ElectronBuilderYAML {
       path: path,
       sha512: sha512,
       releaseDate: releaseDate.flatMap(parseManifestDate),
-      releaseNotes: releaseNotes?.trimmingCharacters(in: .whitespacesAndNewlines)
+      releaseNotes: normalizedReleaseNotes(releaseNotes)
     )
+  }
+
+  private static func normalizedReleaseNotes(_ notes: String?) -> String? {
+    guard let notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !notes.isEmpty else { return nil }
+    // Some feeds publish an empty YAML object instead of omitting releaseNotes.
+    // Empty collection/null markers are metadata, not release-note text.
+    let marker = notes.filter { !$0.isWhitespace }.lowercased()
+    return ["{}", "[]", "null", "~"].contains(marker) ? nil : notes
   }
 
   private static func applyFileField(
