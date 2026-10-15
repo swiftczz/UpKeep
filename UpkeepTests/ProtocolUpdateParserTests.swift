@@ -357,6 +357,29 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
   }
 
+  func testPrefersSpecificCatalogOverRepositoryWideLatestPointer() throws {
+    let generic = "https://github.com/example/shared-repository/releases/latest/download/latest.json"
+    let catalog = "https://dl.example.com/studio/versions.json"
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: file) }
+    for urls in [[generic, catalog], [catalog, generic], [generic]] {
+      try Data(urls.joined(separator: "\n").utf8).write(to: file)
+      XCTAssertEqual(TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
+        urls.count == 1 ? generic : catalog)
+    }
+  }
+
+  func testContinuesScanningAfterRepositoryPointerToFindLaterCatalog() throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: file) }
+    var bytes = Data("tauri_plugin_updater https://github.com/example/repo/releases/latest/download/latest.json\n".utf8)
+    bytes.append(Data(repeating: 0, count: 1024 * 1024 + 512))
+    bytes.append(Data("https://dl.example.com/studio/versions.json\n".utf8))
+    try bytes.write(to: file)
+    XCTAssertEqual(TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
+      "https://dl.example.com/studio/versions.json")
+  }
+
   func testFindsUpdaterJSONURLAfterFirstMegabyte() throws {
     let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
       "Upkeep-updater-\(UUID().uuidString)"

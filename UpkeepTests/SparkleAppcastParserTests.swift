@@ -4,6 +4,45 @@ import XCTest
 @testable import Upkeep
 
 final class SparkleAppcastParserTests: XCTestCase {
+  func testInstallerDMGIsNotTreatedAsReplaceableApplication() async throws {
+    let feed = URL(string: "https://example.com/appcast.xml")!
+    let xml = """
+      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
+        <item><title>Version 2.20</title><sparkle:version>2626</sparkle:version>
+          <description>AdGuard update notes</description>
+          <enclosure url="https://example.com/AdGuard.dmg" sparkle:installationType="package" />
+        </item>
+      </channel></rss>
+      """
+    let candidate = try XCTUnwrap(SparkleAppcastParser(data: Data(xml.utf8)).parse().first)
+    XCTAssertEqual(candidate.installationType, "package")
+    XCTAssertTrue(candidate.hasSecureDownload(relativeTo: feed))
+    XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
+    let provider = SparkleUpdateProvider(fetchData: { _ in Data(xml.utf8) })
+    let result = await provider.check(AppRecord(name: "AdGuard", bundleIdentifier: "com.adguard.mac.adguard",
+      applicationURL: URL(fileURLWithPath: "/Applications/AdGuard.app"), currentVersion: "2.19",
+      source: .sparkle, status: .updateAvailable, latestVersion: "2.20",
+      sourceURL: feed, canAutomaticallyUpdate: true))
+    XCTAssertEqual(result.status, .updateAvailable)
+    XCTAssertEqual(result.latestVersion, "2.20")
+    XCTAssertEqual(result.releaseNotes, "AdGuard update notes")
+    XCTAssertFalse(result.canAutomaticallyUpdate)
+  }
+
+  func testApplicationDMGRemainsInstallableAndOtherInstallerTypesAreRejected() {
+    let feed = URL(string: "https://example.com/appcast.xml")!
+    for type in [nil, "application", " APPLICATION "] as [String?] {
+      let candidate = SparkleCandidate(downloadURL: URL(string: "https://example.com/App.dmg"),
+        installationType: type)
+      XCTAssertNotNil(candidate.supportedPackageURL(relativeTo: feed))
+    }
+    for type in ["package", "guided-package", "unknown"] {
+      let candidate = SparkleCandidate(downloadURL: URL(string: "https://example.com/App.zip"),
+        installationType: type)
+      XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
+    }
+  }
+
   func testResomarkInformationalUpdateKeepsItsWebsiteLink() throws {
     let xml = """
       <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">

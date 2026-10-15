@@ -12,7 +12,7 @@ enum SparkleUpdateProviderError: LocalizedError {
     case .noAvailableUpdate:
       return "Sparkle 更新源中没有找到更新版本。"
     case .noInstallablePackage:
-      return "Sparkle 更新源没有提供 Upkeep 可安装的更新包。"
+      return "Upkeep 暂不支持此更新包，请打开应用并使用其更新器。"
     }
   }
 }
@@ -365,6 +365,7 @@ struct SparkleCandidate: Hashable, Sendable {
   var architecture: String?
   var channel: String?
   var edSignature: String?
+  var installationType: String?
 
   var displayVersion: String? {
     if let title {
@@ -415,7 +416,10 @@ struct SparkleCandidate: Hashable, Sendable {
   }
 
   func supportedPackageURL(relativeTo feedURL: URL) -> URL? {
-    guard let url = resolvedDownloadURL(relativeTo: feedURL),
+    let type = installationType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    // An installer package inside a DMG/ZIP is not a replaceable app bundle.
+    guard type == nil || type == "application",
+      let url = resolvedDownloadURL(relativeTo: feedURL),
       ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
     else {
       return nil
@@ -529,6 +533,8 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       candidate.edSignature =
         Self.attribute(named: "edsignature", in: attributeDict)
         ?? candidate.edSignature
+      candidate.installationType = Self.attribute(named: "installationtype", in: attributeDict)
+        ?? candidate.installationType
       if let length = JSONByteCount.parse(Self.attribute(named: "length", in: attributeDict)) {
         candidate.packageByteCount = length
       }

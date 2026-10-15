@@ -423,6 +423,12 @@ struct ApplicationScanner: ApplicationScanning {
     hasAppStoreReceipt: Bool,
     iOSAppStoreMetadata: IOSAppStoreMetadata?
   ) -> Bool {
+    if previous.source == .tauri, case .unavailable = previous.status,
+      previous.sourceURL.map(TauriUpdaterDetector.isRepositoryLatestManifestURL) == true {
+      // A failed inferred repository pointer may have hidden a specific endpoint.
+      // Rescan unchanged apps so old snapshots can recover after detector fixes.
+      return false
+    }
     guard previous.bundleIdentifier == bundleIdentifier,
       previous.currentVersion == currentVersion,
       let previousDate = previous.applicationModificationDate,

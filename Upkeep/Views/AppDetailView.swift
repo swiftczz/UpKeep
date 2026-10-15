@@ -190,6 +190,11 @@ struct AppDetailView: View {
         .font(.caption.monospaced())
         .foregroundStyle(.tertiary)
         .textSelection(.enabled)
+      if usesApplicationUpdaterHandoff {
+        Text("此更新需使用应用自带的安装程序，请打开应用后检查更新。")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
     }
   }
 
@@ -329,6 +334,7 @@ struct AppDetailView: View {
   }
 
   private var primaryActionHelp: String {
+    if usesApplicationUpdaterHandoff { return "打开应用，使用应用自身的更新器完成安装" }
     if application.manualUpdateURL != nil {
       return "此条目未提供安装包，前往开发者页面查看更新详情"
     }
@@ -356,7 +362,13 @@ struct AppDetailView: View {
 
   private var primaryActionTitle: String {
     if application.manualUpdateURL != nil { return "查看更新" }
+    if usesApplicationUpdaterHandoff { return "应用内更新" }
     return usesUpdatePrimaryAction ? "更新" : "打开"
+  }
+
+  private var usesApplicationUpdaterHandoff: Bool {
+    application.source == .sparkle && application.needsUpdate
+      && !application.canAutomaticallyUpdate && application.manualUpdateURL == nil
   }
 
   private var primaryActionSystemImage: String {

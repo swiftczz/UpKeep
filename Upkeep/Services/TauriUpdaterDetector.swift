@@ -249,7 +249,9 @@ enum TauriUpdaterDetector {
   }
 
   fileprivate static func preferredUpdaterJSONURL(_ urls: [URL]) -> URL? {
-    if let url = urls.first(where: { $0.lastPathComponent.lowercased() == "latest.json" }) {
+    if let url = urls.first(where: {
+      $0.lastPathComponent.lowercased() == "latest.json" && !isRepositoryLatestManifestURL($0)
+    }) {
       return url
     }
     if let url = urls.first(where: { $0.lastPathComponent.lowercased() == "update-proxy.json" }) {
@@ -257,17 +259,27 @@ enum TauriUpdaterDetector {
     }
 
     let catalogs = urls.filter { $0.lastPathComponent.lowercased() == "versions.json" }
-    return catalogs.max { lhs, rhs in
+    let catalog = catalogs.max { lhs, rhs in
       if lhs.pathComponents.count != rhs.pathComponents.count {
         return lhs.pathComponents.count < rhs.pathComponents.count
       }
       return lhs.absoluteString.count < rhs.absoluteString.count
     }
+    // Repository-wide pointers can be documentation strings or belong to another
+    // product in a shared repo. Prefer an embedded application-specific catalog.
+    return catalog ?? urls.first(where: isRepositoryLatestManifestURL)
+  }
+
+  static func isRepositoryLatestManifestURL(_ url: URL) -> Bool {
+    guard ["github.com", "www.github.com"].contains(url.host?.lowercased() ?? "") else { return false }
+    let parts = url.pathComponents.filter { $0 != "/" }.map { $0.lowercased() }
+    return parts.count == 6
+      && Array(parts.dropFirst(2)) == ["releases", "latest", "download", "latest.json"]
   }
 
   fileprivate static func isDirectManifestURL(_ url: URL) -> Bool {
     let name = url.lastPathComponent.lowercased()
-    return name == "latest.json" || name == "update-proxy.json"
+    return (name == "latest.json" && !isRepositoryLatestManifestURL(url)) || name == "update-proxy.json"
   }
 
   private static func url(

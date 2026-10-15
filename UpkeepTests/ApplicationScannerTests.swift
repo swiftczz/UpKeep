@@ -1317,6 +1317,36 @@ final class ApplicationScannerTests: XCTestCase {
     )
   }
 
+  func testRedetectsFailedRepositoryPointerForUnchangedApplication() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let app = root.appendingPathComponent("Studio.app")
+    let contents = app.appendingPathComponent("Contents")
+    let executable = contents.appendingPathComponent("MacOS/Studio")
+    try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(),
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writePropertyList(basicInfo(bundleIdentifier: "com.example.studio",
+      extraValues: ["CFBundleExecutable": "Studio"]), to: contents.appendingPathComponent("Info.plist"))
+    try Data("""
+      tauri_plugin_updater
+      https://github.com/example/repo/releases/latest/download/latest.json
+      https://dl.example.com/studio/versions.json
+      """.utf8).write(to: executable)
+    var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
+    cached.sourceURL = URL(string: "https://github.com/example/repo/releases/latest/download/latest.json")
+    cached.sourceIdentifier = cached.sourceURL?.absoluteString
+    cached.status = .unavailable("Update feed not found")
+    cached.latestVersion = "1.0"
+    cached.releaseNotes = "Stale notes"
+    let recovered = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
+    XCTAssertEqual(recovered.source, .tauri)
+    XCTAssertEqual(recovered.sourceURL?.absoluteString, "https://dl.example.com/studio/versions.json")
+    XCTAssertEqual(recovered.applicationModificationDate, cached.applicationModificationDate)
+    XCTAssertEqual(recovered.status, .checking)
+    XCTAssertNil(recovered.latestVersion)
+    XCTAssertNil(recovered.releaseNotes)
+  }
+
   func testUsesNewestInnerFileModificationDate() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
