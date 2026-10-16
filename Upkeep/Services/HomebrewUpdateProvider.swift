@@ -90,13 +90,6 @@ struct HomebrewUpdateProvider: Sendable {
     }
   }
 
-  static func keepsKnownFirstPartyInstall(_ application: AppRecord, brewHasUpdate: Bool) -> Bool {
-    application.lastInstalledAt != nil
-      && application.source.canBeAlternateUpdateSource
-      && !application.needsUpdate
-      && !brewHasUpdate
-  }
-
   static func mergeAlternateCheckResult(
     _ checked: AppRecord,
     intoHomebrew application: AppRecord
@@ -111,6 +104,7 @@ struct HomebrewUpdateProvider: Sendable {
       var alternate = checked
       alternate.homebrewCaskToken = application.homebrewManagedCaskToken
       alternate.lastInstalledAt = application.lastInstalledAt
+      alternate.installedSource = application.installedSource
       return alternate
     }
 
@@ -364,10 +358,6 @@ struct HomebrewSnapshot {
     var application = application
     application.rememberAlternateUpdateSource(from: detectedApplication)
     application.homebrewCaskToken = cask.token
-
-    if HomebrewUpdateProvider.keepsKnownFirstPartyInstall(application, brewHasUpdate: brewHasUpdate) {
-      return application
-    }
 
     guard
       HomebrewUpdateProvider.shouldClaimInstalledCask(

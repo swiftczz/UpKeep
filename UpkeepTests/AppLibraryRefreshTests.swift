@@ -859,11 +859,27 @@ final class AppLibraryRefreshTests: XCTestCase {
     let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
     var previous = makeApplication(name: "Example", status: .upToDate)
     previous.lastInstalledAt = installedAt
+    previous.installedSource = .homebrew
     let scanned = makeApplication(name: "Example", status: .checking)
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
 
     XCTAssertEqual(merged.first?.lastInstalledAt, installedAt)
+    XCTAssertEqual(merged.first?.installedSource, .homebrew)
+  }
+
+  func testExternalVersionChangeDoesNotKeepPreviousVersionsUpdateChannel() {
+    var previous = makeApplication(name: "Example", status: .upToDate)
+    previous.installedSource = .homebrew
+    var scanned = previous
+    scanned.currentVersion = "3.0"
+    scanned.installedSource = nil
+
+    let refreshed = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
+    let installed = AppLibrary.mergeInstalledApplicationChanges([scanned], previous: [previous])
+
+    XCTAssertNil(refreshed.first?.installedSource)
+    XCTAssertNil(installed.first?.installedSource)
   }
 
   func testMergeKeepsLastInstalledAtForHomebrewUpdate() {
@@ -937,12 +953,14 @@ final class AppLibraryRefreshTests: XCTestCase {
     let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
     var existing = makeApplication(name: "Example", status: .upToDate)
     existing.lastInstalledAt = installedAt
+    existing.installedSource = .homebrew
     var incoming = makeApplication(name: "Example", status: .upToDate)
     incoming.lastInstalledAt = nil
 
     let coalesced = AppLibrary.coalesceCheckResult(incoming, over: existing)
 
     XCTAssertEqual(coalesced.lastInstalledAt, installedAt)
+    XCTAssertEqual(coalesced.installedSource, .homebrew)
   }
 
   func testFailedRecheckDoesNotDropKnownUpdate() {

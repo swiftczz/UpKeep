@@ -130,7 +130,8 @@ final class HomebrewUpdateProviderTests: XCTestCase {
       currentVersion: "0.31.3",
       source: .sparkle,
       status: .upToDate,
-      sourceURL: URL(string: "https://example.com/appcast.xml")
+      sourceURL: URL(string: "https://example.com/appcast.xml"),
+      lastInstalledAt: .now
     )
 
     let enriched = snapshot.applying(to: application)
@@ -140,6 +141,17 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertEqual(enriched.alternateUpdateSource, .sparkle)
     XCTAssertEqual(enriched.alternateSourceURL, URL(string: "https://example.com/appcast.xml"))
     XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
+    XCTAssertEqual(enriched.sourceTitle, "Homebrew")
+    XCTAssertNil(enriched.installedSource)
+
+    for source in UpdateSource.allCases where source.canBeAlternateUpdateSource {
+      var installed = application
+      installed.installedSource = source
+      let checked = snapshot.applying(to: installed)
+      XCTAssertEqual(checked.source, .homebrew)
+      XCTAssertEqual(checked.sourceTitle, source.title)
+      XCTAssertEqual(checked.sourceSystemImage, source.systemImage)
+    }
   }
 
   func testKeepsFirstPartyUpdateAvailableWhenBrewHasNoUpdate() throws {
@@ -232,7 +244,8 @@ final class HomebrewUpdateProviderTests: XCTestCase {
       status: .upToDate,
       latestVersion: "0.48.0",
       sourceIdentifier: "termio",
-      homebrewCaskToken: "termio"
+      homebrewCaskToken: "termio",
+      installedSource: .homebrew
     )
     var checked = AppRecord(
       name: "Termio",
@@ -253,6 +266,8 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertEqual(merged.latestVersion, "0.49.0")
     XCTAssertEqual(merged.homebrewCaskToken, "termio")
     XCTAssertEqual(merged.releaseNotes, "New first-party release")
+    XCTAssertEqual(merged.installedSource, .homebrew)
+    XCTAssertEqual(merged.sourceTitle, "Homebrew")
   }
 
   func testFallsBackToHomebrewWhenFirstPartyCheckFails() {

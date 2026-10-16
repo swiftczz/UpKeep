@@ -604,10 +604,20 @@ final class AppLibrary {
       result = incoming
     }
 
-    guard result.lastInstalledAt == nil else { return result }
     var merged = result
-    merged.lastInstalledAt = existing.lastInstalledAt
+    if merged.lastInstalledAt == nil {
+      merged.lastInstalledAt = existing.lastInstalledAt
+    }
+    if merged.installedSource == nil, hasSameInstalledVersion(merged, existing) {
+      merged.installedSource = existing.installedSource
+    }
     return merged
+  }
+
+  private static func hasSameInstalledVersion(_ lhs: AppRecord, _ rhs: AppRecord) -> Bool {
+    lhs.bundleIdentifier == rhs.bundleIdentifier
+      && lhs.currentVersion == rhs.currentVersion
+      && lhs.buildVersion == rhs.buildVersion
   }
 
   private static func carryingPendingUpdate(
@@ -681,6 +691,9 @@ final class AppLibrary {
     }
     if merged.lastInstalledAt == nil {
       merged.lastInstalledAt = previous.lastInstalledAt
+    }
+    if merged.installedSource == nil, hasSameInstalledVersion(merged, previous) {
+      merged.installedSource = previous.installedSource
     }
     return merged
   }
@@ -914,7 +927,8 @@ final class AppLibrary {
       return
     }
 
-    let record = Self.installedDiskRecord(disk, replacing: application, installedAt: .now)
+    var record = Self.installedDiskRecord(disk, replacing: application, installedAt: .now)
+    record.installedSource = application.source
 
     applications[index] = record
     persistSnapshot()

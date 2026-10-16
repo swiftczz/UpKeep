@@ -61,6 +61,30 @@ final class AppRecordSearchTests: XCTestCase {
     XCTAssertFalse(application.matchesSearch("Sparkle"))
   }
 
+  func testMatchesRecordedInstallationChannelWhenCheckChannelDiffers() {
+    var application = makeApplication(source: .sparkle)
+    application.installedSource = .homebrew
+
+    XCTAssertEqual(application.sourceTitle, "Homebrew")
+    XCTAssertEqual(application.sourceSystemImage, UpdateSource.homebrew.systemImage)
+    XCTAssertTrue(application.matchesSearch("homebrew"))
+  }
+
+  func testOldSnapshotDoesNotInferUpdateChannelFromInstallationDate() throws {
+    var application = makeApplication(source: .sparkle)
+    application.lastInstalledAt = .now
+    var object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(application)) as? [String: Any]
+    )
+    object.removeValue(forKey: "installedSource")
+    let restored = try JSONDecoder().decode(
+      AppRecord.self, from: JSONSerialization.data(withJSONObject: object)
+    )
+
+    XCTAssertNil(restored.installedSource)
+    XCTAssertEqual(restored.sourceTitle, "Sparkle")
+  }
+
   private func makeApplication(
     name: String = "Example",
     bundleIdentifier: String = "com.example.app",

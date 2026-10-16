@@ -184,10 +184,11 @@ final class AppLibraryUpdateTests: XCTestCase {
   }
 
   func testFailedUpdateKeepsOriginalSelectionAndReportsFailure() async throws {
-    let eudic = makeUpdateApplication(
+    var eudic = makeUpdateApplication(
       name: "欧路词典",
       bundleIdentifier: "com.eusoft.eudic"
     )
+    eudic.installedSource = .homebrew
     let tencent = makeUpdateApplication(
       name: "腾讯视频",
       bundleIdentifier: "com.tencent.tenvideo"
@@ -209,6 +210,7 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.selectedApplicationID, eudic.id)
     XCTAssertEqual(library.selectedApplication?.name, "欧路词典")
     XCTAssertEqual(library.alertMessage, "模拟更新失败")
+    XCTAssertEqual(library.selectedApplication?.installedSource, .homebrew)
   }
 
   func testSuccessfulUpdateDoesNotSettleBeforeInstalledVersionAppears() async throws {
@@ -236,6 +238,7 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.applications.first?.status, .updateAvailable)
     XCTAssertTrue(library.applications.first?.canAutomaticallyUpdate ?? false)
     XCTAssertNil(library.applications.first?.lastInstalledAt)
+    XCTAssertNil(library.applications.first?.installedSource)
     XCTAssertEqual(scanCount, 0)
   }
 
@@ -282,6 +285,50 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertFalse(library.applications.first?.canAutomaticallyUpdate ?? true)
     XCTAssertNotNil(library.applications.first?.lastInstalledAt)
     XCTAssertEqual(scanCount, 0)
+  }
+
+  func testSuccessfulUpdateRecordsActualChannelForEverySource() async throws {
+    for source in UpdateSource.allCases where source != .selfManaged {
+      let applicationURL = try makeApplicationBundle(
+        name: "Channel-\(source.rawValue)", bundleIdentifier: "com.example.channel", version: "1.0"
+      )
+      // The installed app advertises Sparkle, even when another channel installs it.
+      try FileManager.default.createDirectory(
+        at: applicationURL.appendingPathComponent("Contents/Frameworks/Sparkle.framework"),
+        withIntermediateDirectories: true
+      )
+      let application = AppRecord(
+        name: "Channel", bundleIdentifier: "com.example.channel", applicationURL: applicationURL,
+        currentVersion: "1.0", buildVersion: "1", source: source,
+        status: .updateAvailable, latestVersion: "2.0", latestBuildVersion: "2",
+        canAutomaticallyUpdate: true, installedSource: .githubReleases
+      )
+      let library = try makeLibrary(
+        applications: [application],
+        coordinator: InstallingUpdateCoordinator(
+          applicationURL: applicationURL, version: "2.0", buildVersion: "2"
+        ),
+        runningBundleIdentifiers: []
+      )
+
+      _ = await library.performPrimaryAction(for: application.id)
+
+      let installed = try XCTUnwrap(library.applications.first)
+      XCTAssertEqual(installed.currentVersion, "2.0", source.rawValue)
+      XCTAssertEqual(installed.installedSource, source, source.rawValue)
+      XCTAssertEqual(installed.sourceTitle, source.title, source.rawValue)
+      XCTAssertEqual(installed.sourceSystemImage, source.systemImage, source.rawValue)
+      let restored = try JSONDecoder().decode(AppRecord.self, from: JSONEncoder().encode(installed))
+      XCTAssertEqual(restored.installedSource, source, source.rawValue)
+
+      let scanned = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
+      XCTAssertEqual(scanned.source, .sparkle)
+      let refreshed = try XCTUnwrap(
+        AppLibrary.mergeKeepingCheckResults([scanned], previous: [restored]).first
+      )
+      XCTAssertEqual(refreshed.installedSource, source, source.rawValue)
+      XCTAssertEqual(refreshed.sourceTitle, source.title, source.rawValue)
+    }
   }
 
   private func makeLibrary(

@@ -9,6 +9,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var buildVersion: String?
   let applicationModificationDate: Date?
 
+  /// The channel used to check for and install the next update.
   var source: UpdateSource
   var appStorePlatform: AppStorePlatform?
   var appStoreCountryCode: String?
@@ -31,6 +32,8 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var packageByteCount: Int64?
   var canAutomaticallyUpdate: Bool
   var lastInstalledAt: Date?
+  /// The channel that last successfully installed the current version through Upkeep.
+  var installedSource: UpdateSource?
 
   init(
     name: String,
@@ -60,7 +63,8 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     homebrewCaskToken: String? = nil,
     packageByteCount: Int64? = nil,
     canAutomaticallyUpdate: Bool = false,
-    lastInstalledAt: Date? = nil
+    lastInstalledAt: Date? = nil,
+    installedSource: UpdateSource? = nil
   ) {
     self.id = applicationURL.standardizedFileURL.path
     self.name = name
@@ -91,6 +95,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.packageByteCount = packageByteCount
     self.canAutomaticallyUpdate = canAutomaticallyUpdate
     self.lastInstalledAt = lastInstalledAt
+    self.installedSource = installedSource
   }
 }
 
@@ -124,6 +129,7 @@ extension AppRecord: Codable {
     case packageByteCount
     case canAutomaticallyUpdate
     case lastInstalledAt
+    case installedSource
   }
 
   init(from decoder: Decoder) throws {
@@ -171,7 +177,8 @@ extension AppRecord: Codable {
         Bool.self,
         forKey: .canAutomaticallyUpdate
       ) ?? false,
-      lastInstalledAt: try container.decodeIfPresent(Date.self, forKey: .lastInstalledAt)
+      lastInstalledAt: try container.decodeIfPresent(Date.self, forKey: .lastInstalledAt),
+      installedSource: try container.decodeIfPresent(UpdateSource.self, forKey: .installedSource)
     )
   }
 }
@@ -265,19 +272,23 @@ extension AppRecord {
     return SecureUpdateURL.https(updatePageURL)
   }
 
+  var displayedSource: UpdateSource {
+    installedSource ?? source
+  }
+
   var sourceTitle: String {
-    guard source == .appStore else {
-      return source.title
+    guard displayedSource == .appStore else {
+      return displayedSource.title
     }
     return appStorePlatform?.title ?? "App Store"
   }
 
   var sourceSystemImage: String {
-    source.systemImage
+    displayedSource.systemImage
   }
 
   var sourcePlatformSystemImage: String? {
-    guard source == .appStore else {
+    guard displayedSource == .appStore else {
       return nil
     }
     return appStorePlatform?.systemImage
@@ -316,7 +327,7 @@ extension AppRecord {
     } else {
       primaryTerms = source.searchTerms
     }
-    let terms = primaryTerms + (alternateUpdateSource?.searchTerms ?? [])
+    let terms = primaryTerms + displayedSource.searchTerms + (alternateUpdateSource?.searchTerms ?? [])
     return terms.contains { UpdateSource.searchTerm($0, matches: query) }
   }
 
