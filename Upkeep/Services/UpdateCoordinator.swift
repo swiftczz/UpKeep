@@ -76,7 +76,10 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
     _ applications: [AppRecord],
     cachePolicy: UpdateCachePolicy
   ) async -> [AppRecord] {
-    await homebrew.enrich(applications, cachePolicy: cachePolicy)
+    if cachePolicy == .reloadIgnoringCache {
+      await githubReleases.invalidateMissingReleaseCache()
+    }
+    return await homebrew.enrich(applications, cachePolicy: cachePolicy)
   }
 
   func check(_ application: AppRecord) async -> AppRecord {

@@ -262,6 +262,22 @@ struct GitHubReleaseManifest: Equatable, Sendable {
       }
   }
 
+  func selectedCraftPackage(repository: String, architecture: MacCPUArchitecture = .current) -> Asset? {
+    assets.filter { asset in
+      guard let download = GitHubReleaseDownload.parse(asset.downloadURL),
+        "\(download.owner)/\(download.repository)" == repository,
+        download.fileName == asset.name,
+        let slug = repository.split(separator: "/").last,
+        asset.name.lowercased().hasPrefix("\(slug)-"),
+        macOSScore(of: asset.name) >= 90,
+        ApplicationPackageInstaller.architectureScore(of: asset.name, architecture: architecture) > 0
+      else { return false }
+      let tokens = asset.name.lowercased().split { !$0.isLetter && !$0.isNumber }
+      return !tokens.contains("web") && !tokens.contains("server")
+    }
+    .max { packageScore($0, architecture: architecture) < packageScore($1, architecture: architecture) }
+  }
+
   var checksumsAsset: Asset? {
     assets.first { asset in
       let name = asset.name.lowercased()
@@ -363,6 +379,18 @@ struct GitHubReleaseManifest: Equatable, Sendable {
 }
 
 struct GitHubReleasesUpdateProvider: Sendable {
+  var fetchResponse: @Sendable (URL) async throws -> (statusCode: Int, data: Data)? = {
+    try await UpdateHTTP.response(from: $0)
+  }
+  var fetchData: @Sendable (URL) async throws -> Data? = {
+    try await UpdateHTTP.successfulData(from: $0)
+  }
+  var missingReleaseCache = GitHubMissingReleaseCache.shared
+
+  func invalidateMissingReleaseCache() async {
+    await missingReleaseCache.invalidate()
+  }
+
   func check(_ application: AppRecord) async -> AppRecord {
     var application = application
     guard let apiURL = application.sourceURL,
@@ -373,8 +401,8 @@ struct GitHubReleasesUpdateProvider: Sendable {
     }
 
     do {
-      let release = try await loadRelease(from: apiURL)
-      let package = release.selectedPackage()
+      let release = try await loadRelease(from: apiURL, cacheMissing: craftMetadata(for: application) != nil)
+      let package = selectedPackage(in: release, for: application)
       let installability = await installability(
         of: package,
         in: release,
@@ -391,6 +419,9 @@ struct GitHubReleasesUpdateProvider: Sendable {
       )
     } catch is CancellationError {
       return application
+    } catch GitHubReleaseLookupError.notFound {
+      application.canAutomaticallyUpdate = false
+      application.status = .unavailable(GitHubReleaseLookupError.notFound.localizedDescription)
     } catch let error as GitHubAPIError {
       application.status = .unavailable(error.localizedDescription)
     } catch {
@@ -411,7 +442,7 @@ struct GitHubReleasesUpdateProvider: Sendable {
 
     progress(.indeterminate("正在检查更新…"))
     let release = try await loadRelease(from: apiURL)
-    guard let package = release.selectedPackage() else {
+    guard let package = selectedPackage(in: release, for: application) else {
       throw ProcessRunnerError.failed(status: 1, message: "GitHub Release 中没有兼容此 Mac 的安装包。")
     }
 
@@ -434,9 +465,31 @@ struct GitHubReleasesUpdateProvider: Sendable {
     )
   }
 
-  private func loadRelease(from url: URL) async throws -> GitHubReleaseManifest {
-    guard let result = try await UpdateHTTP.response(from: url) else {
+  private func craftMetadata(for application: AppRecord) -> GitHubReleasesMetadata? {
+    guard let metadata = KnownGitHubReleaseSources.metadata(for: application.bundleIdentifier),
+      metadata.apiURL == application.sourceURL else { return nil }
+    return metadata
+  }
+
+  private func selectedPackage(in release: GitHubReleaseManifest, for application: AppRecord) -> GitHubReleaseManifest.Asset? {
+    if let metadata = craftMetadata(for: application) {
+      return release.selectedCraftPackage(repository: metadata.identifier)
+    }
+    return release.selectedPackage()
+  }
+
+  private func loadRelease(from url: URL, cacheMissing: Bool = false) async throws -> GitHubReleaseManifest {
+    try Task.checkCancellation()
+    if cacheMissing, await missingReleaseCache.contains(url) {
+      throw GitHubReleaseLookupError.notFound
+    }
+    guard let result = try await fetchResponse(url) else {
       throw ProcessRunnerError.failed(status: 1, message: "未收到 GitHub 发布信息响应，请稍后重试。")
+    }
+    try Task.checkCancellation()
+    if result.statusCode == 404 {
+      if cacheMissing { await missingReleaseCache.remember(url) }
+      throw GitHubReleaseLookupError.notFound
     }
     guard (200..<300).contains(result.statusCode) else {
       throw GitHubAPIError(message: "GitHub 发布信息请求失败（HTTP \(result.statusCode)），请稍后重试。")
@@ -447,6 +500,7 @@ struct GitHubReleasesUpdateProvider: Sendable {
     else {
       throw ProcessRunnerError.failed(status: 1, message: "无法读取 GitHub Release。")
     }
+    await missingReleaseCache.remove(url)
     return release
   }
 
@@ -475,10 +529,18 @@ struct GitHubReleasesUpdateProvider: Sendable {
     in release: GitHubReleaseManifest
   ) async -> String? {
     guard let checksums = release.checksumsAsset,
-      let data = try? await UpdateHTTP.successfulData(from: checksums.downloadURL)
+      let data = try? await fetchData(checksums.downloadURL)
     else {
       return nil
     }
     return GitHubReleaseManifest.sha256(for: package.name, in: data)
+  }
+}
+
+private enum GitHubReleaseLookupError: LocalizedError {
+  case notFound
+
+  var errorDescription: String? {
+    "未找到可访问的 GitHub 正式版本（HTTP 404）。请稍后重试，或手动刷新重新检查。"
   }
 }

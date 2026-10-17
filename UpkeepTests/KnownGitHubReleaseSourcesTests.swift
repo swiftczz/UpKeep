@@ -7,7 +7,8 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
   func testDetectsCraftRepositoriesWithoutEmbeddedUpdateURLs() throws {
     for slug in [
       "photocraft", "vectorcraft", "filmcraft", "lightcraft", "pdfcraft", "effectcraft",
-      "designcraft", "wordcraft", "deckcraft", "gridcraft", "cadcraft", "soundcraft",
+      "designcraft", "wordcraft", "deckcraft", "gridcraft", "cadcraft", "soundcraft", "figcraft",
+      "futurecraft", "new-designcraft", "3dcraft",
     ] {
       let url = try makeApplication(bundleIdentifier: "ai.storyteller.\(slug)")
       defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -25,9 +26,13 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
     }
   }
 
-  func testRequiresExactKnownBundleIdentifierEvenWhenNameMatches() throws {
+  func testRequiresCraftNamespaceAndSingleSafeRepositorySlugEvenWhenNameMatches() throws {
     for identifier in [
-      "com.example.photocraft", "ai.storyteller.photocraft.beta", "ai.storyteller.unknowncraft",
+      "com.example.photocraft", "ai.storyteller.photocraft.beta", "ai.storyteller.editor",
+      "ai.storyteller.craft", "ai.storyteller.-newcraft",
+      "ai.storyteller.newcraft\n", "ai.storyteller.newcraft/othercraft",
+      "ai.storyteller.newcraft?redirect=evilcraft", "ai.storyteller.%66igcraft",
+      "ai.storyteller.\u{0440}hotocraft", "other.ai.storyteller.photocraft",
     ] {
       let url = try makeApplication(bundleIdentifier: identifier)
       defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -39,16 +44,16 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
   }
 
   func testInstalledScanIdentifiesKnownRepositoryWithoutReadingExecutable() throws {
-    let url = try makeApplication()
+    let url = try makeApplication(bundleIdentifier: "ai.storyteller.futurecraft")
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     let record = try XCTUnwrap(ApplicationScanner.makeInstalledApplicationRecord(from: url))
 
     XCTAssertEqual(record.source, .githubReleases)
-    XCTAssertEqual(record.sourceIdentifier, "storytold/photocraft")
+    XCTAssertEqual(record.sourceIdentifier, "storytold/futurecraft")
   }
 
   func testRecoversUnchangedApplicationPreviouslyCachedWithoutAnUpdateSource() throws {
-    let url = try makeApplication()
+    let url = try makeApplication(bundleIdentifier: "ai.storyteller.futurecraft")
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
     cached.source = .selfManaged
@@ -60,12 +65,12 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
 
     XCTAssertEqual(record.applicationModificationDate, cached.applicationModificationDate)
     XCTAssertEqual(record.source, .githubReleases)
-    XCTAssertEqual(record.sourceIdentifier, "storytold/photocraft")
+    XCTAssertEqual(record.sourceIdentifier, "storytold/futurecraft")
     XCTAssertEqual(record.status, .checking)
   }
 
   func testPreservesCheckedKnownSourceMetadataOnUnchangedApplication() throws {
-    let url = try makeApplication()
+    let url = try makeApplication(bundleIdentifier: "ai.storyteller.futurecraft")
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
     cached.latestVersion = "0.8.0"
@@ -113,7 +118,7 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
   func testRecognizesInstalledCraftApplicationsWhenPresent() throws {
     var checked = 0
     for name in [
-      "PhotoCraft", "VectorCraft", "FilmCraft", "PdfCraft", "WordCraft", "DeckCraft", "GridCraft",
+      "PhotoCraft", "VectorCraft", "FilmCraft", "PdfCraft", "WordCraft", "DeckCraft", "GridCraft", "FigCraft",
     ] {
       let url = URL(fileURLWithPath: "/Applications/\(name).app")
       guard FileManager.default.fileExists(atPath: url.path) else { continue }

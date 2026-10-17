@@ -33,7 +33,9 @@ Upkeep 会扫描本机已安装的 `.app`，识别各应用的更新来源，集
 | GitHub Releases | 读取对应 Release 的版本、说明和兼容的安装包。 |
 | 应用自行更新 | 提供打开应用的入口，使用应用自身的更新功能。 |
 
-Craft 套件的 12 个应用通过明确的 Bundle ID 与官方 `storytold` 仓库对应关系接入 GitHub Releases，即使应用本身没有内置更新接口，也能检查和安装更新，无需 ArtCraft Launcher。应用已有的更新协议优先使用。
+Craft 套件通过通用命名规则接入 GitHub Releases：完整 Bundle ID `ai.storyteller.<名称>craft` 对应 `storytold/<名称>craft` 仓库，不依赖应用显示名称。遵循此规则的新增应用会自动识别，无需逐个添加名单。应用已有的更新协议优先使用。
+
+Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 Mac 桌面安装包，排除 CLI、网页及服务器附件；安装时仍校验 Bundle ID 和代码签名。检查结果沿用本地应用缓存；候选源返回 404 时缓存一小时，避免自动检查反复请求，手动刷新会重新验证。无需 ArtCraft Launcher 或其他应用清单接口。
 
 能否直接安装取决于更新源是否提供兼容的安装包。仅提供更新页面的条目会显示“查看更新”，没有可安装更新的条目可以直接打开应用。
 
