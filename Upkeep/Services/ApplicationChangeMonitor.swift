@@ -24,11 +24,11 @@ struct ApplicationChangeMonitor: Sendable {
   }
 
   static func monitoredApplicationDirectories(fileManager: FileManager = .default) -> [String] {
-    [
+    ([
       URL(fileURLWithPath: "/Applications", isDirectory: true),
       fileManager.homeDirectoryForCurrentUser.appendingPathComponent(
         "Applications", isDirectory: true),
-    ]
+    ] + HomebrewInstallationSnapshot.caskroomURLs)
     .map { $0.standardizedFileURL.path }
     .filter { fileManager.fileExists(atPath: $0) }
   }
@@ -40,7 +40,10 @@ struct ApplicationChangeMonitor: Sendable {
   }
 
   static func requiresApplicationRescan(path: String, flags: FSEventStreamEventFlags) -> Bool {
-    if affectsApplicationBundle(path) {
+    if affectsApplicationBundle(path)
+      || (path.hasSuffix("/.metadata/INSTALL_RECEIPT.json")
+        && path.split(separator: "/").contains("Caskroom"))
+    {
       return true
     }
 

@@ -32,7 +32,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var packageByteCount: Int64?
   var canAutomaticallyUpdate: Bool
   var lastInstalledAt: Date?
-  /// The channel that last successfully installed the current version through Upkeep.
+  /// The channel confirmed by an Upkeep update or a matching local installation receipt.
   var installedSource: UpdateSource?
 
   init(

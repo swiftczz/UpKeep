@@ -67,6 +67,7 @@ struct ApplicationScanner: ApplicationScanning {
 
     var seenPaths = Set<String>()
     var records: [AppRecord] = []
+    let homebrewInstallations = HomebrewInstallationSnapshot()
 
     for location in locations where fileManager.fileExists(atPath: location.path) {
       guard
@@ -102,7 +103,7 @@ struct ApplicationScanner: ApplicationScanning {
           continue
         }
 
-        records.append(record)
+        records.append(homebrewInstallations.applying(to: record))
       }
     }
 

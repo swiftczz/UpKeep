@@ -41,4 +41,16 @@ final class ApplicationChangeMonitorTests: XCTestCase {
       ApplicationChangeMonitor.requiresApplicationRescan(path: "/Applications", flags: 0)
     )
   }
+
+  func testHomebrewReceiptWrittenAfterApplicationMoveTriggersRescan() {
+    XCTAssertTrue(ApplicationChangeMonitor.requiresApplicationRescan(
+      path: "/opt/homebrew/Caskroom/chatgpt/.metadata/INSTALL_RECEIPT.json", flags: 0
+    ))
+    XCTAssertTrue(ApplicationChangeMonitor.requiresApplicationRescan(
+      path: "/usr/local/Caskroom/example/.metadata/INSTALL_RECEIPT.json", flags: 0
+    ))
+    XCTAssertFalse(ApplicationChangeMonitor.requiresApplicationRescan(
+      path: "/opt/homebrew/Caskroom/example/.metadata/example.json", flags: 0
+    ))
+  }
 }
