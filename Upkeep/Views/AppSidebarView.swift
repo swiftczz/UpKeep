@@ -55,24 +55,7 @@ struct AppSidebarView: View {
       if !availableUpdates.isEmpty {
         Section {
           ForEach(availableUpdates) { application in
-            AppRowView(
-              application: application,
-              isUpdateIgnored: false,
-              isChecking: checkingApplicationIDs.contains(application.id),
-              updateState: updateStatesByID[application.id]
-            )
-            .equatable()
-            .id(application.id)
-            .tag(application.id)
-            .transition(rowTransition)
-            .contextMenu {
-              Button("忽略更新", systemImage: "bell.slash") {
-                ignoreUpdates(application.id)
-              }
-            }
-            .accessibilityAction(named: Text("忽略更新")) {
-              ignoreUpdates(application.id)
-            }
+            applicationRow(application)
           }
         } header: {
           sectionHeader("可用更新", count: sections.availableUpdates.count)
@@ -82,16 +65,7 @@ struct AppSidebarView: View {
       if !installedApplications.isEmpty {
         Section {
           ForEach(installedApplications) { application in
-            AppRowView(
-              application: application,
-              isUpdateIgnored: false,
-              isChecking: checkingApplicationIDs.contains(application.id),
-              updateState: updateStatesByID[application.id]
-            )
-            .equatable()
-            .id(application.id)
-            .tag(application.id)
-            .transition(rowTransition)
+            applicationRow(application)
           }
         } header: {
           sectionHeader("已安装的应用", count: sections.installedApplications.count)
@@ -101,24 +75,7 @@ struct AppSidebarView: View {
       if !ignoredUpdates.isEmpty {
         Section {
           ForEach(ignoredUpdates) { application in
-            AppRowView(
-              application: application,
-              isUpdateIgnored: true,
-              isChecking: checkingApplicationIDs.contains(application.id),
-              updateState: updateStatesByID[application.id]
-            )
-            .equatable()
-            .id(application.id)
-            .tag(application.id)
-            .transition(rowTransition)
-            .contextMenu {
-              Button("取消忽略更新", systemImage: "bell") {
-                stopIgnoringUpdates(application.id)
-              }
-            }
-            .accessibilityAction(named: Text("取消忽略更新")) {
-              stopIgnoringUpdates(application.id)
-            }
+            applicationRow(application)
           }
         } header: {
           sectionHeader("已忽略的更新", count: sections.ignoredUpdates.count)
@@ -181,6 +138,39 @@ struct AppSidebarView: View {
       } else if sections.isEmpty, !searchText.isEmpty {
         ContentUnavailableView.search(text: searchText)
       }
+    }
+  }
+
+  private func applicationRow(_ application: AppRecord) -> some View {
+    let isIgnored = sections.ignoredApplicationIDs.contains(application.id)
+    let actionTitle = isIgnored ? "取消忽略更新" : (application.needsUpdate ? "忽略更新" : "添加忽略")
+    let actionImage = isIgnored ? "bell" : "bell.slash"
+
+    return AppRowView(
+      application: application,
+      isUpdateIgnored: isIgnored,
+      isChecking: checkingApplicationIDs.contains(application.id),
+      updateState: updateStatesByID[application.id]
+    )
+    .equatable()
+    .id(application.id)
+    .tag(application.id)
+    .transition(rowTransition)
+    .contextMenu {
+      Button(actionTitle, systemImage: actionImage) {
+        setIgnoringUpdates(!isIgnored, for: application.id)
+      }
+    }
+    .accessibilityAction(named: Text(actionTitle)) {
+      setIgnoringUpdates(!isIgnored, for: application.id)
+    }
+  }
+
+  private func setIgnoringUpdates(_ ignored: Bool, for applicationID: AppRecord.ID) {
+    if ignored {
+      ignoreUpdates(applicationID)
+    } else {
+      stopIgnoringUpdates(applicationID)
     }
   }
 

@@ -143,10 +143,7 @@ final class AppLibrary {
   }
 
   func ignoreUpdates(for applicationID: AppRecord.ID) {
-    guard
-      let application = applications.first(where: { $0.id == applicationID }),
-      application.needsUpdate
-    else {
+    guard let application = applications.first(where: { $0.id == applicationID }) else {
       return
     }
 

@@ -36,6 +36,58 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertEqual(restoredLibrary.availableUpdates.map(\.id), [application.id])
   }
 
+  func testCanIgnoreInstalledApplicationBeforeAnUpdateIsAvailable() throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    var application = makeUpdateApplication(source: .sparkle, canAutomaticallyUpdate: true)
+    application.status = .upToDate
+    application.latestVersion = nil
+    let library = AppLibrary(applications: [application], userDefaults: defaults,
+      libraryStore: .memory())
+
+    library.ignoreUpdates(for: application.id)
+
+    XCTAssertTrue(library.isUpdateIgnored(application))
+    XCTAssertEqual(library.sidebarSections.installedApplications.map(\.id), [application.id])
+    XCTAssertEqual(library.sidebarSections.ignoredApplicationIDs, [application.id])
+
+    let restored = AppLibrary(applications: [application], userDefaults: defaults,
+      libraryStore: .memory())
+    XCTAssertTrue(restored.isUpdateIgnored(application))
+    restored.applications[0].latestVersion = "2.0"
+    restored.applications[0].status = .updateAvailable
+    XCTAssertTrue(restored.availableUpdates.isEmpty)
+    XCTAssertTrue(restored.automaticUpdates.isEmpty)
+    XCTAssertEqual(restored.ignoredUpdates.map(\.id), [application.id])
+
+    restored.stopIgnoringUpdates(for: application.id)
+    XCTAssertEqual(restored.availableUpdates.map(\.id), [application.id])
+    XCTAssertEqual(restored.automaticUpdates.map(\.id), [application.id])
+  }
+
+  func testCanCancelIgnoreAfterPendingReleaseIsDiscarded() throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let application = makeUpdateApplication(source: .selfManaged)
+    let library = AppLibrary(applications: [application], userDefaults: defaults,
+      libraryStore: .memory())
+    library.ignoreUpdates(for: application.id)
+
+    library.applications[0].discardRemoteRelease()
+
+    XCTAssertTrue(library.sidebarSections.ignoredUpdates.isEmpty)
+    XCTAssertEqual(library.sidebarSections.installedApplications.map(\.id), [application.id])
+    XCTAssertEqual(library.sidebarSections.ignoredApplicationIDs, [application.id])
+    library.stopIgnoringUpdates(for: application.id)
+    XCTAssertTrue(library.sidebarSections.ignoredApplicationIDs.isEmpty)
+    let restored = AppLibrary(applications: library.applications, userDefaults: defaults,
+      libraryStore: .memory())
+    XCTAssertFalse(restored.isUpdateIgnored(application))
+  }
+
   func testForgetUninstalledRemovesApplicationAndReselects() throws {
     let suiteName = "UpkeepTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
