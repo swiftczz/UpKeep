@@ -27,12 +27,12 @@ struct AppSidebarSections: Equatable, Sendable {
     for application in applications {
       let isIgnored = ignoredBundleIdentifiers.contains(application.bundleIdentifier.lowercased())
       if isIgnored { ignoredIDs.insert(application.id) }
-      if !application.needsUpdate {
-        installed.append(application)
-      } else if isIgnored {
+      if isIgnored {
         ignored.append(application)
-      } else {
+      } else if application.needsUpdate {
         available.append(application)
+      } else {
+        installed.append(application)
       }
     }
     self.init(

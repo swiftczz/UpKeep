@@ -659,13 +659,13 @@ extension Array where Element == AppRecord {
       .sortedByDescendingDate { $0.releaseDate ?? $0.applicationModificationDate }
   }
 
-  func installedApplications() -> [AppRecord] {
-    filter { !$0.needsUpdate }
+  func installedApplications(ignoredIDs: Set<AppRecord.ID> = []) -> [AppRecord] {
+    filter { !$0.needsUpdate && !ignoredIDs.contains($0.id) }
       .sortedByDescendingDate { $0.lastInstalledAt ?? $0.applicationModificationDate }
   }
 
   func ignoredUpdates(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
-    filter { $0.needsUpdate && ignoredIDs.contains($0.id) }
+    filter { ignoredIDs.contains($0.id) }
       .sortedByDescendingDate { $0.releaseDate ?? $0.applicationModificationDate }
   }
 

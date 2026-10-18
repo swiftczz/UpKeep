@@ -78,7 +78,7 @@ struct AppSidebarView: View {
             applicationRow(application)
           }
         } header: {
-          sectionHeader("已忽略的更新", count: sections.ignoredUpdates.count)
+          sectionHeader("已忽略的应用", count: sections.ignoredUpdates.count)
         }
       }
     }

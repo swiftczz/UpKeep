@@ -50,12 +50,15 @@ final class AppLibraryIgnoreTests: XCTestCase {
     library.ignoreUpdates(for: application.id)
 
     XCTAssertTrue(library.isUpdateIgnored(application))
-    XCTAssertEqual(library.sidebarSections.installedApplications.map(\.id), [application.id])
+    XCTAssertTrue(library.sidebarSections.installedApplications.isEmpty)
+    XCTAssertEqual(library.sidebarSections.ignoredUpdates.map(\.id), [application.id])
     XCTAssertEqual(library.sidebarSections.ignoredApplicationIDs, [application.id])
 
     let restored = AppLibrary(applications: [application], userDefaults: defaults,
       libraryStore: .memory())
     XCTAssertTrue(restored.isUpdateIgnored(application))
+    XCTAssertEqual(restored.sidebarSections.ignoredUpdates.map(\.id), [application.id])
+    XCTAssertTrue(restored.sidebarSections.installedApplications.isEmpty)
     restored.applications[0].latestVersion = "2.0"
     restored.applications[0].status = .updateAvailable
     XCTAssertTrue(restored.availableUpdates.isEmpty)
@@ -78,11 +81,13 @@ final class AppLibraryIgnoreTests: XCTestCase {
 
     library.applications[0].discardRemoteRelease()
 
-    XCTAssertTrue(library.sidebarSections.ignoredUpdates.isEmpty)
-    XCTAssertEqual(library.sidebarSections.installedApplications.map(\.id), [application.id])
+    XCTAssertTrue(library.sidebarSections.installedApplications.isEmpty)
+    XCTAssertEqual(library.sidebarSections.ignoredUpdates.map(\.id), [application.id])
     XCTAssertEqual(library.sidebarSections.ignoredApplicationIDs, [application.id])
     library.stopIgnoringUpdates(for: application.id)
     XCTAssertTrue(library.sidebarSections.ignoredApplicationIDs.isEmpty)
+    XCTAssertTrue(library.sidebarSections.ignoredUpdates.isEmpty)
+    XCTAssertEqual(library.sidebarSections.installedApplications.map(\.id), [application.id])
     let restored = AppLibrary(applications: library.applications, userDefaults: defaults,
       libraryStore: .memory())
     XCTAssertFalse(restored.isUpdateIgnored(application))

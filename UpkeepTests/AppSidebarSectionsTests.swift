@@ -19,17 +19,40 @@ final class AppSidebarSectionsTests: XCTestCase {
     let sections = AppSidebarSections(applications: apps, ignoredBundleIdentifiers: [ignored.bundleIdentifier])
     let ignoredIDs: Set<AppRecord.ID> = [ignored.id]
     XCTAssertEqual(sections.availableUpdates, apps.availableUpdates(ignoredIDs: ignoredIDs))
-    XCTAssertEqual(sections.installedApplications, apps.installedApplications())
+    XCTAssertEqual(sections.installedApplications, apps.installedApplications(ignoredIDs: ignoredIDs))
     XCTAssertEqual(sections.ignoredUpdates, apps.ignoredUpdates(ignoredIDs: ignoredIDs))
 
     for query in ["", "  ", "Newer", "SPARKLE", "com.example", "not present"] {
       let filtered = apps.filter { $0.matchesSearch(query) }
       let result = sections.matching(query)
       XCTAssertEqual(result.availableUpdates, filtered.availableUpdates(ignoredIDs: ignoredIDs))
-      XCTAssertEqual(result.installedApplications, filtered.installedApplications())
+      XCTAssertEqual(result.installedApplications, filtered.installedApplications(ignoredIDs: ignoredIDs))
       XCTAssertEqual(result.ignoredUpdates, filtered.ignoredUpdates(ignoredIDs: ignoredIDs))
       XCTAssertEqual(result.applicationIDs, Set(apps.map(\.id)))
     }
+  }
+
+  func testIgnoreGroupingDoesNotDependOnUpdateStatus() {
+    let statuses: [UpdateStatus] = [.upToDate, .selfManaged, .checking, .unavailable("Offline"), .updateAvailable]
+    let ignored = statuses.enumerated().map { index, status in
+      application("Ignored\(index)", status: status, date: TimeInterval(100 + index))
+    }
+    let installed = application("Installed", status: .upToDate, date: 200)
+    let update = application("Update", date: 300)
+    let apps = ignored + [installed, update]
+    let identifiers = Set(ignored.map(\.bundleIdentifier))
+    let ids = Set(ignored.map(\.id))
+    let sections = AppSidebarSections(applications: apps, ignoredBundleIdentifiers: identifiers)
+
+    XCTAssertEqual(sections.availableUpdates.map(\.id), [update.id])
+    XCTAssertEqual(sections.installedApplications.map(\.id), [installed.id])
+    XCTAssertEqual(sections.ignoredUpdates.map(\.id), ignored.reversed().map(\.id))
+    XCTAssertEqual(sections.ignoredUpdates, apps.ignoredUpdates(ignoredIDs: ids))
+    XCTAssertEqual(sections.installedApplications, apps.installedApplications(ignoredIDs: ids))
+    XCTAssertEqual(sections.matching("Ignored0").ignoredUpdates.map(\.id), [ignored[0].id])
+    XCTAssertTrue(sections.matching("Ignored0").installedApplications.isEmpty)
+    XCTAssertEqual(Set(sections.layout.availableUpdateIDs + sections.layout.installedApplicationIDs
+      + sections.layout.ignoredUpdateIDs).count, apps.count)
   }
 
   func testLibraryMaintainsSectionsAfterSearchIgnoreUpdateAndRemoval() throws {

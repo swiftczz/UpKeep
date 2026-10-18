@@ -1032,7 +1032,7 @@ final class AppLibrary {
         .map(\.id)
     )
     return applications.availableUpdates(ignoredIDs: ignoredIDs).first?.id
-      ?? applications.installedApplications().first?.id
+      ?? applications.installedApplications(ignoredIDs: ignoredIDs).first?.id
       ?? applications.ignoredUpdates(ignoredIDs: ignoredIDs).first?.id
   }
 }
