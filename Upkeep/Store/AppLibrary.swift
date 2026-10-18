@@ -524,6 +524,15 @@ final class AppLibrary {
         return current
       }
 
+      if previousReleaseIsIncompatible(previous, with: current) {
+        return current
+      }
+      if current.source == .selfManaged, previous.source == .selfManaged {
+        var cleaned = carryingMetadata(from: previous, onto: current)
+        cleaned.discardRemoteRelease()
+        return cleaned
+      }
+
       // Homebrew enrichment has already checked this version. Do not replace
       // a fresh up-to-date result with a previously cached update.
       if current.source == .homebrew,
@@ -592,8 +601,12 @@ final class AppLibrary {
   }
 
   static func coalesceCheckResult(_ incoming: AppRecord, over existing: AppRecord) -> AppRecord {
+    var incoming = incoming
+    if incoming.source == .selfManaged, existing.source == .selfManaged {
+      incoming.discardRemoteRelease()
+    }
     let result: AppRecord
-    if existing.status == .updateAvailable {
+    if existing.status == .updateAvailable, existing.source != .selfManaged {
       switch incoming.status {
       case .checking, .selfManaged, .unavailable:
         result = carryingPendingUpdate(from: existing, onto: incoming)
@@ -620,10 +633,34 @@ final class AppLibrary {
       && lhs.buildVersion == rhs.buildVersion
   }
 
+  private static func previousReleaseIsIncompatible(_ previous: AppRecord, with current: AppRecord) -> Bool {
+    guard previous.bundleIdentifier == current.bundleIdentifier else { return true }
+    guard !hasSameInstalledVersion(previous, current) else { return false }
+    // Replacements can restart their numbering (for example, 1.x -> 0.x).
+    // Preserve ordinary forward updates and the cheap scan's incomplete source detection.
+    if previous.currentVersion != current.currentVersion,
+      [previous.currentVersion, current.currentVersion].allSatisfy({
+        $0.range(of: #"\A[0-9]+(?:\.[0-9]+)+\z"#, options: .regularExpression) != nil
+      }),
+      VersionComparator.isNewer(previous.currentVersion, than: current.currentVersion)
+    {
+      return true
+    }
+    return current.source != .selfManaged && (
+      current.source != previous.source || current.sourceURL != previous.sourceURL
+    )
+  }
+
   private static func carryingPendingUpdate(
     from previous: AppRecord,
     onto current: AppRecord
   ) -> AppRecord {
+    guard !previousReleaseIsIncompatible(previous, with: current) else { return current }
+    if current.source == .selfManaged, previous.source == .selfManaged {
+      var cleaned = carryingMetadata(from: previous, onto: current)
+      cleaned.discardRemoteRelease()
+      return cleaned
+    }
     guard previous.status == .updateAvailable, previous.hasNewerRelease(than: current) else {
       return carryingMetadata(from: previous, onto: current)
     }
@@ -735,6 +772,13 @@ final class AppLibrary {
     replacing application: AppRecord,
     installedAt: Date
   ) -> AppRecord {
+    if previousReleaseIsIncompatible(application, with: disk) {
+      var record = disk
+      record.discardRemoteRelease()
+      record.status = record.source == .selfManaged ? .selfManaged : .upToDate
+      record.lastInstalledAt = installedAt
+      return record
+    }
     var record = carryingInstalledState(from: application, onto: disk)
     record.lastInstalledAt = installedAt
 

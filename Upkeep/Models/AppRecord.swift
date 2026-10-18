@@ -273,7 +273,9 @@ extension AppRecord {
   }
 
   var displayedSource: UpdateSource {
-    installedSource ?? source
+    // An available update belongs to its current check/install channel, not the
+    // channel that installed the version already on disk.
+    needsUpdate ? source : (installedSource ?? source)
   }
 
   var sourceTitle: String {
@@ -396,6 +398,15 @@ extension AppRecord {
     releaseNotesURL = nil
     releaseDate = nil
     packageByteCount = nil
+  }
+
+  mutating func discardRemoteRelease() {
+    latestVersion = nil
+    latestBuildVersion = nil
+    clearReleaseMetadata()
+    updatePageURL = nil
+    canAutomaticallyUpdate = false
+    status = source == .selfManaged ? .selfManaged : .checking
   }
 
   mutating func applyInstalledRelease() {

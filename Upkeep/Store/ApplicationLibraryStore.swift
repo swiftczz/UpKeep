@@ -6,10 +6,15 @@ struct ApplicationLibrarySnapshot: Codable, Sendable {
   var releaseMetadataRevision: Int? = 1
 
   mutating func migrateReleaseMetadataIfNeeded() {
-    guard releaseMetadataRevision != 1 else { return }
-    // Older snapshots may pair a new version with notes copied from an older release.
-    for index in applications.indices { applications[index].clearReleaseMetadata() }
-    releaseMetadataRevision = 1
+    if releaseMetadataRevision != 1 {
+      // Older snapshots may pair a new version with notes copied from an older release.
+      for index in applications.indices { applications[index].clearReleaseMetadata() }
+      releaseMetadataRevision = 1
+    }
+    // A lost updater cannot substantiate a pending release from an older app edition.
+    for index in applications.indices where applications[index].source == .selfManaged {
+      applications[index].discardRemoteRelease()
+    }
   }
 }
 

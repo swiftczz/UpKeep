@@ -267,7 +267,8 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertEqual(merged.homebrewCaskToken, "termio")
     XCTAssertEqual(merged.releaseNotes, "New first-party release")
     XCTAssertEqual(merged.installedSource, .homebrew)
-    XCTAssertEqual(merged.sourceTitle, "Homebrew")
+    XCTAssertEqual(merged.sourceTitle, "Sparkle")
+    XCTAssertEqual(merged.sourceSystemImage, UpdateSource.sparkle.systemImage)
   }
 
   func testFallsBackToHomebrewWhenFirstPartyCheckFails() {

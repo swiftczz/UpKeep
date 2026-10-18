@@ -70,6 +70,45 @@ final class AppRecordSearchTests: XCTestCase {
     XCTAssertTrue(application.matchesSearch("homebrew"))
   }
 
+  func testAvailableUpdateDisplaysTheCurrentChannelInsteadOfTheInstalledChannel() {
+    for source in UpdateSource.allCases where source != .selfManaged {
+      var application = makeApplication(source: source)
+      application.installedSource = source == .homebrew ? .sparkle : .homebrew
+      application.status = .updateAvailable
+      application.latestVersion = "2.0"
+
+      XCTAssertEqual(application.displayedSource, source)
+      XCTAssertEqual(application.sourceTitle, source.title)
+      XCTAssertEqual(application.sourceSystemImage, source.systemImage)
+    }
+  }
+
+  func testKnownUpdateKeepsItsActualChannelWhileCheckingOrAfterATemporaryFailure() {
+    var application = makeApplication(source: .sparkle)
+    application.installedSource = .homebrew
+    application.latestVersion = "2.0"
+    for status in [UpdateStatus.checking, .unavailable("暂时无法访问更新源")] {
+      application.status = status
+
+      XCTAssertTrue(application.needsUpdate)
+      XCTAssertEqual(application.sourceTitle, "Sparkle")
+      XCTAssertEqual(application.sourceSystemImage, UpdateSource.sparkle.systemImage)
+    }
+  }
+
+  func testSourceSearchMatchesTheDisplayedAvailableUpdateChannel() {
+    var application = makeApplication(source: .sparkle)
+    application.installedSource = .homebrew
+    application.status = .updateAvailable
+    application.latestVersion = "2.0"
+
+    XCTAssertTrue(application.matchesSearch("Sparkle"))
+    XCTAssertFalse(application.matchesSearch("Homebrew"))
+    application.applyInstalledRelease()
+    XCTAssertEqual(application.sourceTitle, "Homebrew")
+    XCTAssertTrue(application.matchesSearch("Homebrew"))
+  }
+
   func testOldSnapshotDoesNotInferUpdateChannelFromInstallationDate() throws {
     var application = makeApplication(source: .sparkle)
     application.lastInstalledAt = .now
