@@ -10,15 +10,8 @@ enum ElectronCustomAPIUpdateDetector {
     architecture: MacCPUArchitecture = .current
   ) -> UpdateConfiguration? {
     guard let archive = ElectronApplicationArchive(bundleURL: bundleURL),
-      let packageData = archive.data(for: "package.json", maximumBytes: 128 * 1024),
-      let package = try? JSONSerialization.jsonObject(with: packageData) as? [String: Any],
-      let main = package["main"] as? String,
-      let mainData = archive.data(for: main, maximumBytes: 8 * 1024 * 1024),
-      let code = String(data: mainData, encoding: .utf8),
-      code.contains("buildUpdateFeedUrl"), code.contains("/v2/update?platform="),
-      code.contains("resolveUpdateClientTypePrefix"), code.contains("getFeedVersion"),
-      let productData = archive.data(for: "cli/product.json", maximumBytes: 512 * 1024),
-      let product = try? JSONSerialization.jsonObject(with: productData) as? [String: Any],
+      let package = archive.json(for: "package.json", maximumBytes: 128 * 1024),
+      let product = archive.json(for: "cli/product.json", maximumBytes: 512 * 1024),
       let updates = product["updates"] as? [String: Any], updates["apiVersion"] as? String == "v2",
       let check = updates["checkVersion"] as? [String: Any], check["scene"] as? String == "saas",
       let download = updates["download"] as? [String: Any], download["scene"] as? String == "saas",
@@ -28,6 +21,12 @@ enum ElectronCustomAPIUpdateDetector {
       let endpoint = (product["endpoint"] as? String).flatMap(SecureUpdateURL.https(string:)),
       endpoint.user == nil, endpoint.password == nil, endpoint.query == nil,
       endpoint.fragment == nil,
+      let code = archive.mainCode(
+        in: package,
+        containing: [
+          "buildUpdateFeedUrl", "/v2/update?platform=", "resolveUpdateClientTypePrefix",
+          "getFeedVersion",
+        ]),
       let feedURL = checkURL(
         endpoint: endpoint, applicationName: applicationName,
         version: currentVersion, architecture: architecture)

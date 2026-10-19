@@ -40,6 +40,58 @@ struct ElectronApplicationArchive {
     archiveSize = UInt64(fileSize)
   }
 
+  func json(for path: String, maximumBytes: Int) -> [String: Any]? {
+    guard let data = data(for: path, maximumBytes: maximumBytes) else { return nil }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+  }
+
+  /// Read the entry point, following only its referenced updater modules when
+  /// protocol markers are requested. Limits apply across the complete traversal.
+  func mainCode(
+    in package: [String: Any], containing markers: [String] = [],
+    maximumFileBytes: Int = 8 * 1024 * 1024
+  ) -> String? {
+    guard let main = package["main"] as? String else { return nil }
+    let entry = main.hasPrefix("./") ? String(main.dropFirst(2)) : main
+    var pending = [(entry, 0)]
+    var visited = Set<String>()
+    var remainingBytes = 16 * 1024 * 1024
+    var snippets: [String] = []
+    while !pending.isEmpty {
+      let (path, depth) = pending.removeFirst()
+      guard visited.insert(path).inserted else { continue }
+      guard visited.count <= 16,
+        let data = data(for: path, maximumBytes: min(maximumFileBytes, remainingBytes)),
+        let code = String(data: data, encoding: .utf8)
+      else { return nil }
+      remainingBytes -= data.count
+      snippets.append(code)
+      let combined = snippets.joined(separator: "\n")
+      if markers.allSatisfy(combined.contains) { return combined }
+      guard depth < 4 else { continue }
+      let directory = (path as NSString).deletingLastPathComponent
+      for dependency in Self.updaterImports(in: code) {
+        let path = directory.isEmpty ? dependency : directory + "/" + dependency
+        pending.append((path, depth + 1))
+      }
+    }
+    return nil
+  }
+
+  private static func updaterImports(in code: String) -> [String] {
+    guard
+      let pattern = try? NSRegularExpression(
+        pattern:
+          #"\brequire\(\s*["']\./([A-Za-z0-9_-]*update[A-Za-z0-9_.-]*\.(?:js|cjs|mjs))["']\s*\)"#)
+    else { return [] }
+    return pattern.matches(in: code, range: NSRange(code.startIndex..., in: code)).compactMap {
+      match in
+      guard let range = Range(match.range(at: 1), in: code) else { return nil }
+      let path = String(code[range])
+      return path.contains("..") ? nil : path
+    }
+  }
+
   func data(for path: String, maximumBytes: Int) -> Data? {
     let components = path.split(separator: "/", omittingEmptySubsequences: false)
     guard !components.isEmpty, maximumBytes > 0,

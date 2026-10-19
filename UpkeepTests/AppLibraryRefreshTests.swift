@@ -1164,6 +1164,36 @@ final class AppLibraryRefreshTests: XCTestCase {
     try await assertLateReleaseMetadataPreservesExternalUpdate(installedVersion: "2.0")
   }
 
+  func testMetadataRefreshFillsMissingFieldsEvenWhenHomebrewAlreadyHasNotes() async throws {
+    let suiteName = "UpkeepTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    var app = makeApplication(name: "BrewMetadata", status: .upToDate)
+    app.updateConfiguration = UpdateConfiguration(mechanism: .homebrew, identifier: "example")
+    app.alternateUpdateConfiguration = UpdateConfiguration(
+      mechanism: .tauri, feedURL: URL(string: "https://example.com/latest.json"))
+    app.latestVersion = app.currentVersion
+    app.releaseNotes = "Already available notes"
+    let coordinator = StubCoordinator()
+    coordinator.checkHandler = { app in
+      var result = app
+      result.releaseDate = Date(timeIntervalSince1970: 100)
+      result.packageByteCount = 123
+      result.updateConfiguration.homepageURL = URL(string: "https://example.com")
+      return result
+    }
+    let library = AppLibrary(
+      applications: [app], coordinator: coordinator,
+      userDefaults: defaults, libraryStore: .memory())
+    await library.refreshReleaseMetadataIfNeeded(for: app.id)
+    let result = try XCTUnwrap(library.applications.first)
+    XCTAssertEqual(result.releaseNotes, app.releaseNotes)
+    XCTAssertNotNil(result.releaseDate)
+    XCTAssertEqual(result.packageByteCount, 123)
+    XCTAssertEqual(result.updateConfiguration.homepageURL?.host, "example.com")
+    XCTAssertEqual(result.updateConfiguration.mechanism, .homebrew)
+  }
+
   func testLateReleaseMetadataDoesNotUndoExternalBuildUpdate() async throws {
     try await assertLateReleaseMetadataPreservesExternalUpdate(installedVersion: "1.0")
   }

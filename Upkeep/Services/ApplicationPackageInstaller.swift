@@ -44,6 +44,7 @@ enum ApplicationPackageInstaller {
     expectedSHA256: String? = nil,
     expectedEd25519Signature: String? = nil,
     ed25519PublicKey: String? = nil,
+    allowsSparkleKeyRotation: Bool = false,
     requiresValidSignature: Bool = false,
     requiresTeamIdentifier: Bool = false,
     progress: @escaping @Sendable (UpdateProgress) -> Void
@@ -75,32 +76,16 @@ enum ApplicationPackageInstaller {
         expectedSHA256: expectedSHA256
       )
     }
-    let hasVerifiedUpdateSignature: Bool
-    if let expectedEd25519Signature, let ed25519PublicKey {
-      try verifyEd25519Signature(
-        of: downloadedURL,
-        signature: expectedEd25519Signature,
-        publicKey: ed25519PublicKey
-      )
-      hasVerifiedUpdateSignature = true
-    } else if expectedEd25519Signature != nil || ed25519PublicKey != nil {
-      throw ApplicationPackageInstallerError.invalidUpdateSignature
-    } else {
-      hasVerifiedUpdateSignature = false
-    }
-
     progress(.indeterminate("正在解压…"))
-    let extractedApplicationURL = try extractApplication(
+    let extractedApplicationURL = try extractAndVerifyApplication(
       from: downloadedURL,
-      into: workingDirectory.appendingPathComponent("extracted", isDirectory: true)
-    )
-
-    try verifyIdentity(
-      of: extractedApplicationURL,
+      into: workingDirectory.appendingPathComponent("extracted", isDirectory: true),
       matching: application,
+      expectedEd25519Signature: expectedEd25519Signature,
+      ed25519PublicKey: ed25519PublicKey,
+      allowsSparkleKeyRotation: allowsSparkleKeyRotation,
       requiresValidSignature: requiresValidSignature,
-      requiresTeamIdentifier: requiresTeamIdentifier,
-      hasVerifiedUpdateSignature: hasVerifiedUpdateSignature
+      requiresTeamIdentifier: requiresTeamIdentifier
     )
 
     try await ApplicationProcess.quit(application)
@@ -120,6 +105,67 @@ enum ApplicationPackageInstaller {
   static func verifySHA512(of fileURL: URL, expected: String) throws {
     let data = try Data(contentsOf: fileURL)
     try verifySHA512(data, expected: expected)
+  }
+
+  static func extractAndVerifyApplication(
+    from packageURL: URL,
+    into directory: URL,
+    matching application: AppRecord,
+    expectedEd25519Signature: String? = nil,
+    ed25519PublicKey: String? = nil,
+    allowsSparkleKeyRotation: Bool = false,
+    requiresValidSignature: Bool = false,
+    requiresTeamIdentifier: Bool = false
+  ) throws -> URL {
+    var hasVerifiedUpdateSignature = false
+    var needsKeyRotation = false
+    if let expectedEd25519Signature, let ed25519PublicKey {
+      do {
+        try verifyEd25519Signature(
+          of: packageURL, signature: expectedEd25519Signature, publicKey: ed25519PublicKey)
+        hasVerifiedUpdateSignature = true
+      } catch ApplicationPackageInstallerError.invalidUpdateSignature
+        where allowsSparkleKeyRotation
+        && !ApplicationCodeSigning.sparkleRequiresVerificationBeforeExtraction(
+          at: application.applicationURL)
+      {
+        needsKeyRotation = true
+      }
+    } else if expectedEd25519Signature != nil || ed25519PublicKey != nil {
+      throw ApplicationPackageInstallerError.invalidUpdateSignature
+    }
+
+    let candidateURL = try extractApplication(from: packageURL, into: directory)
+    if needsKeyRotation, let expectedEd25519Signature, let ed25519PublicKey {
+      try verifySparkleKeyRotation(
+        of: packageURL, containing: candidateURL, replacing: application.applicationURL,
+        signature: expectedEd25519Signature, previousPublicKey: ed25519PublicKey)
+      hasVerifiedUpdateSignature = true
+    }
+    try verifyIdentity(
+      of: candidateURL, matching: application,
+      requiresValidSignature: requiresValidSignature,
+      requiresTeamIdentifier: requiresTeamIdentifier,
+      hasVerifiedUpdateSignature: hasVerifiedUpdateSignature)
+    return candidateURL
+  }
+
+  static func verifySparkleKeyRotation(
+    of packageURL: URL,
+    containing candidateURL: URL,
+    replacing installedURL: URL,
+    signature: String,
+    previousPublicKey: String,
+    matchesDeveloperID: (URL, URL) -> Bool = ApplicationCodeSigning.matchesDeveloperID
+  ) throws {
+    // Sparkle permits key rotation only through the installed app's trusted code identity.
+    // Never trust a key read from the download before that identity has been verified.
+    guard !ApplicationCodeSigning.sparkleRequiresVerificationBeforeExtraction(at: installedURL),
+      matchesDeveloperID(installedURL, candidateURL),
+      let newPublicKey = ApplicationCodeSigning.sparklePublicEDKey(at: candidateURL),
+      newPublicKey.filter({ !$0.isWhitespace }) != previousPublicKey.filter({ !$0.isWhitespace })
+    else { throw ApplicationPackageInstallerError.invalidUpdateSignature }
+    try verifyEd25519Signature(of: packageURL, signature: signature, publicKey: newPublicKey)
   }
 
   static func verifySHA256(of fileURL: URL, expected: String) throws {
@@ -172,9 +218,10 @@ enum ApplicationPackageInstaller {
         (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
       })
     {
-      expectedDigest = Data(stride(from: 0, to: encodedBytes.count, by: 2).compactMap { offset in
-        UInt8(String(decoding: encodedBytes[offset..<offset + 2], as: UTF8.self), radix: 16)
-      })
+      expectedDigest = Data(
+        stride(from: 0, to: encodedBytes.count, by: 2).compactMap { offset in
+          UInt8(String(decoding: encodedBytes[offset..<offset + 2], as: UTF8.self), radix: 16)
+        })
     } else {
       expectedDigest = Data(base64Encoded: normalizedExpected)
     }
@@ -225,8 +272,12 @@ enum ApplicationPackageInstaller {
     }
     if name.hasSuffix(".zip") { return 30 }
     if name.hasSuffix(".dmg") { return 20 }
-    if name.hasSuffix(".tar.gz") || name.hasSuffix(".tgz") { return 10 }
+    if isTarArchive(name) { return 10 }
     return 0
+  }
+
+  private static func isTarArchive(_ fileName: String) -> Bool {
+    [".tar.gz", ".tgz", ".tar.xz"].contains(where: fileName.hasSuffix)
   }
 
   static func isPotentiallyInstallablePackageURL(_ url: URL) -> Bool {
@@ -289,10 +340,12 @@ enum ApplicationPackageInstaller {
     for attempt in 0..<totalAttempts {
       do {
         let download = try await downloader.download(from: url)
-        guard let fileName = supportedPackageFileName(
-          suggestedFilename: download.suggestedFilename,
-          sourceURL: url
-        ) else {
+        guard
+          let fileName = supportedPackageFileName(
+            suggestedFilename: download.suggestedFilename,
+            sourceURL: url
+          )
+        else {
           try? FileManager.default.removeItem(at: download.url)
           throw ApplicationPackageInstallerError.unsupportedPackage
         }
@@ -337,14 +390,15 @@ enum ApplicationPackageInstaller {
     return nil
   }
 
-  private static func extractApplication(from packageURL: URL, into directory: URL) throws -> URL {
+  static func extractApplication(from packageURL: URL, into directory: URL) throws -> URL {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let fileName = packageURL.lastPathComponent.lowercased()
 
     if fileName.hasSuffix(".zip") {
       try run("/usr/bin/ditto", ["-xk", packageURL.path, directory.path])
-    } else if fileName.hasSuffix(".tar.gz") || fileName.hasSuffix(".tgz") {
-      try run("/usr/bin/tar", ["-xzf", packageURL.path, "-C", directory.path])
+    } else if isTarArchive(fileName) {
+      // System libarchive detects gzip and xz from the archive contents.
+      try run("/usr/bin/tar", ["-xf", packageURL.path, "-C", directory.path])
     } else if fileName.hasSuffix(".dmg") {
       return try applicationFromDiskImage(packageURL, stagingDirectory: directory)
     } else {
@@ -491,7 +545,8 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
   }
 
   func download(from url: URL) async throws -> DownloadedFile {
-    let token = GitHubRequestAuthorization.isAPIURL(url)
+    let token =
+      GitHubRequestAuthorization.isAPIURL(url)
       ? await GitHubAccount.shared.authorizationToken() : nil
     let request = ApplicationPackageInstaller.downloadRequest(for: url, githubToken: token)
     return try await withTaskCancellationHandler {

@@ -43,6 +43,74 @@ final class ElectronCustomAPIUpdateTests: XCTestCase, @unchecked Sendable {
     XCTAssertNil(ElectronCustomAPIUpdateDetector.detect(in: app, currentVersion: "1.0"))
   }
 
+  func testSplitUpdaterModulesRecoverMigratedAppUsingItsNewEndpoint() async throws {
+    let app = try fixture(
+      applicationName: "WorkBuddy", endpoint: "https://new.example.com",
+      bundleIdentifier: "com.example.migrated", unpackedProduct: true,
+      code: #"const updater = require("./update-service.darwin.js");"#,
+      additionalFiles: [
+        "main/update-service.darwin.js": Data(
+          #"const base = require('./update-service.js'); function getFeedVersion(feed) { return feed.productVersion; }"#
+            .utf8),
+        "main/update-service.js": Data(
+          #"function buildUpdateFeedUrl() { return `/v2/update?platform=${resolveUpdateClientTypePrefix()}`; }"#
+            .utf8),
+      ])
+    let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
+    XCTAssertEqual(record.updateConfiguration.mechanism, .customAPI)
+    XCTAssertEqual(record.updateConfiguration.channel, .website)
+    XCTAssertEqual(record.updateConfiguration.feedURL?.host, "new.example.com")
+    XCTAssertNil(record.updateConfiguration.targetBundleIdentifier)
+    XCTAssertFalse(record.requiresBundleMigration)
+    let provider = CustomAPIUpdateProvider(fetchResponse: { url in
+      XCTAssertEqual(url.host, "new.example.com")
+      return (204, Data())
+    })
+    let checked = await provider.check(record)
+    XCTAssertEqual(checked.status, .upToDate)
+  }
+
+  func testDoesNotSearchUnreferencedOrEscapingUpdaterModules() throws {
+    let evidence = Data(
+      "buildUpdateFeedUrl /v2/update?platform= resolveUpdateClientTypePrefix getFeedVersion".utf8)
+    for code in [
+      "const main = true;", #"require('../update-service.js')"#,
+      #"require('./../update-service.js')"#, #"require(updatePath)"#,
+      #"require('./update-service.js')"#,
+    ] {
+      let app = try fixture(code: code, additionalFiles: ["main/unrelated-update.js": evidence])
+      XCTAssertNil(ElectronCustomAPIUpdateDetector.detect(in: app, currentVersion: "5.8.3"))
+    }
+  }
+
+  func testSplitUpdaterCanBeRelativeToAnArchiveRootEntry() throws {
+    let app = try fixture(
+      code: #"require('./update-module.js')"#, mainPath: "index.js",
+      additionalFiles: [
+        "update-module.js": Data(
+          "buildUpdateFeedUrl /v2/update?platform= resolveUpdateClientTypePrefix getFeedVersion"
+            .utf8)
+      ])
+    XCTAssertNotNil(ElectronCustomAPIUpdateDetector.detect(in: app, currentVersion: "5.8.3"))
+  }
+
+  func testUpdaterModuleTraversalHandlesCyclesAndRejectsExcessiveDepth() throws {
+    let code = #"require('./update-a.js')"#
+    var files: [String: Data] = [:]
+    for (name, next) in [("a", "b"), ("b", "c"), ("c", "d"), ("d", "e")] {
+      files["main/update-\(name).js"] = Data("require('./update-\(next).js')".utf8)
+    }
+    files["main/update-e.js"] = Data(
+      "buildUpdateFeedUrl /v2/update?platform= resolveUpdateClientTypePrefix getFeedVersion".utf8)
+    XCTAssertNil(
+      ElectronCustomAPIUpdateDetector.detect(
+        in: try fixture(code: code, additionalFiles: files), currentVersion: "5.8.3"))
+    files["main/update-a.js"] = Data(#"require('./update-a.js')"#.utf8)
+    XCTAssertNil(
+      ElectronCustomAPIUpdateDetector.detect(
+        in: try fixture(code: code, additionalFiles: files), currentVersion: "5.8.3"))
+  }
+
   func testScannerRecoversUnknownCacheAndRetainsRegionAndMigrationMetadata() throws {
     let app = try fixture(bundleIdentifier: "com.example.legacy")
     let fresh = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
@@ -156,7 +224,8 @@ final class ElectronCustomAPIUpdateTests: XCTestCase, @unchecked Sendable {
     applicationName: String = "workbuddy-ai",
     endpoint: String = "https://international.example.com",
     bundleIdentifier: String = "com.example.international", unpackedProduct: Bool = false,
-    code: String? = nil
+    code: String? = nil, mainPath: String = "main/index.js",
+    additionalFiles: [String: Data] = [:]
   ) throws -> URL {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "UpkeepTests-\(UUID().uuidString)")
@@ -188,10 +257,11 @@ final class ElectronCustomAPIUpdateTests: XCTestCase, @unchecked Sendable {
         """
     var files = [
       "package.json": try JSONSerialization.data(withJSONObject: [
-        "main": "main/index.js", "homepage": "https://example.com",
+        "main": mainPath, "homepage": "https://example.com",
       ]),
-      "main/index.js": Data(main.utf8),
+      mainPath: Data(main.utf8),
     ]
+    files.merge(additionalFiles) { _, new in new }
     if !unpackedProduct { files["cli/product.json"] = product }
     var tree: [String: Any] = ["files": [String: Any]()]
     func insert(_ entry: [String: Any], _ path: ArraySlice<String>, into node: inout [String: Any])

@@ -71,7 +71,12 @@ private struct ReleaseNotesParagraphView: View {
         if block.quote {
           RoundedRectangle(cornerRadius: 2).fill(.secondary.opacity(0.4)).frame(width: 3)
         }
-        if let marker = block.marker {
+        if let checked = block.taskChecked {
+          Image(systemName: checked ? "checkmark.square.fill" : "square")
+            .foregroundStyle(.secondary)
+            .frame(width: 18, alignment: .trailing)
+            .accessibilityLabel(checked ? "已完成" : "未完成")
+        } else if let marker = block.marker {
           Text(marker).foregroundStyle(.secondary).frame(minWidth: 18, alignment: .trailing)
         }
         Text(block.text)

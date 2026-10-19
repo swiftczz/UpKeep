@@ -174,6 +174,7 @@ struct SparkleUpdateProvider: Sendable {
       ed25519PublicKey: ApplicationCodeSigning.sparklePublicEDKey(
         at: application.applicationURL
       ),
+      allowsSparkleKeyRotation: true,
       requiresTeamIdentifier: true,
       progress: progress
     )

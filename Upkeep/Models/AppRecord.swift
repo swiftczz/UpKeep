@@ -197,6 +197,11 @@ extension AppRecord {
     return formatter.string(fromByteCount: packageByteCount)
   }
 
+  var hasIncompleteReleaseMetadata: Bool {
+    releaseNotes?.nonBlankValue == nil || releaseDate == nil
+      || (packageByteCount ?? 0) <= 0 || updateConfiguration.homepageURL == nil
+  }
+
   /// Release metadata can only be shared when both records describe the same release.
   func hasSameRelease(as other: AppRecord) -> Bool {
     func identity(_ app: AppRecord) -> (String, String?) {
@@ -222,6 +227,28 @@ extension AppRecord {
     releaseNotesURL = nil
     releaseDate = nil
     packageByteCount = nil
+  }
+
+  /// Merge display information without changing the chosen updater or its status.
+  /// Release-specific fields must describe the same app, version and build.
+  mutating func mergeReleaseMetadata(from other: AppRecord) {
+    guard id == other.id, bundleIdentifier == other.bundleIdentifier else { return }
+    updateConfiguration.homepageURL =
+      updateConfiguration.homepageURL ?? other.updateConfiguration.homepageURL
+    guard hasSameRelease(as: other) else { return }
+    if releaseNotes?.nonBlankValue == nil, let notes = other.releaseNotes?.nonBlankValue {
+      releaseNotes = notes
+      releaseNotesURL = other.releaseNotesURL ?? releaseNotesURL
+    }
+    releaseNotesURL = releaseNotesURL ?? other.releaseNotesURL
+    releaseDate = releaseDate ?? other.releaseDate
+    if (packageByteCount ?? 0) <= 0,
+      let size = other.packageByteCount, size > 0
+    {
+      packageByteCount = size
+    }
+    latestVersion = latestVersion ?? other.latestVersion
+    latestBuildVersion = latestBuildVersion ?? other.latestBuildVersion
   }
 
   mutating func discardRemoteRelease() {

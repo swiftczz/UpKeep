@@ -98,9 +98,6 @@ struct HomebrewUpdateProvider: Sendable {
   ) -> AppRecord {
     var merged = application
     merged.rememberAlternateUpdateConfiguration(from: checked)
-    if merged.updateConfiguration.homepageURL == nil {
-      merged.updateConfiguration.homepageURL = checked.updateConfiguration.homepageURL
-    }
 
     if checked.needsUpdate && !application.needsUpdate {
       var alternate = checked
@@ -110,29 +107,7 @@ struct HomebrewUpdateProvider: Sendable {
       return alternate
     }
 
-    if checked.latestVersion != nil && checked.hasSameRelease(as: application) {
-      if checked.releaseNotes?.nonBlankValue != nil {
-        merged.releaseNotes = checked.releaseNotes
-        merged.releaseNotesURL = checked.releaseNotesURL
-      } else if merged.releaseNotes?.nonBlankValue == nil, checked.releaseNotesURL != nil {
-        merged.releaseNotesURL = checked.releaseNotesURL
-      }
-      if checked.releaseDate != nil {
-        merged.releaseDate = checked.releaseDate
-      }
-    }
-
-    if merged.latestVersion == nil {
-      merged.latestVersion = checked.latestVersion
-    }
-    if merged.hasSameRelease(as: checked) {
-      if merged.latestBuildVersion == nil {
-        merged.latestBuildVersion = checked.latestBuildVersion
-      }
-      if merged.packageByteCount == nil {
-        merged.packageByteCount = checked.packageByteCount
-      }
-    }
+    merged.mergeReleaseMetadata(from: checked)
     return merged
   }
 
@@ -295,13 +270,13 @@ struct HomebrewUpdateProvider: Sendable {
       result.packageByteCount = GitHubReleaseManifest.packageByteCount(
         named: download.fileName, in: data)
     }
+    result.releaseDate = result.releaseDate ?? release.releaseDate
     if result.releaseNotes?.nonBlankValue == nil, let notes = release.releaseNotes?.nonBlankValue {
       result.releaseNotes = notes
       result.releaseNotesURL = URL(
         string:
           "https://github.com/\(download.owner)/\(download.repository)/releases/tag/\(download.tag)"
       )
-      result.releaseDate = result.releaseDate ?? release.releaseDate
     }
     return result
   }
@@ -372,6 +347,13 @@ struct HomebrewSnapshot {
     let detectedApplication = application
     var application = application
     application.rememberAlternateUpdateConfiguration(from: detectedApplication)
+    if application.alternateUpdateConfiguration == nil,
+      detectedApplication.updateConfiguration.mechanism == .selfManaged
+        || detectedApplication.updateConfiguration.mechanism == .homebrew
+    {
+      // Distinguish a completed native-source scan from metadata lost on install.
+      application.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .selfManaged)
+    }
     application.homebrewCaskToken = cask.token
 
     guard
@@ -394,7 +376,7 @@ struct HomebrewSnapshot {
     onto application: AppRecord
   ) -> AppRecord {
     var application = application
-    let previousNotesVersion = application.latestVersion
+    let previous = application
     let remoteIsNewer = VersionComparator.isNewer(
       remoteVersion,
       than: application.currentVersion,
@@ -428,11 +410,11 @@ struct HomebrewSnapshot {
     case .selfManaged, .checking, .unavailable:
       application.latestVersion = remoteVersion == "latest" ? nil : remoteVersion
     }
-    if application.latestVersion != previousNotesVersion {
-      application.releaseNotes = nil
-      application.releaseNotesURL = nil
-      application.releaseDate = nil
+    if application.latestVersion != previous.latestVersion {
+      application.latestBuildVersion = nil
     }
+    if !application.hasSameRelease(as: previous) { application.clearReleaseMetadata() }
+    application.mergeReleaseMetadata(from: previous)
     application.canAutomaticallyUpdate = application.status == .updateAvailable
     return application
   }

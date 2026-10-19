@@ -13,18 +13,22 @@ enum ElectronBuilderDetector {
       resourcesURL.appendingPathComponent("app-update.yml"),
       resourcesURL.appendingPathComponent("app-update.yaml"),
     ]
+    var hasEmptyGenericFeed = false
 
     for configurationURL in candidateURLs {
-      guard
-        let configuration = try? String(contentsOf: configurationURL, encoding: .utf8),
-        let metadata = metadata(from: configuration)
-      else {
+      guard let configuration = try? String(contentsOf: configurationURL, encoding: .utf8) else {
         continue
       }
-      return metadata
+      if let metadata = metadata(from: configuration) { return metadata }
+      if let values = ElectronBuilderYAML.flatValues(in: configuration),
+        values["provider"]?.lowercased() == "generic",
+        values["url"]?.nonBlankYAMLValue == nil, !isTruthy(values["private"])
+      {
+        hasEmptyGenericFeed = true
+      }
     }
 
-    return nil
+    return hasEmptyGenericFeed ? ElectronFeedMapDetector.detect(in: bundleURL) : nil
   }
 
   static func metadata(from configuration: String) -> ElectronBuilderMetadata? {

@@ -101,7 +101,7 @@ struct UpkeepRootView: View {
           )
           .task(
             id:
-              "\(application.id)|\(application.latestVersion ?? "")|\(application.releaseNotes == nil)"
+              "\(application.id)|\(application.currentVersion)|\(application.latestVersion ?? "")|\(application.hasIncompleteReleaseMetadata)|\(library.phase == .idle)|\(library.updatingApplicationIDs.contains(application.id))"
           ) {
             await library.refreshReleaseMetadataIfNeeded(for: application.id)
           }

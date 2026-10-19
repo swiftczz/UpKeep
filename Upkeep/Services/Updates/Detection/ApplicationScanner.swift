@@ -193,6 +193,8 @@ struct ApplicationScanner: ApplicationScanning {
     // Retry unknown sources in full scans so new detector rules can recover them.
     // The installed-only monitor still reuses unchanged records without reading binaries.
     if let previous, previous.updateConfiguration.mechanism != .vscodeUpdater,
+      !(sourceDetection == .full && previous.updateConfiguration.mechanism == .homebrew
+        && previous.alternateUpdateConfiguration == nil),
       previous.updateConfiguration.mechanism != .sparkle
         || previous.updateConfiguration.feedURL == feedURL,
       !(previous.updateConfiguration.mechanism == .selfManaged

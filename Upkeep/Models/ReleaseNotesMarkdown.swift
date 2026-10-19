@@ -9,6 +9,7 @@ enum ReleaseNotesMarkdown {
     var code = false
     var quote = false
     var marker: String?
+    var taskChecked: Bool?
     var indent = 0
     var tableID: Int?
     var rowID: Int?
@@ -37,10 +38,11 @@ enum ReleaseNotesMarkdown {
           let cell = blocks[index]
           let rowID = cell.rowID ?? cell.id
           if rows.last?.id != rowID {
-            rows.append(TableRow(
-              id: rowID, cells: Array(repeating: nil, count: block.columnCount),
-              isHeader: cell.headerCell
-            ))
+            rows.append(
+              TableRow(
+                id: rowID, cells: Array(repeating: nil, count: block.columnCount),
+                isHeader: cell.headerCell
+              ))
           }
           if rows[rows.count - 1].cells.indices.contains(cell.column) {
             rows[rows.count - 1].cells[cell.column] = cell
@@ -71,9 +73,14 @@ enum ReleaseNotesMarkdown {
   }
 
   static func parse(_ source: String, baseURL: URL? = nil) -> [Block] {
-    guard let parsed = try? AttributedString(markdown: source,
-      options: .init(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible),
-      baseURL: baseURL) else {
+    guard
+      let parsed = try? AttributedString(
+        markdown: source,
+        options: .init(
+          interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible,
+          appliesSourcePositionAttributes: true),
+        baseURL: baseURL)
+    else {
       return [Block(id: 0, text: AttributedString(source))]
     }
     var blocks: [Block] = []
@@ -89,10 +96,13 @@ enum ReleaseNotesMarkdown {
         continue
       }
       // Only open ordinary web/mail links. Markdown never executes HTML or scripts.
-      if let link = text.link, !["https", "http", "mailto"].contains(link.scheme?.lowercased() ?? "") {
+      if let link = text.link,
+        !["https", "http", "mailto"].contains(link.scheme?.lowercased() ?? "")
+      {
         text.link = nil
       }
       text.presentationIntent = nil
+      text.markdownSourcePosition = nil
       if blocks.last?.id == id {
         blocks[blocks.count - 1].text.append(text)
         continue
@@ -125,6 +135,20 @@ enum ReleaseNotesMarkdown {
       if let item {
         block.indent = max(0, listCount - 1)
         block.marker = markedItems.insert(item.0).inserted ? (ordered ? "\(item.1)." : "•") : ""
+        // Consult the source to distinguish task syntax from escaped literal text.
+        if block.marker != "", !block.code, run.inlinePresentationIntent == nil,
+          run.link == nil, let position = run.markdownSourcePosition,
+          let range = Range(position, in: source),
+          let checked = taskState(in: source[range.lowerBound...])
+        {
+          block.taskChecked = checked
+          let content = block.text.characters
+          var end = content.index(content.startIndex, offsetBy: 3)
+          while end < content.endIndex, content[end].isWhitespace {
+            end = content.index(after: end)
+          }
+          block.text.removeSubrange(content.startIndex..<end)
+        }
       }
       blocks.append(block)
     }
@@ -132,5 +156,13 @@ enum ReleaseNotesMarkdown {
       return [Block(id: 0, text: AttributedString(source))]
     }
     return blocks
+  }
+
+  private static func taskState(in source: Substring) -> Bool? {
+    let prefix = source.prefix(3)
+    guard prefix == "[x]" || prefix == "[X]" || prefix == "[ ]" else { return nil }
+    let rest = source.dropFirst(3)
+    guard rest.isEmpty || rest.first?.isWhitespace == true else { return nil }
+    return prefix != "[ ]"
   }
 }

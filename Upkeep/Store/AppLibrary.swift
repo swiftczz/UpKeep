@@ -251,7 +251,7 @@ final class AppLibrary {
     }
 
     let application = applications[existingIndex]
-    guard application.releaseNotes == nil else {
+    guard application.hasIncompleteReleaseMetadata else {
       return
     }
     switch application.updateConfiguration.mechanism {
@@ -633,6 +633,11 @@ final class AppLibrary {
     if merged.installedUpdateConfiguration == nil, hasSameInstalledVersion(merged, existing) {
       merged.installedUpdateConfiguration = existing.installedUpdateConfiguration
     }
+    if merged.updateConfiguration.mechanism != .selfManaged,
+      !previousReleaseIsIncompatible(existing, with: merged)
+    {
+      merged.mergeReleaseMetadata(from: existing)
+    }
     return merged
   }
 
@@ -663,6 +668,13 @@ final class AppLibrary {
       VersionComparator.isNewer(previous.currentVersion, than: current.currentVersion)
     {
       return true
+    }
+    // Homebrew and the embedded updater can describe the same installation.
+    // Switching between these routes does not by itself replace the app.
+    if previous.updateConfiguration.mechanism == .homebrew
+      || current.updateConfiguration.mechanism == .homebrew
+    {
+      return false
     }
     return current.updateConfiguration.mechanism != .selfManaged
       && (current.updateConfiguration.mechanism != previous.updateConfiguration.mechanism
@@ -712,9 +724,6 @@ final class AppLibrary {
     {
       merged.updateConfiguration.feedURL = previous.updateConfiguration.feedURL
     }
-    if merged.updateConfiguration.homepageURL == nil {
-      merged.updateConfiguration.homepageURL = previous.updateConfiguration.homepageURL
-    }
     if merged.updateConfiguration.identifier == nil,
       previous.updateConfiguration.mechanism == merged.updateConfiguration.mechanism
     {
@@ -743,23 +752,7 @@ final class AppLibrary {
     {
       merged.appStoreAccountCountryCode = previous.appStoreAccountCountryCode
     }
-    if merged.hasSameRelease(as: previous) {
-      if merged.releaseNotes == nil {
-        merged.releaseNotes = previous.releaseNotes
-      }
-      if merged.releaseDate == nil {
-        merged.releaseDate = previous.releaseDate
-      }
-      if merged.releaseNotesURL == nil {
-        merged.releaseNotesURL = previous.releaseNotesURL
-      }
-      if merged.packageByteCount == nil {
-        merged.packageByteCount = previous.packageByteCount
-      }
-      if merged.latestBuildVersion == nil {
-        merged.latestBuildVersion = previous.latestBuildVersion
-      }
-    }
+    merged.mergeReleaseMetadata(from: previous)
     if merged.lastInstalledAt == nil {
       merged.lastInstalledAt = previous.lastInstalledAt
     }
@@ -774,12 +767,17 @@ final class AppLibrary {
     onto disk: AppRecord
   ) -> AppRecord {
     if disk.updateConfiguration.mechanism != .selfManaged,
-      disk.updateConfiguration.mechanism != previous.updateConfiguration.mechanism
+      disk.updateConfiguration.mechanism != previous.updateConfiguration.mechanism,
+      previous.updateConfiguration.mechanism != .homebrew
     {
       return carryingMetadata(from: previous, onto: disk)
     }
 
     var merged = carryingMetadata(from: previous, onto: disk)
+    let detectedRelease = merged
+    if previous.updateConfiguration.mechanism == .homebrew {
+      merged.rememberAlternateUpdateConfiguration(from: disk)
+    }
     let detectedSameSource =
       disk.updateConfiguration.mechanism == previous.updateConfiguration.mechanism
     var configuration = previous.updateConfiguration
@@ -804,6 +802,8 @@ final class AppLibrary {
     merged.status = previous.status
     merged.latestVersion = previous.latestVersion
     merged.latestBuildVersion = previous.latestBuildVersion
+    if !merged.hasSameRelease(as: detectedRelease) { merged.clearReleaseMetadata() }
+    merged.mergeReleaseMetadata(from: previous)
     merged.updatePageURL = previous.updatePageURL
     merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
     return merged
@@ -829,9 +829,11 @@ final class AppLibrary {
       record.status = .updateAvailable
       record.canAutomaticallyUpdate = application.canAutomaticallyUpdate
     } else {
-      record.status =
-        record.updateConfiguration.mechanism == .selfManaged ? .selfManaged : .upToDate
-      record.canAutomaticallyUpdate = false
+      if record.updateConfiguration.mechanism == .selfManaged {
+        record.discardRemoteRelease()
+      } else {
+        record.applyInstalledRelease()
+      }
     }
     return record
   }
