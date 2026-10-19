@@ -4,6 +4,7 @@ struct GitHubReleasesMetadata: Equatable, Sendable {
   let identifier: String
   let apiURL: URL
   let homepageURL: URL
+  var tagPrefix: String? = nil
 }
 
 struct GitHubReleaseDownload: Equatable, Sendable {
@@ -80,6 +81,7 @@ enum GitHubReleasesDetector {
     #"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/latest"#,
     #"https://api\.github\.com/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/latest"#,
     #"https://api\.github\.com/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases(?!/)"#,
+    #"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/download/([A-Za-z0-9_-]*v)\{version\}/update-(?:darwin|macos)-[A-Za-z0-9_-]+\.json"#,
   ].compactMap { try? NSRegularExpression(pattern: $0) }
 
   static func metadata(in data: Data) -> GitHubReleasesMetadata? {
@@ -117,9 +119,12 @@ enum GitHubReleasesDetector {
           with: "",
           options: [.anchored, .backwards]
         )
+        let prefix = match.numberOfRanges > 3
+          ? Range(match.range(at: 3), in: text).map { String(text[$0]) } : nil
+        let endpoint = prefix == nil ? "releases/latest" : "releases?per_page=100"
         guard isRepositoryComponent(owner), isRepositoryComponent(repository),
           let apiURL = URL(
-            string: "https://api.github.com/repos/\(owner)/\(repository)/releases/latest"
+            string: "https://api.github.com/repos/\(owner)/\(repository)/\(endpoint)"
           ),
           let homepageURL = URL(string: "https://github.com/\(owner)/\(repository)")
         else {
@@ -132,7 +137,8 @@ enum GitHubReleasesDetector {
             GitHubReleasesMetadata(
               identifier: "\(owner)/\(repository)",
               apiURL: apiURL,
-              homepageURL: homepageURL
+              homepageURL: homepageURL,
+              tagPrefix: prefix
             )
           )
         )
@@ -141,7 +147,7 @@ enum GitHubReleasesDetector {
 
     var seen = Set<String>()
     return matches.sorted { $0.location < $1.location }.compactMap { match in
-      guard seen.insert(match.metadata.identifier).inserted else { return nil }
+      guard seen.insert(match.metadata.apiURL.absoluteString + "|" + (match.metadata.tagPrefix ?? "")).inserted else { return nil }
       return match.metadata
     }
   }
@@ -154,7 +160,13 @@ enum GitHubReleasesDetector {
     guard let repository = metadata.identifier.split(separator: "/").last else {
       return false
     }
-    let repositoryAliases = aliases(for: String(repository))
+    var repositoryAliases = aliases(for: String(repository))
+    // Some apps publish binaries in a separate <app>-feedback repository.
+    // Only remove the explicit suffix; unrelated dependency names must still fail.
+    let feedbackSuffix = "-feedback"
+    if repository.lowercased().hasSuffix(feedbackSuffix) {
+      repositoryAliases.formUnion(aliases(for: String(repository.dropLast(feedbackSuffix.count))))
+    }
     let applicationValues = [name] + bundleIdentifier.split(separator: ".").map(String.init)
     return applicationValues.contains { value in
       !repositoryAliases.isDisjoint(with: aliases(for: value))
@@ -255,7 +267,10 @@ struct GitHubReleaseManifest: Equatable, Sendable {
     architecture: MacCPUArchitecture = .current
   ) -> Asset? {
     assets
-      .filter { macOSScore(of: $0.name) > 0 }
+      .filter {
+        macOSScore(of: $0.name) > 0
+          && ApplicationPackageInstaller.architectureScore(of: $0.name, architecture: architecture) > 0
+      }
       .max { lhs, rhs in
         packageScore(lhs, architecture: architecture)
           < packageScore(rhs, architecture: architecture)
@@ -401,7 +416,8 @@ struct GitHubReleasesUpdateProvider: Sendable {
     }
 
     do {
-      let release = try await loadRelease(from: apiURL, cacheMissing: craftMetadata(for: application) != nil)
+      let release = try await loadRelease(from: apiURL, tagPrefix: application.githubReleaseTagPrefix,
+        cacheMissing: craftMetadata(for: application) != nil)
       let package = selectedPackage(in: release, for: application)
       let installability = await installability(
         of: package,
@@ -441,7 +457,7 @@ struct GitHubReleasesUpdateProvider: Sendable {
     }
 
     progress(.indeterminate("正在检查更新…"))
-    let release = try await loadRelease(from: apiURL)
+    let release = try await loadRelease(from: apiURL, tagPrefix: application.githubReleaseTagPrefix)
     guard let package = selectedPackage(in: release, for: application) else {
       throw ProcessRunnerError.failed(status: 1, message: "GitHub Release 中没有兼容此 Mac 的安装包。")
     }
@@ -478,7 +494,10 @@ struct GitHubReleasesUpdateProvider: Sendable {
     return release.selectedPackage()
   }
 
-  private func loadRelease(from url: URL, cacheMissing: Bool = false) async throws -> GitHubReleaseManifest {
+  private func loadRelease(from url: URL, tagPrefix: String? = nil, cacheMissing: Bool = false) async throws -> GitHubReleaseManifest {
+    if let tagPrefix {
+      return try await loadChannelRelease(from: url, tagPrefix: tagPrefix)
+    }
     try Task.checkCancellation()
     if cacheMissing, await missingReleaseCache.contains(url) {
       throw GitHubReleaseLookupError.notFound
@@ -502,6 +521,41 @@ struct GitHubReleasesUpdateProvider: Sendable {
     }
     await missingReleaseCache.remove(url)
     return release
+  }
+
+  private func loadChannelRelease(from url: URL, tagPrefix: String) async throws -> GitHubReleaseManifest {
+    guard !tagPrefix.isEmpty, tagPrefix.count <= 80,
+      tagPrefix.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0)
+        || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else {
+      throw ProcessRunnerError.failed(status: 1, message: "GitHub 发布渠道无效。")
+    }
+    // Never fall back to /latest: a shared repository can make its CLI the latest release.
+    for page in 1...5 {
+      try Task.checkCancellation()
+      guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { break }
+      components.queryItems = [URLQueryItem(name: "per_page", value: "100"),
+        URLQueryItem(name: "page", value: String(page))]
+      guard let pageURL = components.url,
+        let response = try await fetchResponse(pageURL) else { break }
+      try Task.checkCancellation()
+      guard (200..<300).contains(response.statusCode) else {
+        throw GitHubAPIError(message: "GitHub 发布列表请求失败（HTTP \(response.statusCode)）。")
+      }
+      guard response.data.count <= 5_000_000,
+        let values = try JSONSerialization.jsonObject(with: response.data) as? [[String: Any]] else { break }
+      let releases = values.compactMap { value -> GitHubReleaseManifest? in
+        guard let tag = value["tag_name"] as? String, tag.hasPrefix(tagPrefix),
+          let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+        guard let release = GitHubReleaseManifest.parse(data),
+          !VersionComparator.isPrerelease(release.version) else { return nil }
+        return release
+      }
+      if let release = releases.max(by: { VersionComparator.isNewer($1.version, than: $0.version) }) {
+        return release
+      }
+      if values.count < 100 { break }
+    }
+    throw ProcessRunnerError.failed(status: 1, message: "未找到该渠道的 GitHub 正式版本。")
   }
 
   private func installability(

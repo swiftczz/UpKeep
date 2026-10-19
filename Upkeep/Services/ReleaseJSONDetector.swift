@@ -2,6 +2,7 @@ import Foundation
 
 enum ReleaseJSONDetector {
   private static let latestNeedle = Data("latest.json".utf8)
+  private static let apiLatestNeedle = Data("/api/latest".utf8)
   private static let httpsNeedle = Data("https://".utf8)
   private static let urlAllowed = CharacterSet(
     charactersIn:
@@ -43,6 +44,11 @@ enum ReleaseJSONDetector {
 
   static func firstEndpoint(in window: Data) -> URL? {
     var searchStart = window.startIndex
+    while let range = window[searchStart...].range(of: apiLatestNeedle) {
+      if let url = url(endingAt: range, in: window, allowReconstruction: false) { return url }
+      searchStart = range.upperBound
+    }
+    searchStart = window.startIndex
     while let range = window[searchStart...].range(of: latestNeedle) {
       if let url = url(endingAt: range, in: window) {
         return url
@@ -54,7 +60,8 @@ enum ReleaseJSONDetector {
 
   private static func url(
     endingAt needleRange: Range<Data.Index>,
-    in window: Data
+    in window: Data,
+    allowReconstruction: Bool = true
   ) -> URL? {
     let maximumURLLength = 400
     var search = needleRange.lowerBound
@@ -77,7 +84,7 @@ enum ReleaseJSONDetector {
       {
         return url
       }
-      if let url = reconstructedStableEndpoint(from: slice) {
+      if allowReconstruction, let url = reconstructedStableEndpoint(from: slice) {
         return url
       }
     }
@@ -112,7 +119,8 @@ enum ReleaseJSONDetector {
       return nil
     }
     guard let url = SecureUpdateURL.https(string: rawValue),
-      url.lastPathComponent.lowercased() == "latest.json"
+      (url.lastPathComponent.lowercased() == "latest.json" || url.path == "/api/latest"),
+      url.user == nil, url.password == nil
     else {
       return nil
     }
@@ -122,6 +130,33 @@ enum ReleaseJSONDetector {
       return nil
     }
     return url
+  }
+
+  // Rust/Go can store a base URL separately from the update API path.
+  // Reconstruct only with both API markers and an origin belonging to the app.
+  static func apiOrigins(in data: Data) -> [URL] {
+    guard data.range(of: httpsNeedle) != nil else { return [] }
+    let text = String(decoding: data, as: UTF8.self)
+    guard let expression = try? NSRegularExpression(
+      pattern: #"https://[A-Za-z0-9.-]+?(?=https://|[\x00-\x20\"'<>]|$)"#) else { return [] }
+    return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+      guard let range = Range(match.range, in: text),
+        let url = SecureUpdateURL.https(string: String(text[range])),
+        url.user == nil, url.password == nil, url.port == nil,
+        url.host?.contains(".") == true else { return nil }
+      return url
+    }
+  }
+
+  static func releaseAPIURL(origins: [URL], applicationName: String?) -> URL? {
+    guard let name = applicationName?.lowercased().filter({ $0.isLetter || $0.isNumber }),
+      name.count >= 3,
+      let origin = origins.first(where: { origin in
+        origin.host?.lowercased().split(separator: ".").contains { $0 == name } == true
+      }), var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else { return nil }
+    components.path = "/api/release"
+    components.queryItems = [URLQueryItem(name: "channel", value: "stable")]
+    return components.url
   }
 
   static func hasTauriConfiguration(in bundleURL: URL) -> Bool {

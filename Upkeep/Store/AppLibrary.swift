@@ -632,6 +632,8 @@ final class AppLibrary {
 
   private static func previousReleaseIsIncompatible(_ previous: AppRecord, with current: AppRecord) -> Bool {
     guard previous.bundleIdentifier == current.bundleIdentifier else { return true }
+    if previous.source == .githubReleases, current.source == .githubReleases,
+      previous.githubReleaseTagPrefix != current.githubReleaseTagPrefix { return true }
     guard !hasSameInstalledVersion(previous, current) else { return false }
     // Replacements can restart their numbering (for example, 1.x -> 0.x).
     // Preserve ordinary forward updates and the cheap scan's incomplete source detection.
@@ -691,11 +693,18 @@ final class AppLibrary {
     if merged.sourceIdentifier == nil, previous.source == merged.source {
       merged.sourceIdentifier = previous.sourceIdentifier
     }
+    if merged.githubReleaseTagPrefix == nil, previous.sourceURL == merged.sourceURL,
+      previous.source == merged.source {
+      merged.githubReleaseTagPrefix = previous.githubReleaseTagPrefix
+    }
     if merged.alternateUpdateSource == nil {
       merged.alternateUpdateSource = previous.alternateUpdateSource
       merged.alternateSourceURL = previous.alternateSourceURL
       merged.alternateSourceIdentifier = previous.alternateSourceIdentifier
       merged.alternateHomepageURL = previous.alternateHomepageURL
+      if previous.alternateUpdateSource == .githubReleases {
+        merged.githubReleaseTagPrefix = previous.githubReleaseTagPrefix
+      }
     }
     if merged.homebrewCaskToken == nil, merged.source != .appStore {
       merged.homebrewCaskToken = previous.homebrewCaskToken
@@ -743,6 +752,7 @@ final class AppLibrary {
     var merged = carryingMetadata(from: previous, onto: disk)
     let detectedSameSource = disk.source == previous.source
     merged.source = previous.source
+    merged.githubReleaseTagPrefix = previous.githubReleaseTagPrefix
     merged.appStorePlatform = detectedSameSource
       ? disk.appStorePlatform ?? previous.appStorePlatform
       : previous.appStorePlatform

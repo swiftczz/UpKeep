@@ -29,9 +29,12 @@ Upkeep 会扫描本机已安装的 `.app`，识别各应用的更新来源，集
 | Mac App Store | 支持条件满足时下载安装；需要通过商店处理的应用会跳转到 App Store。 |
 | Homebrew | 识别由 Homebrew Cask 管理的应用，并通过 Homebrew 更新。 |
 | Sparkle、electron-updater、Tauri updater | 读取应用的更新清单，获取版本、更新说明和安装包。 |
-| VS Code updater、JSON Release | 支持识别到的对应更新协议与清单格式。 |
-| GitHub Releases | 读取对应 Release 的版本、说明和兼容的安装包。 |
+| VS Code updater | 支持识别到的对应更新协议。 |
+| JSON release | 支持 JSON 文件及官网更新 API，读取数组或字典形式的安装包列表，并匹配平台、架构和版本对应的说明。 |
+| GitHub Releases | 读取版本、说明和兼容的安装包；从内置地址模板识别发布标签前缀，区分同仓库中的桌面版、CLI 和移动版。 |
 | 应用自行更新 | 提供打开应用的入口，使用应用自身的更新功能。 |
+
+扫描范围包括应用主程序及包内名称匹配的辅助应用。更新接口、仓库及发布渠道从应用自身配置和程序内容识别；来源未知的应用会在完整检查时重新识别。
 
 Craft 套件通过通用命名规则接入 GitHub Releases：完整 Bundle ID `ai.storyteller.<名称>craft` 对应 `storytold/<名称>craft` 仓库，不依赖应用显示名称。遵循此规则的新增应用会自动识别，无需逐个添加名单。应用已有的更新协议优先使用。
 

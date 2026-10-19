@@ -24,6 +24,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var releaseNotesURL: URL?
   var updatePageURL: URL?
   var sourceIdentifier: String?
+  var githubReleaseTagPrefix: String?
   var alternateUpdateSource: UpdateSource?
   var alternateSourceURL: URL?
   var alternateSourceIdentifier: String?
@@ -56,6 +57,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     releaseNotesURL: URL? = nil,
     updatePageURL: URL? = nil,
     sourceIdentifier: String? = nil,
+    githubReleaseTagPrefix: String? = nil,
     alternateUpdateSource: UpdateSource? = nil,
     alternateSourceURL: URL? = nil,
     alternateSourceIdentifier: String? = nil,
@@ -87,6 +89,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.releaseNotesURL = releaseNotesURL
     self.updatePageURL = updatePageURL
     self.sourceIdentifier = sourceIdentifier
+    self.githubReleaseTagPrefix = githubReleaseTagPrefix
     self.alternateUpdateSource = alternateUpdateSource
     self.alternateSourceURL = alternateSourceURL
     self.alternateSourceIdentifier = alternateSourceIdentifier
@@ -121,6 +124,7 @@ extension AppRecord: Codable {
     case releaseNotesURL
     case updatePageURL
     case sourceIdentifier
+    case githubReleaseTagPrefix
     case alternateUpdateSource
     case alternateSourceURL
     case alternateSourceIdentifier
@@ -161,6 +165,7 @@ extension AppRecord: Codable {
       releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
       updatePageURL: try container.decodeIfPresent(URL.self, forKey: .updatePageURL),
       sourceIdentifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
+      githubReleaseTagPrefix: try container.decodeIfPresent(String.self, forKey: .githubReleaseTagPrefix),
       alternateUpdateSource: try container.decodeIfPresent(
         UpdateSource.self,
         forKey: .alternateUpdateSource
@@ -236,6 +241,9 @@ extension AppRecord {
 
   mutating func rememberAlternateUpdateSource(from application: AppRecord) {
     guard application.source.canBeAlternateUpdateSource else { return }
+    if application.source == .githubReleases {
+      githubReleaseTagPrefix = application.githubReleaseTagPrefix
+    }
     alternateUpdateSource = application.source
     alternateSourceURL = application.sourceURL
     alternateSourceIdentifier = application.sourceIdentifier

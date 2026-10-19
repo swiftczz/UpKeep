@@ -1,0 +1,217 @@
+import Foundation
+import XCTest
+
+@testable import Upkeep
+
+final class AdditionalUpdateSourceTests: XCTestCase, @unchecked Sendable {
+  func testDictionaryAssetsResolvePackagesAndRetainChecksums() throws {
+    let data = try json([
+      "version": "1.2.0", "published": "2026-10-19T00:00:00Z", "notes": "New release",
+      "assets": [
+        "editor-darwin-arm64.zip": ["url": "https://example.com/editor-darwin-arm64.zip", "sha256": "abc", "size": 123],
+        "editor-cli-darwin-arm64.zip": ["url": "https://example.com/editor-cli-darwin-arm64.zip"],
+        "editor-linux-arm64.tar.gz": ["url": "https://example.com/editor-linux-arm64.tar.gz"],
+        "editor-server-macos-arm64.zip": ["url": "https://example.com/editor-server-macos-arm64.zip"],
+      ],
+    ])
+    let manifest = try XCTUnwrap(ReleaseJSONManifest.parse(data))
+    let package = try XCTUnwrap(manifest.selectedPackage(architecture: .arm64))
+    XCTAssertEqual(package.name, "editor-darwin-arm64.zip")
+    XCTAssertEqual(package.sha256, "abc")
+    XCTAssertEqual(package.size, 123)
+    XCTAssertNotNil(manifest.publicationDate)
+    XCTAssertNil(manifest.selectedPackage(architecture: .x64))
+  }
+
+  func testRelativeReleaseAssetsStayPinnedToThePublishedTag() throws {
+    let source = URL(string: "https://example.com/api/release?channel=stable")!
+    let manifest = try XCTUnwrap(ReleaseJSONManifest.parse(try json([
+      "version": "1.2.0", "tag": "v1.2.0",
+      "assets": ["macos_arm64": ["name": "Editor-macos-arm64.dmg", "download_url": "/api/download/Editor-macos-arm64.dmg"]],
+      "server": ["version": "9.0", "assets": ["server": ["url": "https://example.com/server.dmg"]]],
+    ]), sourceURL: source))
+    let package = try XCTUnwrap(manifest.selectedPackage())
+    XCTAssertEqual(package.url.absoluteString, "https://example.com/api/download/Editor-macos-arm64.dmg?tag=v1.2.0")
+    XCTAssertEqual(manifest.assets.count, 1)
+    XCTAssertEqual(manifest.version, "1.2.0")
+    for download in ["//evil.example.com/app.dmg", "http://example.com/app.dmg", "https://user:secret@example.com/app.dmg"] {
+      XCTAssertNil(ReleaseJSONManifest.parse(try json(["version": "1.0", "assets": [["url": download]]]), sourceURL: source))
+    }
+  }
+
+  func testJSONProviderUsesMatchingVersionNotesAndPreservesPrimaryVersion() async throws {
+    let feed = try json(["version": "1.2.0", "assets": ["mac": ["name": "Editor-macos-arm64.dmg", "download_url": "/api/download/Editor-macos-arm64.dmg"]]])
+    let notes = try json(["releases": [
+      ["version": "9.0", "body": "Wrong version"],
+      ["version": "1.2.0", "body": "Correct\nnotes"],
+    ]])
+    let provider = ReleaseJSONUpdateProvider(fetchResponse: { url in
+      switch url.path {
+      case "/api/release": return (200, feed)
+      case "/api/changelog": return (200, notes)
+      default: XCTFail("Unexpected request: \(url)"); return nil
+      }
+    })
+    let checked = await provider.check(record(source: .releaseJSON,
+      url: "https://example.com/api/release?channel=stable"))
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(checked.latestVersion, "1.2.0")
+    XCTAssertEqual(checked.releaseNotes, "Correct\nnotes")
+    XCTAssertEqual(checked.releaseNotesURL?.absoluteString, "https://example.com/changelog")
+    XCTAssertTrue(checked.canAutomaticallyUpdate)
+  }
+
+  func testNotesFailureDoesNotLoseAValidRelease() async throws {
+    let feed = try json(["version": "1.2.0", "assets": [["url": "https://example.com/Editor-macos-arm64.dmg"]]])
+    let provider = ReleaseJSONUpdateProvider(fetchResponse: { url in
+      url.path == "/api/release" ? (200, feed) : (503, Data())
+    })
+    let checked = await provider.check(record(source: .releaseJSON,
+      url: "https://example.com/api/release?channel=stable"))
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertNil(checked.releaseNotes)
+    XCTAssertTrue(checked.canAutomaticallyUpdate)
+  }
+
+  func testLorcaTemplatePersistsDesktopChannelAcrossSnapshotAndAlternateSource() throws {
+    let metadata = try XCTUnwrap(GitHubReleasesDetector.metadata(in:
+      "https://github.com/egoist/lorca/releases/download/desktop-v{version}/update-darwin-arm64.json"))
+    XCTAssertEqual(metadata.identifier, "egoist/lorca")
+    XCTAssertEqual(metadata.tagPrefix, "desktop-v")
+    XCTAssertEqual(metadata.apiURL.path, "/repos/egoist/lorca/releases")
+    var application = record(source: .githubReleases, url: metadata.apiURL.absoluteString)
+    application.githubReleaseTagPrefix = metadata.tagPrefix
+    let decoded = try JSONDecoder().decode(AppRecord.self, from: JSONEncoder().encode(application))
+    XCTAssertEqual(decoded.githubReleaseTagPrefix, "desktop-v")
+    var brew = application
+    brew.source = .homebrew
+    brew.rememberAlternateUpdateSource(from: application)
+    XCTAssertEqual(brew.alternateUpdateCheckRecord?.githubReleaseTagPrefix, "desktop-v")
+    XCTAssertNil(GitHubReleasesDetector.metadata(in:
+      "https://github.com/egoist/lorca/releases/download/desktop-v0.1.16/update-darwin-arm64.json"))
+  }
+
+  func testChannelLookupIgnoresCLIAndMobileAndChoosesNewestStableDesktop() async throws {
+    let data = try json([
+      release("cli-v9.0.0"), release("mobile-v8.0.0"), release("desktop-v0.1.14"),
+      release("desktop-v0.2.0", prerelease: true), release("desktop-v0.1.16"),
+      release("desktop-v0.3.0", draft: true),
+    ])
+    let provider = GitHubReleasesUpdateProvider(fetchResponse: { url in
+      XCTAssertEqual(url.path, "/repos/egoist/lorca/releases")
+      XCTAssertTrue(url.query?.contains("page=1") == true)
+      return (200, data)
+    })
+    var application = record(source: .githubReleases, url: "https://api.github.com/repos/egoist/lorca/releases?per_page=100")
+    application.currentVersion = "0.1.14"
+    application.githubReleaseTagPrefix = "desktop-v"
+    let checked = await provider.check(application)
+    XCTAssertEqual(checked.latestVersion, "0.1.16")
+    XCTAssertEqual(checked.releaseNotes, "desktop-v0.1.16")
+    XCTAssertEqual(checked.status, .updateAvailable)
+    application.currentVersion = "0.1.16"
+    let current = await provider.check(application)
+    XCTAssertEqual(current.status, .upToDate)
+  }
+
+  func testChannelLookupContinuesWhenFirstPageContainsOnlyOtherProducts() async throws {
+    let firstPage = try json(Array(repeating: release("cli-v9.0.0"), count: 100))
+    let secondPage = try json([release("desktop-v1.2.0")])
+    let provider = GitHubReleasesUpdateProvider(fetchResponse: { url in
+      let page = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+        .first(where: { $0.name == "page" })?.value
+      XCTAssertTrue(page == "1" || page == "2")
+      return (200, page == "1" ? firstPage : secondPage)
+    })
+    var application = record(source: .githubReleases, url: "https://api.github.com/repos/egoist/lorca/releases")
+    application.githubReleaseTagPrefix = "desktop-v"
+    let checked = await provider.check(application)
+    XCTAssertEqual(checked.latestVersion, "1.2.0")
+    XCTAssertEqual(checked.status, .updateAvailable)
+  }
+
+  func testMissingDesktopChannelDoesNotFallBackToCLILatest() async throws {
+    let data = try json([release("cli-v9.0.0")])
+    let provider = GitHubReleasesUpdateProvider(fetchResponse: { url in
+      XCTAssertFalse(url.path.hasSuffix("/latest"))
+      return (200, data)
+    })
+    var application = record(source: .githubReleases, url: "https://api.github.com/repos/egoist/lorca/releases")
+    application.githubReleaseTagPrefix = "desktop-v"
+    let checked = await provider.check(application)
+    guard case .unavailable = checked.status else { return XCTFail("Missing channel was accepted") }
+    XCTAssertNil(checked.latestVersion)
+  }
+
+  func testDetectsAPILatestWithoutJSONFileExtension() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let app = try bundle(at: directory.appendingPathComponent("Editor.app"), executable: "Editor",
+      content: "go string https://example.com/api/latestanother go string")
+    let detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
+    XCTAssertEqual(detected.source, .releaseJSON)
+    XCTAssertEqual(detected.sourceURL?.absoluteString, "https://example.com/api/latest")
+  }
+
+  func testHelperReconstructsOnlyItsApplicationAPIAndIgnoresEscapingSymlinks() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let app = try bundle(at: directory.appendingPathComponent("Editor.app"), executable: "editor-desktop", content: "main")
+    let helper = try bundle(at: app.appendingPathComponent("Contents/Helpers/EditorAgent.app"), executable: "agent",
+      content: "https://other.example.comhttps://editor.example.com\0/api/release?channel=\0/api/changelog?per_page=")
+    var detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
+    XCTAssertEqual(detected.source, .releaseJSON)
+    XCTAssertEqual(detected.sourceURL?.absoluteString, "https://editor.example.com/api/release?channel=stable")
+    let executable = helper.appendingPathComponent("Contents/MacOS/agent")
+    try FileManager.default.moveItem(at: executable, to: directory.appendingPathComponent("outside"))
+    try FileManager.default.createSymbolicLink(at: executable, withDestinationURL: directory.appendingPathComponent("outside"))
+    detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
+    XCTAssertEqual(detected.source, .selfManaged)
+  }
+
+  func testInstalledApplicationsUseExpectedUpdateProtocolsWhenPresent() throws {
+    for (name, source, host) in [
+      ("magpie", UpdateSource.releaseJSON, "usemagpie.ai"),
+      ("Lorca", .githubReleases, "api.github.com"),
+      ("FluxDown", .releaseJSON, "fluxdown.zerx.dev"),
+    ] {
+      let url = URL(fileURLWithPath: "/Applications/\(name).app")
+      guard FileManager.default.fileExists(atPath: url.path) else { continue }
+      let detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+      XCTAssertEqual(detected.source, source, name)
+      XCTAssertEqual(detected.sourceURL?.host, host, name)
+      if name == "Lorca" { XCTAssertEqual(detected.githubReleaseTagPrefix, "desktop-v") }
+    }
+  }
+
+  private func record(source: UpdateSource, url: String) -> AppRecord {
+    AppRecord(name: "Editor", bundleIdentifier: "com.example.editor",
+      applicationURL: URL(fileURLWithPath: "/Applications/Editor.app"), currentVersion: "1.0",
+      source: source, status: .checking, sourceURL: URL(string: url))
+  }
+
+  private func json(_ object: Any) throws -> Data {
+    try JSONSerialization.data(withJSONObject: object)
+  }
+
+  private func release(_ tag: String, prerelease: Bool = false, draft: Bool = false) -> [String: Any] {
+    ["tag_name": tag, "body": tag, "prerelease": prerelease, "draft": draft,
+      "assets": [["name": "Editor-macos-arm64.dmg", "browser_download_url": "https://example.com/Editor.dmg"]]]
+  }
+
+  @discardableResult
+  private func bundle(at url: URL, executable: String, content: String) throws -> URL {
+    let contents = url.appendingPathComponent("Contents")
+    let macOS = contents.appendingPathComponent("MacOS")
+    try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+    let info: [String: Any] = ["CFBundleName": url.deletingPathExtension().lastPathComponent,
+      "CFBundleIdentifier": "com.example.\(executable)", "CFBundleShortVersionString": "1.0",
+      "CFBundleExecutable": executable, "CFBundlePackageType": "APPL"]
+    try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+      .write(to: contents.appendingPathComponent("Info.plist"))
+    let binary = macOS.appendingPathComponent(executable)
+    try Data(content.utf8).write(to: binary)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+    return url
+  }
+}

@@ -53,6 +53,52 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
     )
   }
 
+  func testFeedbackRepositoryMatchesApplicationWithoutMatchingOtherApps() throws {
+    let metadata = try XCTUnwrap(GitHubReleasesDetector.metadata(in:
+      "https://github.com/egoist/pulse-feedback/releases/latest/download/update-darwin-arm64.json"))
+    XCTAssertEqual(metadata.identifier, "egoist/pulse-feedback")
+    XCTAssertTrue(GitHubReleasesDetector.matchesApplication(metadata,
+      name: "Pulse", bundleIdentifier: "com.egoist.pulse"))
+    XCTAssertFalse(GitHubReleasesDetector.matchesApplication(metadata,
+      name: "Lorca", bundleIdentifier: "app.lorca"))
+
+    let dependency = try XCTUnwrap(GitHubReleasesDetector.metadata(in:
+      "https://github.com/example/other-feedback/releases/latest"))
+    XCTAssertFalse(GitHubReleasesDetector.matchesApplication(dependency,
+      name: "Pulse", bundleIdentifier: "com.egoist.pulse"))
+    let notASuffix = try XCTUnwrap(GitHubReleasesDetector.metadata(in:
+      "https://github.com/example/pulsefeedback/releases/latest"))
+    XCTAssertFalse(GitHubReleasesDetector.matchesApplication(notASuffix,
+      name: "Pulse", bundleIdentifier: "com.egoist.pulse"))
+  }
+
+  func testPulseReleaseSelectsFullMacApplicationInsteadOfManifestOrDelta() async throws {
+    let dmg = "Pulse.0.1.28.arm64.dmg"
+    let data = releaseData(tag: "v0.1.28", assets: [
+      "pulse-0.1.28-linux-arm64.tar.gz", "pulse-0.1.28-windows-arm64.tar.gz",
+      "pulse-0.1.28-darwin-arm64.tar.gz", "pulse-0.1.27-to-0.1.28-darwin-arm64.delta",
+      "update-darwin-arm64.json", dmg,
+    ])
+    let release = try XCTUnwrap(GitHubReleaseManifest.parse(data))
+    XCTAssertEqual(release.selectedPackage(architecture: .arm64)?.name, dmg)
+    XCTAssertNil(release.selectedPackage(architecture: .x64))
+
+    let apiURL = try XCTUnwrap(URL(string: "https://api.github.com/repos/egoist/pulse-feedback/releases/latest"))
+    let application = AppRecord(name: "Pulse", bundleIdentifier: "com.egoist.pulse",
+      applicationURL: URL(fileURLWithPath: "/Applications/Pulse.app"), currentVersion: "0.1.12",
+      source: .githubReleases, status: .checking, sourceURL: apiURL)
+    let provider = GitHubReleasesUpdateProvider(fetchResponse: { url in
+      XCTAssertEqual(url, apiURL)
+      return (200, data)
+    })
+    let checked = await provider.check(application)
+    XCTAssertEqual(checked.source, .githubReleases)
+    XCTAssertEqual(checked.latestVersion, "0.1.28")
+    XCTAssertEqual(checked.status, .updateAvailable)
+    XCTAssertEqual(checked.releaseNotes, "Changes")
+    XCTAssertTrue(checked.canAutomaticallyUpdate)
+  }
+
   func testCollectsMultipleLatestReleaseCandidatesInTextOrder() {
     let candidates = GitHubReleasesDetector.metadataCandidates(
       in: """

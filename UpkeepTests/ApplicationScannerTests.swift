@@ -663,6 +663,45 @@ final class ApplicationScannerTests: XCTestCase {
     XCTAssertEqual(application.sourceTitle, "GitHub Releases")
   }
 
+  func testDetectsFeedbackReleaseEndpointAndRecoversUnknownSourceCache() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PulseTests-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let app = directory.appendingPathComponent("Pulse.app")
+    let contents = app.appendingPathComponent("Contents")
+    let macOS = contents.appendingPathComponent("MacOS")
+    try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+    try writePropertyList(basicInfo(bundleIdentifier: "com.egoist.pulse", extraValues: [
+      "CFBundleDisplayName": "Pulse", "CFBundleName": "Pulse", "CFBundleExecutable": "Pulse",
+    ]), to: contents.appendingPathComponent("Info.plist"))
+    try Data("https://github.com/egoist/pulse-feedback/releases/latest/download/update-darwin-arm64.json".utf8)
+      .write(to: macOS.appendingPathComponent("Pulse"))
+    let fresh = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
+    XCTAssertEqual(fresh.source, .githubReleases)
+    XCTAssertEqual(fresh.sourceIdentifier, "egoist/pulse-feedback")
+    XCTAssertEqual(fresh.sourceURL?.absoluteString,
+      "https://api.github.com/repos/egoist/pulse-feedback/releases/latest")
+    var cached = fresh
+    cached.source = .selfManaged
+    cached.sourceURL = nil
+    cached.sourceIdentifier = nil
+    cached.homepageURL = nil
+    cached.status = .selfManaged
+    let recovered = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
+    XCTAssertEqual(recovered.source, .githubReleases)
+    XCTAssertEqual(recovered.sourceURL, fresh.sourceURL)
+    XCTAssertEqual(recovered.applicationModificationDate, cached.applicationModificationDate)
+  }
+
+  func testDetectsInstalledPulseGitHubReleaseWhenPresent() throws {
+    let url = URL(fileURLWithPath: "/Applications/Pulse.app")
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      throw XCTSkip("Pulse is not installed")
+    }
+    let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+    XCTAssertEqual(record.source, .githubReleases)
+    XCTAssertEqual(record.sourceIdentifier, "egoist/pulse-feedback")
+  }
+
   func testDoesNotTreatSpecificGitHubReleaseLinkAsLatestUpdater() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory

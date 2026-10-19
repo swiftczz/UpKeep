@@ -189,10 +189,13 @@ struct ApplicationScanner: ApplicationScanning {
       || FileManager.default.fileExists(atPath: sparkleURL.path)
     let knownGitHubSource = KnownGitHubReleaseSources.metadata(for: bundleIdentifier)
 
+    // Retry unknown sources in full scans so new detector rules can recover them.
+    // The installed-only monitor still reuses unchanged records without reading binaries.
     if let previous, previous.source != .vscodeUpdater,
       previous.source != .sparkle || previous.sourceURL == feedURL,
       !(previous.source == .selfManaged
-        && (hasSparkleSource
+        && (sourceDetection == .full
+          || hasSparkleSource
           || knownGitHubSource != nil
           || ExecutableUpdaterDetector.hasApplicationService(in: bundle.bundleURL))),
       canReuse(
@@ -326,6 +329,9 @@ struct ApplicationScanner: ApplicationScanning {
         status = .checking
         releaseJSONEndpoint = detectedReleaseJSON
       } else if let detectedGitHub = detection.githubReleases.first(where: {
+        $0.tagPrefix != nil && GitHubReleasesDetector.matchesApplication(
+          $0, name: name, bundleIdentifier: bundleIdentifier)
+      }) ?? detection.githubReleases.first(where: {
         GitHubReleasesDetector.matchesApplication(
           $0,
           name: name,
@@ -386,7 +392,8 @@ struct ApplicationScanner: ApplicationScanning {
         default:
           nil
         }
-      }()
+      }(),
+      githubReleaseTagPrefix: githubReleasesMetadata?.tagPrefix
     )
   }
 
