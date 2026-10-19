@@ -146,14 +146,14 @@ struct VSCodeUpdateProvider: Sendable {
           application.canAutomaticallyUpdate = payload.packageURL != nil
         }
       case .notThisProtocol:
-        application.source = .selfManaged
+        application.updateConfiguration.mechanism = .selfManaged
         application.status = .selfManaged
         application.canAutomaticallyUpdate = false
       }
     } catch is CancellationError {
       return application
     } catch {
-      application.status = .unavailable("VS Code updater 更新源暂时无法访问。")
+      application.status = .unavailable("VS Code Updater 更新源暂时无法访问。")
     }
 
     return application
@@ -164,7 +164,7 @@ struct VSCodeUpdateProvider: Sendable {
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
     guard let request = Self.updateRequest(for: application) else {
-      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 VS Code updater 更新源。")
+      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 VS Code Updater 更新源。")
     }
 
     progress(.indeterminate("正在检查更新…"))
@@ -201,8 +201,8 @@ struct VSCodeUpdateProvider: Sendable {
   }
 
   private static func updateRequest(for application: AppRecord) -> UpdateRequest? {
-    guard let updateURL = application.sourceURL.flatMap(SecureUpdateURL.https),
-      let identifier = application.sourceIdentifier,
+    guard let updateURL = application.updateConfiguration.feedURL.flatMap(SecureUpdateURL.https),
+      let identifier = application.updateConfiguration.identifier,
       let parsed = VSCodeUpdaterDetector.parseSourceIdentifier(identifier)
     else {
       return nil
@@ -255,6 +255,6 @@ struct VSCodeUpdateProvider: Sendable {
     if sawNotFound && !sawOtherFailure {
       return .notThisProtocol
     }
-    throw ProcessRunnerError.failed(status: 1, message: "无法读取 VS Code updater 更新清单。")
+    throw ProcessRunnerError.failed(status: 1, message: "无法读取 VS Code Updater 更新清单。")
   }
 }

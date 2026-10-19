@@ -67,7 +67,7 @@ struct AppDetailView: View {
           .foregroundStyle(.secondary)
 
         HStack(spacing: 6) {
-          SourceBadge(application: application)
+          UpdateChannelBadge(application: application)
 
           if isUpdateIgnored {
             Label("已忽略更新", systemImage: "bell.slash")
@@ -211,9 +211,15 @@ struct AppDetailView: View {
   private var informationItems: [(label: String, value: String, action: (() -> Void)?)] {
     var items: [(label: String, value: String, action: (() -> Void)?)] = [
       ("状态", isUpdateIgnored ? "已忽略更新" : statusTitle, nil),
-      ("更新来源", application.sourceTitle, nil),
       ("当前版本", application.versionSummary, nil),
+      ("更新来源", application.channelTitle, nil),
+      ("更新机制", application.mechanismTitle, nil),
     ]
+    if application.updateConfiguration.mechanism == .appStore,
+      let platform = application.appStorePlatform
+    {
+      items.append(("商店平台", platform.title, nil))
+    }
     if let latestVersionSummary = application.latestVersionSummary {
       items.append(("最新版本", latestVersionSummary, nil))
     }
@@ -224,7 +230,7 @@ struct AppDetailView: View {
     if let packageSize = application.packageSizeDescription {
       items.append(("更新包", packageSize, nil))
     }
-    if let homepageURL = application.homepageURL {
+    if let homepageURL = application.updateConfiguration.homepageURL {
       items.append(("主页", homepageDisplay(from: homepageURL), openHomepage))
     }
     return items
@@ -274,6 +280,7 @@ struct AppDetailView: View {
       if let action {
         Button(action: action) {
           Text(value)
+            .fixedSize(horizontal: false, vertical: true)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -282,6 +289,7 @@ struct AppDetailView: View {
         .help("打开主页")
       } else {
         Text(value)
+          .fixedSize(horizontal: false, vertical: true)
           .textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -339,7 +347,7 @@ struct AppDetailView: View {
       return "此条目未提供安装包，前往开发者页面查看更新详情"
     }
     if usesUpdatePrimaryAction {
-      switch application.source {
+      switch application.updateConfiguration.mechanism {
       case .appStore:
         if usesAppStoreUpdateHandoff {
           return application.requiresAppStoreUpdatePageHandoff
@@ -349,7 +357,7 @@ struct AppDetailView: View {
         return "使用当前 App Store 账号下载并安装此更新"
       case .homebrew:
         return "使用 Homebrew 下载并安装此更新"
-      case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON,
+      case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .customAPI,
         .githubReleases, .selfManaged:
         return "下载并安装此更新"
       }
@@ -367,7 +375,7 @@ struct AppDetailView: View {
   }
 
   private var usesApplicationUpdaterHandoff: Bool {
-    application.source == .sparkle && application.needsUpdate
+    application.updateConfiguration.mechanism == .sparkle && application.needsUpdate
       && !application.canAutomaticallyUpdate && application.manualUpdateURL == nil
   }
 
@@ -415,7 +423,8 @@ struct AppDetailView: View {
   }
 
   private var canOpenAppStore: Bool {
-    application.source == .appStore && application.sourceURL != nil
+    application.updateConfiguration.mechanism == .appStore
+      && application.updateConfiguration.feedURL != nil
   }
 
   private var releaseNotesPlaceholder: String {
@@ -429,19 +438,20 @@ struct AppDetailView: View {
 
   private var githubConnectionIssue: String? {
     guard case .unavailable(let message) = application.status,
-      GitHubConnectionNotice.recognizes(message) else { return nil }
+      GitHubConnectionNotice.recognizes(message)
+    else { return nil }
     return message
   }
 }
 
-private struct SourceBadge: View {
+private struct UpdateChannelBadge: View {
   let application: AppRecord
 
   var body: some View {
     Label {
-      Text(application.sourceTitle)
+      Text(application.channelTitle)
     } icon: {
-      AppSourceIconView(application: application)
+      UpdateChannelIconView(application: application)
     }
     .font(.caption.weight(.medium))
     .foregroundStyle(.secondary)
@@ -449,6 +459,7 @@ private struct SourceBadge: View {
     .padding(.vertical, 4)
     .background(.quaternary, in: .capsule)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(application.sourceTitle)
+    .accessibilityLabel("更新来源：\(application.channelTitle)")
+    .help("更新来源：\(application.channelTitle)；更新机制：\(application.mechanismTitle)")
   }
 }

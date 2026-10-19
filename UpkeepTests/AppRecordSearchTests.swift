@@ -12,23 +12,26 @@ final class AppRecordSearchTests: XCTestCase {
   }
 
   func testMatchesUpdateSourceCaseInsensitively() {
-    let homebrew = makeApplication(source: .homebrew)
-    let sparkle = makeApplication(source: .sparkle)
+    let homebrew = makeApplication(mechanism: .homebrew)
+    let sparkle = makeApplication(mechanism: .sparkle)
 
     XCTAssertTrue(homebrew.matchesSearch("HoMeBrEw"))
     XCTAssertTrue(sparkle.matchesSearch("SPARKLE"))
+    let electron = makeApplication(mechanism: .electronBuilder)
+    XCTAssertTrue(electron.matchesSearch("Electron Updater"))
+    XCTAssertTrue(electron.matchesSearch("electron-updater"))
   }
 
   func testExplicitSourceQueryDoesNotMatchAnotherSourcesBundleIdentifier() {
     let ollama = makeApplication(
       name: "Ollama",
       bundleIdentifier: "com.electron.ollama",
-      source: .homebrew
+      mechanism: .homebrew
     )
     let electronApplication = makeApplication(
       name: "Electron Application",
       bundleIdentifier: "com.example.desktop",
-      source: .electronBuilder
+      mechanism: .electronBuilder
     )
 
     XCTAssertFalse(ollama.matchesSearch("electron"))
@@ -44,73 +47,124 @@ final class AppRecordSearchTests: XCTestCase {
   }
 
   func testMatchesPlatformSpecificAppStoreTitle() {
-    let application = makeApplication(source: .appStore, appStorePlatform: .mac)
+    let application = makeApplication(mechanism: .appStore, appStorePlatform: .mac)
 
     XCTAssertTrue(application.matchesSearch("mac app store"))
   }
 
   func testMatchesLocalizedUnknownSourceAndTrimsWhitespace() {
-    let application = makeApplication(source: .selfManaged)
+    let application = makeApplication(mechanism: .selfManaged)
 
     XCTAssertTrue(application.matchesSearch("  未知  "))
   }
 
+  func testUnknownSearchDoesNotMatchAnUnresolvedBackupChannel() {
+    for mechanism in UpdateMechanism.allCases where mechanism != .selfManaged {
+      var application = makeApplication(
+        name: "Unknown Tool", bundleIdentifier: "com.example.unknown", mechanism: mechanism)
+      application.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .sparkle)
+      application.alternateUpdateConfiguration?.feedURL = nil
+      for query in ["未知", "unknown", "unknow", "  UNKNOWN  "] {
+        XCTAssertFalse(application.matchesSearch(query), "\(mechanism): \(query)")
+      }
+    }
+  }
+
+  func testUnknownSearchMatchesCurrentUnknownChannelWithKnownMechanism() {
+    var application = makeApplication(mechanism: .sparkle)
+    application.updateConfiguration.feedURL = nil
+    application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
+    application.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .githubReleases)
+    for query in ["未知", "unknown", "unknow", "  UNKNOWN  "] {
+      XCTAssertTrue(application.matchesSearch(query), query)
+    }
+    XCTAssertTrue(application.matchesSearch("Sparkle"))
+    XCTAssertFalse(application.matchesSearch("Homebrew"))
+    XCTAssertFalse(application.matchesSearch("GitHub"))
+    XCTAssertFalse(application.matchesSearch("GitHub Releases"))
+  }
+
+  func testMechanismSearchOnlyMatchesTheActiveUpdater() {
+    var application = makeApplication(mechanism: .homebrew)
+    application.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .electronBuilder)
+    application.alternateUpdateConfiguration?.feedURL = URL(
+      string: "https://github.com/example/app/latest-mac.yml")
+    XCTAssertTrue(application.matchesSearch("Homebrew Cask"))
+    XCTAssertFalse(application.matchesSearch("Electron Updater"))
+    XCTAssertFalse(application.matchesSearch("electron-updater"))
+    XCTAssertFalse(application.matchesSearch("GitHub"))
+  }
+
+  func testWebsiteAndGitHubSearchFollowFeedHostingRatherThanProtocolAliases() {
+    var application = makeApplication(mechanism: .customAPI)
+    application.updateConfiguration.feedURL = URL(
+      string: "https://github.com/example/app/releases/latest/download/latest.json")
+    for query in ["Website", "官网", "官网更新"] {
+      XCTAssertFalse(application.matchesSearch(query), query)
+    }
+    XCTAssertTrue(application.matchesSearch("GitHub"))
+    XCTAssertTrue(application.matchesSearch("Custom API"))
+    XCTAssertFalse(application.matchesSearch("GitHub Releases"))
+  }
+
   func testRejectsUnrelatedSearchText() {
-    let application = makeApplication(source: .homebrew)
+    let application = makeApplication(mechanism: .homebrew)
 
     XCTAssertFalse(application.matchesSearch("Sparkle"))
   }
 
-  func testMatchesRecordedInstallationChannelWhenCheckChannelDiffers() {
-    var application = makeApplication(source: .sparkle)
-    application.installedSource = .homebrew
+  func testInstallationHistoryDoesNotChangeTheDisplayedUpdateSource() {
+    var application = makeApplication(mechanism: .sparkle)
+    application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
 
-    XCTAssertEqual(application.sourceTitle, "Homebrew")
-    XCTAssertEqual(application.sourceSystemImage, UpdateSource.homebrew.systemImage)
-    XCTAssertTrue(application.matchesSearch("homebrew"))
+    XCTAssertEqual(application.channelTitle, "Website")
+    XCTAssertEqual(application.channelSystemImage, UpdateChannel.website.systemImage)
+    XCTAssertFalse(application.matchesSearch("homebrew"))
   }
 
   func testAvailableUpdateDisplaysTheCurrentChannelInsteadOfTheInstalledChannel() {
-    for source in UpdateSource.allCases where source != .selfManaged {
-      var application = makeApplication(source: source)
-      application.installedSource = source == .homebrew ? .sparkle : .homebrew
+    for mechanism in UpdateMechanism.allCases where mechanism != .selfManaged {
+      var application = makeApplication(mechanism: mechanism)
+      application.installedUpdateConfiguration = UpdateConfiguration(
+        mechanism: mechanism == .homebrew ? .sparkle : .homebrew)
       application.status = .updateAvailable
       application.latestVersion = "2.0"
 
-      XCTAssertEqual(application.displayedSource, source)
-      XCTAssertEqual(application.sourceTitle, source.title)
-      XCTAssertEqual(application.sourceSystemImage, source.systemImage)
+      XCTAssertEqual(application.updateConfiguration.mechanism, mechanism)
+      XCTAssertEqual(application.channelTitle, application.updateConfiguration.channel.title)
+      XCTAssertEqual(
+        application.channelSystemImage, application.updateConfiguration.channel.systemImage)
     }
   }
 
   func testKnownUpdateKeepsItsActualChannelWhileCheckingOrAfterATemporaryFailure() {
-    var application = makeApplication(source: .sparkle)
-    application.installedSource = .homebrew
+    var application = makeApplication(mechanism: .sparkle)
+    application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
     application.latestVersion = "2.0"
     for status in [UpdateStatus.checking, .unavailable("暂时无法访问更新源")] {
       application.status = status
 
       XCTAssertTrue(application.needsUpdate)
-      XCTAssertEqual(application.sourceTitle, "Sparkle")
-      XCTAssertEqual(application.sourceSystemImage, UpdateSource.sparkle.systemImage)
+      XCTAssertEqual(application.channelTitle, "Website")
+      XCTAssertEqual(application.channelSystemImage, UpdateChannel.website.systemImage)
     }
   }
 
   func testSourceSearchMatchesTheDisplayedAvailableUpdateChannel() {
-    var application = makeApplication(source: .sparkle)
-    application.installedSource = .homebrew
+    var application = makeApplication(mechanism: .sparkle)
+    application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
     application.status = .updateAvailable
     application.latestVersion = "2.0"
 
     XCTAssertTrue(application.matchesSearch("Sparkle"))
     XCTAssertFalse(application.matchesSearch("Homebrew"))
     application.applyInstalledRelease()
-    XCTAssertEqual(application.sourceTitle, "Homebrew")
-    XCTAssertTrue(application.matchesSearch("Homebrew"))
+    XCTAssertEqual(application.channelTitle, "Website")
+    XCTAssertFalse(application.matchesSearch("Homebrew"))
   }
 
   func testOldSnapshotDoesNotInferUpdateChannelFromInstallationDate() throws {
-    var application = makeApplication(source: .sparkle)
+    var application = makeApplication(mechanism: .sparkle)
     application.lastInstalledAt = .now
     var object = try XCTUnwrap(
       JSONSerialization.jsonObject(with: JSONEncoder().encode(application)) as? [String: Any]
@@ -120,14 +174,14 @@ final class AppRecordSearchTests: XCTestCase {
       AppRecord.self, from: JSONSerialization.data(withJSONObject: object)
     )
 
-    XCTAssertNil(restored.installedSource)
-    XCTAssertEqual(restored.sourceTitle, "Sparkle")
+    XCTAssertNil(restored.installedUpdateConfiguration?.mechanism)
+    XCTAssertEqual(restored.channelTitle, "Website")
   }
 
   private func makeApplication(
     name: String = "Example",
     bundleIdentifier: String = "com.example.app",
-    source: UpdateSource = .selfManaged,
+    mechanism: UpdateMechanism = .selfManaged,
     appStorePlatform: AppStorePlatform? = nil
   ) -> AppRecord {
     AppRecord(
@@ -135,7 +189,8 @@ final class AppRecordSearchTests: XCTestCase {
       bundleIdentifier: bundleIdentifier,
       applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
-      source: source,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: mechanism, feedURL: URL(string: "https://example.com/updates")),
       appStorePlatform: appStorePlatform,
       status: .upToDate
     )

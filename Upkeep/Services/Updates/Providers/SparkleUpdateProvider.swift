@@ -25,7 +25,7 @@ struct SparkleUpdateProvider: Sendable {
   func check(_ application: AppRecord, fallbackNotes: AppRecord? = nil) async -> AppRecord {
     var application = application
 
-    guard let feedURL = application.sourceURL,
+    guard let feedURL = application.updateConfiguration.feedURL,
       SecureUpdateURL.https(feedURL) != nil
     else {
       application.status = .selfManaged
@@ -48,8 +48,8 @@ struct SparkleUpdateProvider: Sendable {
 
       let parser = SparkleAppcastParser(data: data)
       let candidates = try parser.parse()
-      if application.homepageURL == nil {
-        application.homepageURL = parser.homepageURL
+      if application.updateConfiguration.homepageURL == nil {
+        application.updateConfiguration.homepageURL = parser.homepageURL
       }
       guard !candidates.isEmpty else {
         application.status = .unavailable("更新源没有提供版本。")
@@ -79,7 +79,8 @@ struct SparkleUpdateProvider: Sendable {
       application.latestBuildVersion = candidate.buildVersion
       application.releaseDate = candidate.publicationDate.flatMap(Self.parsePublicationDate)
       application.releaseNotesURL = candidate.releaseNotesURL
-      application.releaseNotes = candidate.summaryFormat == "markdown"
+      application.releaseNotes =
+        candidate.summaryFormat == "markdown"
         ? candidate.summary?.nonBlankValue
         : candidate.summary.flatMap(Self.plainText(fromHTML:))
       application.packageByteCount = candidate.packageByteCount
@@ -87,7 +88,8 @@ struct SparkleUpdateProvider: Sendable {
 
       if application.releaseNotes == nil, let fallbackNotes,
         fallbackNotes.latestVersion?.split(separator: ",").first.map(String.init) == latestVersion,
-        let notes = fallbackNotes.releaseNotes?.nonBlankValue {
+        let notes = fallbackNotes.releaseNotes?.nonBlankValue
+      {
         application.releaseNotes = notes
         application.releaseNotesURL = fallbackNotes.releaseNotesURL
       }
@@ -138,7 +140,9 @@ struct SparkleUpdateProvider: Sendable {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
-    guard let feedURL = application.sourceURL, SecureUpdateURL.https(feedURL) != nil else {
+    guard let feedURL = application.updateConfiguration.feedURL,
+      SecureUpdateURL.https(feedURL) != nil
+    else {
       throw SparkleUpdateProviderError.insecureFeed
     }
 
@@ -397,7 +401,8 @@ struct SparkleCandidate: Hashable, Sendable {
           // Require a version next to the label so app names such as
           // "BetaApp" or a generic /beta/ directory do not exclude releases.
           value.range(
-            of: #"(?i)(?:^|[^a-z0-9])v?\d+(?:\.\d+)*[-_ ]+(?:alpha|beta|rc|pre(?:[-_ ]?release)?|preview|nightly|dev)(?=$|[^a-z])"#,
+            of:
+              #"(?i)(?:^|[^a-z0-9])v?\d+(?:\.\d+)*[-_ ]+(?:alpha|beta|rc|pre(?:[-_ ]?release)?|preview|nightly|dev)(?=$|[^a-z])"#,
             options: .regularExpression
           ) != nil
         }
@@ -533,7 +538,8 @@ final class SparkleAppcastParser: NSObject, XMLParserDelegate {
       candidate.edSignature =
         Self.attribute(named: "edsignature", in: attributeDict)
         ?? candidate.edSignature
-      candidate.installationType = Self.attribute(named: "installationtype", in: attributeDict)
+      candidate.installationType =
+        Self.attribute(named: "installationtype", in: attributeDict)
         ?? candidate.installationType
       if let length = JSONByteCount.parse(Self.attribute(named: "length", in: attributeDict)) {
         candidate.packageByteCount = length

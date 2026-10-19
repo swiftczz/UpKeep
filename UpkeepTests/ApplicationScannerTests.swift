@@ -108,16 +108,16 @@ final class ApplicationScannerTests: XCTestCase {
     )
 
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    cached.source = .githubReleases
-    cached.sourceIdentifier = "example/cached"
+    cached.updateConfiguration.mechanism = .githubReleases
+    cached.updateConfiguration.identifier = "example/cached"
     cached.releaseNotes = "Cached release notes"
 
     let reused = try XCTUnwrap(
       ApplicationScanner.makeRecord(from: applicationURL, reusing: cached)
     )
 
-    XCTAssertEqual(reused.source, .githubReleases)
-    XCTAssertEqual(reused.sourceIdentifier, "example/cached")
+    XCTAssertEqual(reused.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(reused.updateConfiguration.identifier, "example/cached")
     XCTAssertEqual(reused.releaseNotes, "Cached release notes")
 
     try writePropertyList(
@@ -225,7 +225,8 @@ final class ApplicationScannerTests: XCTestCase {
     ].installedApplications()
 
     XCTAssertEqual(installed.map(\.name), ["Evening", "Noon", "Morning"])
-    XCTAssertEqual(Set(installed.compactMap(\.applicationModificationDate?.slashDateText)), ["2026/08/21"])
+    XCTAssertEqual(
+      Set(installed.compactMap(\.applicationModificationDate?.slashDateText)), ["2026/08/21"])
   }
 
   func testAvailableUpdatesWithoutReleaseDateFallBackToModificationTime() {
@@ -357,29 +358,35 @@ final class ApplicationScannerTests: XCTestCase {
       name: "Termio",
       modifiedAt: Date(timeIntervalSince1970: 100)
     )
-    application.source = .homebrew
-    application.sourceIdentifier = "termio"
+    application.updateConfiguration.mechanism = .homebrew
+    application.updateConfiguration.identifier = "termio"
     application.homebrewCaskToken = "termio"
-    application.alternateUpdateSource = .sparkle
-    application.alternateSourceURL = URL(string: "https://downloads.termio.sh/appcast.xml")
-    application.alternateHomepageURL = URL(string: "https://termio.sh/")
+    application.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .sparkle)
+    application.alternateUpdateConfiguration?.feedURL = URL(
+      string: "https://downloads.termio.sh/appcast.xml")
+    application.alternateUpdateConfiguration?.homepageURL = URL(string: "https://termio.sh/")
 
     let decoded = try JSONDecoder().decode(
       AppRecord.self,
       from: try JSONEncoder().encode(application)
     )
 
-    XCTAssertEqual(decoded.alternateUpdateSource, .sparkle)
-    XCTAssertEqual(decoded.alternateSourceURL, application.alternateSourceURL)
-    XCTAssertEqual(decoded.alternateHomepageURL, application.alternateHomepageURL)
+    XCTAssertEqual(decoded.alternateUpdateConfiguration?.mechanism, .sparkle)
+    XCTAssertEqual(
+      decoded.alternateUpdateConfiguration?.feedURL,
+      application.alternateUpdateConfiguration?.feedURL)
+    XCTAssertEqual(
+      decoded.alternateUpdateConfiguration?.homepageURL,
+      application.alternateUpdateConfiguration?.homepageURL)
   }
 
   func testDecodesSnapshotWithoutLastInstalledAt() throws {
     var application = makeApplication(name: "Legacy")
     application.lastInstalledAt = Date(timeIntervalSince1970: 1)
-    var payload = try JSONSerialization.jsonObject(
-      with: try JSONEncoder().encode(application)
-    ) as! [String: Any]
+    var payload =
+      try JSONSerialization.jsonObject(
+        with: try JSONEncoder().encode(application)
+      ) as! [String: Any]
     payload.removeValue(forKey: "lastInstalledAt")
     let data = try JSONSerialization.data(withJSONObject: payload)
 
@@ -416,11 +423,11 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .appStore)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .appStore)
     XCTAssertEqual(application.appStorePlatform, .mac)
-    XCTAssertEqual(application.sourceTitle, "Mac App Store")
-    XCTAssertEqual(application.sourceSystemImage, "apple.logo")
-    XCTAssertEqual(application.sourcePlatformSystemImage, "macwindow")
+    XCTAssertEqual(application.channelTitle, "App Store")
+    XCTAssertEqual(application.channelSystemImage, "apple.logo")
+    XCTAssertEqual(application.channelPlatformSystemImage, "macwindow")
   }
 
   func testInstalledApplicationRecordDetectsNativeMacAppStoreReceipt() throws {
@@ -449,7 +456,7 @@ final class ApplicationScannerTests: XCTestCase {
       ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
     )
 
-    XCTAssertEqual(application.source, .appStore)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .appStore)
     XCTAssertEqual(application.appStorePlatform, .mac)
     XCTAssertEqual(application.status, .upToDate)
   }
@@ -477,7 +484,7 @@ final class ApplicationScannerTests: XCTestCase {
     try Data("receipt".utf8).write(to: receiptURL)
 
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    cached.source = .selfManaged
+    cached.updateConfiguration.mechanism = .selfManaged
     cached.appStorePlatform = nil
     cached.status = .selfManaged
 
@@ -485,7 +492,7 @@ final class ApplicationScannerTests: XCTestCase {
       ApplicationScanner.makeRecord(from: applicationURL, reusing: cached)
     )
 
-    XCTAssertEqual(rescanned.source, .appStore)
+    XCTAssertEqual(rescanned.updateConfiguration.mechanism, .appStore)
     XCTAssertEqual(rescanned.appStorePlatform, .mac)
   }
 
@@ -497,10 +504,10 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .appStore)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .appStore)
     XCTAssertEqual(application.appStorePlatform, .mac)
     XCTAssertEqual(application.bundleIdentifier, "tech.baye.OpenCat")
-    XCTAssertEqual(application.sourceIdentifier, "6445999201")
+    XCTAssertEqual(application.updateConfiguration.identifier, "6445999201")
   }
 
   func testDetectsWrappedIPhoneAppStoreApplication() throws {
@@ -563,13 +570,13 @@ final class ApplicationScannerTests: XCTestCase {
       ApplicationScanner.makeRecord(from: applicationURL, reusing: incomplete)
     )
 
-    XCTAssertEqual(application.source, .appStore)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .appStore)
     XCTAssertEqual(application.appStorePlatform, .iPhone)
     XCTAssertEqual(application.appStoreCountryCode, "cn")
-    XCTAssertEqual(application.sourceIdentifier, "698570469")
-    XCTAssertEqual(application.sourceTitle, "iPhone App Store")
-    XCTAssertEqual(application.sourceSystemImage, "apple.logo")
-    XCTAssertEqual(application.sourcePlatformSystemImage, "iphone")
+    XCTAssertEqual(application.updateConfiguration.identifier, "698570469")
+    XCTAssertEqual(application.channelTitle, "App Store")
+    XCTAssertEqual(application.channelSystemImage, "apple.logo")
+    XCTAssertEqual(application.channelPlatformSystemImage, "iphone")
     XCTAssertEqual(application.currentVersion, "1.0")
     XCTAssertEqual(application.buildVersion, "1")
     XCTAssertEqual(application.applicationURL, applicationURL)
@@ -629,8 +636,8 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .selfManaged)
-    XCTAssertNil(application.sourceURL)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .selfManaged)
+    XCTAssertNil(application.updateConfiguration.feedURL)
   }
 
   func testDetectsGitHubReleasesUpdaterInNativeExecutable() throws {
@@ -653,42 +660,52 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .githubReleases)
-    XCTAssertEqual(application.sourceIdentifier, "l0ng-ai/tty7")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(application.updateConfiguration.identifier, "l0ng-ai/tty7")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://api.github.com/repos/l0ng-ai/tty7/releases/latest"
     )
-    XCTAssertEqual(application.homepageURL?.absoluteString, "https://github.com/l0ng-ai/tty7")
-    XCTAssertEqual(application.sourceTitle, "GitHub Releases")
+    XCTAssertEqual(
+      application.updateConfiguration.homepageURL?.absoluteString, "https://github.com/l0ng-ai/tty7"
+    )
+    XCTAssertEqual(application.channelTitle, "GitHub")
   }
 
   func testDetectsFeedbackReleaseEndpointAndRecoversUnknownSourceCache() throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PulseTests-\(UUID())")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "PulseTests-\(UUID())")
     defer { try? FileManager.default.removeItem(at: directory) }
     let app = directory.appendingPathComponent("Pulse.app")
     let contents = app.appendingPathComponent("Contents")
     let macOS = contents.appendingPathComponent("MacOS")
     try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
-    try writePropertyList(basicInfo(bundleIdentifier: "com.egoist.pulse", extraValues: [
-      "CFBundleDisplayName": "Pulse", "CFBundleName": "Pulse", "CFBundleExecutable": "Pulse",
-    ]), to: contents.appendingPathComponent("Info.plist"))
-    try Data("https://github.com/egoist/pulse-feedback/releases/latest/download/update-darwin-arm64.json".utf8)
-      .write(to: macOS.appendingPathComponent("Pulse"))
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.egoist.pulse",
+        extraValues: [
+          "CFBundleDisplayName": "Pulse", "CFBundleName": "Pulse", "CFBundleExecutable": "Pulse",
+        ]), to: contents.appendingPathComponent("Info.plist"))
+    try Data(
+      "https://github.com/egoist/pulse-feedback/releases/latest/download/update-darwin-arm64.json"
+        .utf8
+    )
+    .write(to: macOS.appendingPathComponent("Pulse"))
     let fresh = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
-    XCTAssertEqual(fresh.source, .githubReleases)
-    XCTAssertEqual(fresh.sourceIdentifier, "egoist/pulse-feedback")
-    XCTAssertEqual(fresh.sourceURL?.absoluteString,
+    XCTAssertEqual(fresh.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(fresh.updateConfiguration.identifier, "egoist/pulse-feedback")
+    XCTAssertEqual(
+      fresh.updateConfiguration.feedURL?.absoluteString,
       "https://api.github.com/repos/egoist/pulse-feedback/releases/latest")
     var cached = fresh
-    cached.source = .selfManaged
-    cached.sourceURL = nil
-    cached.sourceIdentifier = nil
-    cached.homepageURL = nil
+    cached.updateConfiguration.mechanism = .selfManaged
+    cached.updateConfiguration.feedURL = nil
+    cached.updateConfiguration.identifier = nil
+    cached.updateConfiguration.homepageURL = nil
     cached.status = .selfManaged
     let recovered = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
-    XCTAssertEqual(recovered.source, .githubReleases)
-    XCTAssertEqual(recovered.sourceURL, fresh.sourceURL)
+    XCTAssertEqual(recovered.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(recovered.updateConfiguration.feedURL, fresh.updateConfiguration.feedURL)
     XCTAssertEqual(recovered.applicationModificationDate, cached.applicationModificationDate)
   }
 
@@ -698,8 +715,8 @@ final class ApplicationScannerTests: XCTestCase {
       throw XCTSkip("Pulse is not installed")
     }
     let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
-    XCTAssertEqual(record.source, .githubReleases)
-    XCTAssertEqual(record.sourceIdentifier, "egoist/pulse-feedback")
+    XCTAssertEqual(record.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(record.updateConfiguration.identifier, "egoist/pulse-feedback")
   }
 
   func testDoesNotTreatSpecificGitHubReleaseLinkAsLatestUpdater() throws {
@@ -721,7 +738,7 @@ final class ApplicationScannerTests: XCTestCase {
     ).write(to: macOSURL.appendingPathComponent("Notes"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .selfManaged)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .selfManaged)
   }
 
   func testDoesNotTreatDependencyGitHubRepositoryAsApplicationUpdater() throws {
@@ -743,7 +760,7 @@ final class ApplicationScannerTests: XCTestCase {
     ).write(to: macOSURL.appendingPathComponent("FlClash"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .selfManaged)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .selfManaged)
   }
 
   func testDetectsGitHubReleasesUpdaterInFlutterAppFramework() throws {
@@ -753,7 +770,8 @@ final class ApplicationScannerTests: XCTestCase {
     let applicationURL = temporaryDirectory.appendingPathComponent("FlClash.app", isDirectory: true)
     let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
     let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
-    let appFrameworkExecutableURL = contentsURL
+    let appFrameworkExecutableURL =
+      contentsURL
       .appendingPathComponent("Frameworks/App.framework/Versions/A", isDirectory: true)
       .appendingPathComponent("App")
     defer { try? fileManager.removeItem(at: temporaryDirectory) }
@@ -783,10 +801,10 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .githubReleases)
-    XCTAssertEqual(application.sourceIdentifier, "chen08209/FlClash")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(application.updateConfiguration.identifier, "chen08209/FlClash")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://api.github.com/repos/chen08209/FlClash/releases/latest"
     )
   }
@@ -801,7 +819,8 @@ final class ApplicationScannerTests: XCTestCase {
     )
     let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
     let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
-    let appFrameworkExecutableURL = contentsURL
+    let appFrameworkExecutableURL =
+      contentsURL
       .appendingPathComponent("Frameworks/App.framework/Versions/A", isDirectory: true)
       .appendingPathComponent("App")
     defer { try? fileManager.removeItem(at: temporaryDirectory) }
@@ -829,10 +848,10 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .githubReleases)
-    XCTAssertEqual(application.sourceIdentifier, "wanghongenpin/proxypin")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(application.updateConfiguration.identifier, "wanghongenpin/proxypin")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://api.github.com/repos/wanghongenpin/proxypin/releases/latest"
     )
   }
@@ -864,14 +883,16 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .electronBuilder)
-    XCTAssertEqual(application.sourceIdentifier, "op7418/CodePilot")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .electronBuilder)
+    XCTAssertEqual(application.updateConfiguration.identifier, "op7418/CodePilot")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://github.com/op7418/CodePilot/releases/latest/download/latest-mac.yml"
     )
-    XCTAssertEqual(application.homepageURL?.absoluteString, "https://github.com/op7418/CodePilot")
-    XCTAssertEqual(application.sourceTitle, "electron-updater")
+    XCTAssertEqual(
+      application.updateConfiguration.homepageURL?.absoluteString,
+      "https://github.com/op7418/CodePilot")
+    XCTAssertEqual(application.channelTitle, "GitHub")
   }
 
   func testInstalledApplicationRecordSkipsUpdaterSourceDetection() throws {
@@ -904,10 +925,10 @@ final class ApplicationScannerTests: XCTestCase {
     )
     let fullyScanned = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(installed.source, .selfManaged)
+    XCTAssertEqual(installed.updateConfiguration.mechanism, .selfManaged)
     XCTAssertEqual(installed.status, .selfManaged)
-    XCTAssertNil(installed.sourceURL)
-    XCTAssertEqual(fullyScanned.source, .electronBuilder)
+    XCTAssertNil(installed.updateConfiguration.feedURL)
+    XCTAssertEqual(fullyScanned.updateConfiguration.mechanism, .electronBuilder)
   }
 
   func testDetectsElectronBuilderGenericProvider() throws {
@@ -936,9 +957,9 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .electronBuilder)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .electronBuilder)
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://releases.chatwise.app/latest-mac.yml"
     )
   }
@@ -970,7 +991,7 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .selfManaged)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .selfManaged)
   }
 
   func testDoesNotTreatLocalhostElectronProviderAsUpdateSource() throws {
@@ -998,7 +1019,7 @@ final class ApplicationScannerTests: XCTestCase {
     ).write(to: resourcesURL.appendingPathComponent("app-update.yml"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .selfManaged)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .selfManaged)
   }
 
   func testDetectsTauriUpdaterEndpointInExecutable() throws {
@@ -1026,12 +1047,12 @@ final class ApplicationScannerTests: XCTestCase {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .tauri)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .tauri)
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
     )
-    XCTAssertEqual(application.sourceTitle, "Tauri updater")
+    XCTAssertEqual(application.channelTitle, "GitHub")
   }
 
   func testDoesNotTreatGPUIAppAsTauriUpdater() throws {
@@ -1058,16 +1079,16 @@ final class ApplicationScannerTests: XCTestCase {
     ).write(to: macOSURL.appendingPathComponent("Example"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertNotEqual(application.source, .tauri)
-    XCTAssertEqual(application.source, .releaseJSON)
+    XCTAssertNotEqual(application.updateConfiguration.mechanism, .tauri)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .customAPI)
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://assets.lbkrs.com/github/release/longbridge-desktop/latest.json"
     )
-    XCTAssertEqual(application.sourceTitle, "JSON release")
+    XCTAssertEqual(application.channelTitle, "Website")
   }
 
-  func testDetectsReleaseJSONFromSplitLatestJSONURL() throws {
+  func testDetectsCustomAPIUpdateFromSplitLatestJSONURL() throws {
     let fileManager = FileManager.default
     let temporaryDirectory = fileManager.temporaryDirectory
       .appendingPathComponent("UpkeepTests-\(UUID().uuidString)", isDirectory: true)
@@ -1085,15 +1106,16 @@ final class ApplicationScannerTests: XCTestCase {
       to: contentsURL.appendingPathComponent("Info.plist")
     )
     var executable = Data("gpui::app ".utf8)
-    executable.append(contentsOf: "https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
+    executable.append(
+      contentsOf: "https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
     executable.append(contentsOf: [0xC0, 0x0C])
     executable.append(contentsOf: "/latest.json".utf8)
     try executable.write(to: macOSURL.appendingPathComponent("Example"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .releaseJSON)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .customAPI)
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
     )
   }
@@ -1133,30 +1155,35 @@ final class ApplicationScannerTests: XCTestCase {
     ).write(to: appURL.appendingPathComponent("product.json"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .vscodeUpdater)
-    XCTAssertEqual(application.sourceTitle, "VS Code updater")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .vscodeUpdater)
+    XCTAssertEqual(application.channelTitle, "Website")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://update.code.visualstudio.com"
     )
     XCTAssertEqual(
-      application.sourceIdentifier,
+      application.updateConfiguration.identifier,
       "stable/110a328ea54b42367b803ec53ee0bf52ef26b419"
     )
-    XCTAssertEqual(application.homepageURL?.absoluteString, "https://code.visualstudio.com")
+    XCTAssertEqual(
+      application.updateConfiguration.homepageURL?.absoluteString, "https://code.visualstudio.com")
     XCTAssertEqual(application.buildVersion, "110a328")
-    let installed = try XCTUnwrap(ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL))
-    XCTAssertEqual(installed.source, .vscodeUpdater)
+    let installed = try XCTUnwrap(
+      ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL))
+    XCTAssertEqual(installed.updateConfiguration.mechanism, .vscodeUpdater)
     XCTAssertEqual(installed.buildVersion, application.buildVersion)
-    XCTAssertEqual(installed.sourceIdentifier, application.sourceIdentifier)
+    XCTAssertEqual(
+      installed.updateConfiguration.identifier, application.updateConfiguration.identifier)
 
     // Reproduce a snapshot left by the old installed-only refresh: matching version/date,
     // but stale commit and a semantic version in the build field.
     var stale = application
     stale.buildVersion = application.currentVersion
-    stale.sourceIdentifier = "stable/7debcd0e2acdea1c52de81bf9ee1620444407dda"
-    let refreshed = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL, reusing: stale))
-    XCTAssertEqual(refreshed.sourceIdentifier, application.sourceIdentifier)
+    stale.updateConfiguration.identifier = "stable/7debcd0e2acdea1c52de81bf9ee1620444407dda"
+    let refreshed = try XCTUnwrap(
+      ApplicationScanner.makeRecord(from: applicationURL, reusing: stale))
+    XCTAssertEqual(
+      refreshed.updateConfiguration.identifier, application.updateConfiguration.identifier)
     XCTAssertEqual(refreshed.buildVersion, application.buildVersion)
 
   }
@@ -1188,7 +1215,7 @@ final class ApplicationScannerTests: XCTestCase {
     ).write(to: appURL.appendingPathComponent("product.json"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .selfManaged)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .selfManaged)
   }
 
   func testPrefersElectronBuilderOverVSCodeProductJSON() throws {
@@ -1225,7 +1252,7 @@ final class ApplicationScannerTests: XCTestCase {
     ).write(to: appURL.appendingPathComponent("product.json"))
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .electronBuilder)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .electronBuilder)
   }
 
   func testElectronNativeServiceDetectionAndOldSnapshotRecovery() throws {
@@ -1235,9 +1262,11 @@ final class ApplicationScannerTests: XCTestCase {
     let contents = app.appendingPathComponent("Contents")
     defer { try? fm.removeItem(at: root) }
     for path in ["MacOS", "Resources/service", "Frameworks/Electron Framework.framework"] {
-      try fm.createDirectory(at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
+      try fm.createDirectory(
+        at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
     }
-    try writePropertyList(basicInfo(bundleIdentifier: "com.example.service"),
+    try writePropertyList(
+      basicInfo(bundleIdentifier: "com.example.service"),
       to: contents.appendingPathComponent("Info.plist"))
     let launcher = contents.appendingPathComponent("MacOS/Example")
     try Data("https://runtime.example.com/latest.json".utf8).write(to: launcher)
@@ -1248,15 +1277,20 @@ final class ApplicationScannerTests: XCTestCase {
     try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: service.path)
     var cached = old
     let detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
-    XCTAssertEqual(detected.source, .tauri)
-    XCTAssertEqual(detected.sourceURL?.absoluteString, "https://updates.example.com/latest/latest.json")
+    XCTAssertEqual(detected.updateConfiguration.mechanism, .tauri)
+    XCTAssertEqual(
+      detected.updateConfiguration.feedURL?.absoluteString,
+      "https://updates.example.com/latest/latest.json")
     // A legacy self-managed snapshot with exactly the current timestamp must be re-probed.
     cached = detected
-    cached.source = .selfManaged
-    cached.sourceURL = nil
-    XCTAssertEqual(ApplicationScanner.makeRecord(from: app, reusing: cached)?.source, .tauri)
+    cached.updateConfiguration.mechanism = .selfManaged
+    cached.updateConfiguration.feedURL = nil
+    XCTAssertEqual(
+      ApplicationScanner.makeRecord(from: app, reusing: cached)?.updateConfiguration.mechanism,
+      .tauri)
     try fm.removeItem(at: service)
-    try fm.createSymbolicLink(at: service, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
+    try fm.createSymbolicLink(
+      at: service, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
     XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
   }
 
@@ -1267,16 +1301,21 @@ final class ApplicationScannerTests: XCTestCase {
     let contents = app.appendingPathComponent("Contents")
     defer { try? fm.removeItem(at: root) }
     for path in ["MacOS", "Resources/bin", "Frameworks/Electron Framework.framework"] {
-      try fm.createDirectory(at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
+      try fm.createDirectory(
+        at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
     }
     var info = basicInfo(bundleIdentifier: "com.example.studio")
     info["CFBundleExecutable"] = "Example Studio"
     try writePropertyList(info, to: contents.appendingPathComponent("Info.plist"))
     try Data().write(to: contents.appendingPathComponent("MacOS/Example Studio"))
     let host = contents.appendingPathComponent("Resources/bin/example-studio-host")
-    try Data("tauri_plugin_updater https://example.com/studio-vX.Y.Z/latest.json https://example.com/studio/versions.json".utf8).write(to: host)
+    try Data(
+      "tauri_plugin_updater https://example.com/studio-vX.Y.Z/latest.json https://example.com/studio/versions.json"
+        .utf8
+    ).write(to: host)
     try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: host.path)
-    XCTAssertEqual(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint?.absoluteString,
+    XCTAssertEqual(
+      ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint?.absoluteString,
       "https://example.com/studio/versions.json")
     try fm.removeItem(at: host)
     try fm.createSymbolicLink(at: host, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
@@ -1290,9 +1329,9 @@ final class ApplicationScannerTests: XCTestCase {
     }
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .tauri)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .tauri)
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://dl.reasonix.io/latest/latest.json"
     )
   }
@@ -1304,10 +1343,10 @@ final class ApplicationScannerTests: XCTestCase {
     }
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .githubReleases)
-    XCTAssertEqual(application.sourceIdentifier, "l0ng-ai/tty7")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(application.updateConfiguration.identifier, "l0ng-ai/tty7")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://api.github.com/repos/l0ng-ai/tty7/releases/latest"
     )
   }
@@ -1319,10 +1358,10 @@ final class ApplicationScannerTests: XCTestCase {
     }
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .githubReleases)
-    XCTAssertEqual(application.sourceIdentifier, "chen08209/FlClash")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(application.updateConfiguration.identifier, "chen08209/FlClash")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://api.github.com/repos/chen08209/FlClash/releases/latest"
     )
   }
@@ -1334,10 +1373,10 @@ final class ApplicationScannerTests: XCTestCase {
     }
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .githubReleases)
-    XCTAssertEqual(application.sourceIdentifier, "wanghongenpin/proxypin")
+    XCTAssertEqual(application.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(application.updateConfiguration.identifier, "wanghongenpin/proxypin")
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://api.github.com/repos/wanghongenpin/proxypin/releases/latest"
     )
   }
@@ -1349,9 +1388,9 @@ final class ApplicationScannerTests: XCTestCase {
     }
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    XCTAssertEqual(application.source, .tauri)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .tauri)
     XCTAssertEqual(
-      application.sourceURL?.absoluteString,
+      application.updateConfiguration.feedURL?.absoluteString,
       "https://dl.reasonix.io/studio/versions.json"
     )
   }
@@ -1361,25 +1400,34 @@ final class ApplicationScannerTests: XCTestCase {
     let app = root.appendingPathComponent("Studio.app")
     let contents = app.appendingPathComponent("Contents")
     let executable = contents.appendingPathComponent("MacOS/Studio")
-    try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(),
+    try FileManager.default.createDirectory(
+      at: executable.deletingLastPathComponent(),
       withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    try writePropertyList(basicInfo(bundleIdentifier: "com.example.studio",
-      extraValues: ["CFBundleExecutable": "Studio"]), to: contents.appendingPathComponent("Info.plist"))
-    try Data("""
+    try writePropertyList(
+      basicInfo(
+        bundleIdentifier: "com.example.studio",
+        extraValues: ["CFBundleExecutable": "Studio"]),
+      to: contents.appendingPathComponent("Info.plist"))
+    try Data(
+      """
       tauri_plugin_updater
       https://github.com/example/repo/releases/latest/download/latest.json
       https://dl.example.com/studio/versions.json
-      """.utf8).write(to: executable)
+      """.utf8
+    ).write(to: executable)
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
-    cached.sourceURL = URL(string: "https://github.com/example/repo/releases/latest/download/latest.json")
-    cached.sourceIdentifier = cached.sourceURL?.absoluteString
+    cached.updateConfiguration.feedURL = URL(
+      string: "https://github.com/example/repo/releases/latest/download/latest.json")
+    cached.updateConfiguration.identifier = cached.updateConfiguration.feedURL?.absoluteString
     cached.status = .unavailable("Update feed not found")
     cached.latestVersion = "1.0"
     cached.releaseNotes = "Stale notes"
     let recovered = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
-    XCTAssertEqual(recovered.source, .tauri)
-    XCTAssertEqual(recovered.sourceURL?.absoluteString, "https://dl.example.com/studio/versions.json")
+    XCTAssertEqual(recovered.updateConfiguration.mechanism, .tauri)
+    XCTAssertEqual(
+      recovered.updateConfiguration.feedURL?.absoluteString,
+      "https://dl.example.com/studio/versions.json")
     XCTAssertEqual(recovered.applicationModificationDate, cached.applicationModificationDate)
     XCTAssertEqual(recovered.status, .checking)
     XCTAssertNil(recovered.latestVersion)
@@ -1456,6 +1504,7 @@ final class ApplicationScannerTests: XCTestCase {
       applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
       applicationModificationDate: modifiedAt,
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged),
       status: status,
       latestVersion: status == .updateAvailable ? "2.0" : nil,
       releaseDate: releaseDate

@@ -36,9 +36,10 @@ enum ApplicationProcess {
       for application in applications {
         guard !Task.isCancelled else { return Set<AppRecord.ID>() }
         let root = application.applicationURL.resolvingSymlinksInPath()
-        let executable = Bundle(url: root)?.executableURL
+        let executable =
+          Bundle(url: root)?.executableURL
           ?? root.appendingPathComponent("Contents/MacOS")
-            .appendingPathComponent(root.deletingPathExtension().lastPathComponent)
+          .appendingPathComponent(root.deletingPathExtension().lastPathComponent)
         // Widgets, extensions and orphaned helpers do not mean the app was open.
         // Only the main executable should trigger confirmation and relaunch.
         if paths.contains(executable.resolvingSymlinksInPath().path) {
@@ -212,14 +213,15 @@ struct ApplicationProcessClient: Sendable {
     self.hasRunningProcesses = hasRunningProcesses ?? isRunning
     self.quit = quit
     self.launch = launch
-    self.runningApplicationIDs = runningApplicationIDs ?? { applications in
-      var running = Set<AppRecord.ID>()
-      for application in applications {
-        guard !Task.isCancelled else { return [] }
-        if await isRunning(application) { running.insert(application.id) }
+    self.runningApplicationIDs =
+      runningApplicationIDs ?? { applications in
+        var running = Set<AppRecord.ID>()
+        for application in applications {
+          guard !Task.isCancelled else { return [] }
+          if await isRunning(application) { running.insert(application.id) }
+        }
+        return running
       }
-      return running
-    }
   }
 
   static let live = ApplicationProcessClient(
@@ -248,7 +250,9 @@ enum UpdateRelaunch {
     }
 
     do {
-      if application.source == .homebrew, await process.hasRunningProcesses(application) {
+      if application.updateConfiguration.mechanism == .homebrew,
+        await process.hasRunningProcesses(application)
+      {
         progress(.indeterminate("正在退出…"))
         try await process.quit(application)
       }

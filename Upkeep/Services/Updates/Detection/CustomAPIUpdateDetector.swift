@@ -1,6 +1,6 @@
 import Foundation
 
-enum ReleaseJSONDetector {
+enum CustomAPIUpdateDetector {
   private static let latestNeedle = Data("latest.json".utf8)
   private static let apiLatestNeedle = Data("/api/latest".utf8)
   private static let httpsNeedle = Data("https://".utf8)
@@ -13,11 +13,11 @@ enum ReleaseJSONDetector {
   ]
 
   static func detect(bundleURL: URL) -> URL? {
-    ExecutableUpdaterDetector.detect(bundleURL: bundleURL).releaseJSONEndpoint
+    ExecutableUpdaterDetector.detect(bundleURL: bundleURL).customAPIUpdateEndpoint
   }
 
   static func endpoint(inFile fileURL: URL) -> URL? {
-    ExecutableUpdaterDetector.detect(fileURL: fileURL).releaseJSONEndpoint
+    ExecutableUpdaterDetector.detect(fileURL: fileURL).customAPIUpdateEndpoint
   }
 
   static func stableChannelURL(from url: URL) -> URL? {
@@ -119,7 +119,7 @@ enum ReleaseJSONDetector {
       return nil
     }
     guard let url = SecureUpdateURL.https(string: rawValue),
-      (url.lastPathComponent.lowercased() == "latest.json" || url.path == "/api/latest"),
+      url.lastPathComponent.lowercased() == "latest.json" || url.path == "/api/latest",
       url.user == nil, url.password == nil
     else {
       return nil
@@ -137,13 +137,17 @@ enum ReleaseJSONDetector {
   static func apiOrigins(in data: Data) -> [URL] {
     guard data.range(of: httpsNeedle) != nil else { return [] }
     let text = String(decoding: data, as: UTF8.self)
-    guard let expression = try? NSRegularExpression(
-      pattern: #"https://[A-Za-z0-9.-]+?(?=https://|[\x00-\x20\"'<>]|$)"#) else { return [] }
-    return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+    guard
+      let expression = try? NSRegularExpression(
+        pattern: #"https://[A-Za-z0-9.-]+?(?=https://|[\x00-\x20\"'<>]|$)"#)
+    else { return [] }
+    return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+      match in
       guard let range = Range(match.range, in: text),
         let url = SecureUpdateURL.https(string: String(text[range])),
         url.user == nil, url.password == nil, url.port == nil,
-        url.host?.contains(".") == true else { return nil }
+        url.host?.contains(".") == true
+      else { return nil }
       return url
     }
   }
@@ -153,7 +157,8 @@ enum ReleaseJSONDetector {
       name.count >= 3,
       let origin = origins.first(where: { origin in
         origin.host?.lowercased().split(separator: ".").contains { $0 == name } == true
-      }), var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else { return nil }
+      }), var components = URLComponents(url: origin, resolvingAgainstBaseURL: false)
+    else { return nil }
     components.path = "/api/release"
     components.queryItems = [URLQueryItem(name: "channel", value: "stable")]
     return components.url

@@ -12,7 +12,8 @@ struct ApplicationLibrarySnapshot: Codable, Sendable {
       releaseMetadataRevision = 1
     }
     // A lost updater cannot substantiate a pending release from an older app edition.
-    for index in applications.indices where applications[index].source == .selfManaged {
+    for index in applications.indices
+    where applications[index].updateConfiguration.mechanism == .selfManaged {
       applications[index].discardRemoteRelease()
     }
   }
@@ -27,7 +28,8 @@ struct ApplicationLibraryStore: Sendable {
     return ApplicationLibraryStore(
       load: {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        guard var snapshot = try? JSONDecoder().decode(ApplicationLibrarySnapshot.self, from: data) else { return nil }
+        guard var snapshot = try? JSONDecoder().decode(ApplicationLibrarySnapshot.self, from: data)
+        else { return nil }
         snapshot.migrateReleaseMetadataIfNeeded()
         return snapshot
       },

@@ -6,11 +6,15 @@ import XCTest
 final class CraftReleaseDiscoveryTests: XCTestCase {
   func testNewCraftApplicationUsesExistingReleaseRequestAndDesktopPackage() async throws {
     let application = try makeApplication()
-    let network = ReleaseResponses([.response(200, releaseData(assets: [
-      "futurecraft-cli-1.0.0-macos-universal.zip",
-      "futurecraft-web-1.0.0.zip", "futurecraft-server-1.0.0-macos-arm64.tar.gz",
-      "futurecraft-1.0.0-macos-universal.dmg",
-    ]))])
+    let network = ReleaseResponses([
+      .response(
+        200,
+        releaseData(assets: [
+          "futurecraft-cli-1.0.0-macos-universal.zip",
+          "futurecraft-web-1.0.0.zip", "futurecraft-server-1.0.0-macos-arm64.tar.gz",
+          "futurecraft-1.0.0-macos-universal.dmg",
+        ]))
+    ])
     let provider = provider(network: network)
 
     let checked = await provider.check(application)
@@ -20,18 +24,26 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
     XCTAssertEqual(checked.status, .updateAvailable)
     XCTAssertTrue(checked.canAutomaticallyUpdate)
     let requests = await network.requests
-    XCTAssertEqual(requests, [application.sourceURL!])
+    XCTAssertEqual(requests, [application.updateConfiguration.feedURL!])
   }
 
   func testOnlyDesktopAssetsFromTheMatchingRepositoryAreInstallable() async throws {
     for (assets, repository) in [
-      (["futurecraft-web-1.0.0.zip", "futurecraft-cli-1.0.0-macos-universal.zip"], "storytold/futurecraft"),
+      (
+        ["futurecraft-web-1.0.0.zip", "futurecraft-cli-1.0.0-macos-universal.zip"],
+        "storytold/futurecraft"
+      ),
       (["futurecraft-server-1.0.0-macos-universal.dmg"], "storytold/futurecraft"),
-      (["futurecraft-1.0.0-windows-x64.zip", "futurecraft-1.0.0-linux-aarch64.tar.gz"], "storytold/futurecraft"),
+      (
+        ["futurecraft-1.0.0-windows-x64.zip", "futurecraft-1.0.0-linux-aarch64.tar.gz"],
+        "storytold/futurecraft"
+      ),
       (["futurecraft-1.0.0-macos-universal.dmg"], "someone-else/futurecraft"),
       (["anothercraft-1.0.0-macos-universal.dmg"], "storytold/futurecraft"),
     ] {
-      let network = ReleaseResponses([.response(200, releaseData(assets: assets, repository: repository))])
+      let network = ReleaseResponses([
+        .response(200, releaseData(assets: assets, repository: repository))
+      ])
       let checked = await provider(network: network).check(try makeApplication())
       XCTAssertFalse(checked.canAutomaticallyUpdate, "\(assets) in \(repository)")
     }
@@ -49,7 +61,9 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
 
     let missing = await provider.check(application)
     XCTAssertFalse(missing.canAutomaticallyUpdate)
-    guard case .unavailable(let message) = missing.status else { return XCTFail("Missing release was accepted") }
+    guard case .unavailable(let message) = missing.status else {
+      return XCTFail("Missing release was accepted")
+    }
     XCTAssertTrue(message.contains("404"))
     _ = await provider.check(application)
     let beforeExpiry = await network.requests
@@ -60,7 +74,7 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
     XCTAssertTrue(checked.canAutomaticallyUpdate)
     let afterExpiry = await network.requests
     XCTAssertEqual(afterExpiry.count, 2)
-    let stillMissing = await cache.contains(application.sourceURL!)
+    let stillMissing = await cache.contains(application.updateConfiguration.feedURL!)
     XCTAssertFalse(stillMissing)
   }
 
@@ -100,9 +114,12 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
   func testMissingCacheDoesNotChangeOtherGitHubApplications() async throws {
     var application = try makeApplication()
     application = AppRecord(
-      name: application.name, bundleIdentifier: "com.example.futurecraft",
-      applicationURL: application.applicationURL, currentVersion: application.currentVersion,
-      source: .githubReleases, sourceURL: application.sourceURL
+      name: application.name,
+      bundleIdentifier: "com.example.futurecraft",
+      applicationURL: application.applicationURL,
+      currentVersion: application.currentVersion,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .githubReleases, feedURL: application.updateConfiguration.feedURL)
     )
     let network = ReleaseResponses([.response(404, Data()), .response(404, Data())])
     let provider = provider(network: network)
@@ -125,15 +142,17 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
     let task = Task { await provider.check(application) }
     let result = await task.value
     XCTAssertEqual(result.status, application.status)
-    let cached = await cache.contains(application.sourceURL!)
+    let cached = await cache.contains(application.updateConfiguration.feedURL!)
     XCTAssertFalse(cached)
   }
 
   func testMissingCacheSurvivesRestartAndExpires() async throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("CraftCacheTests-\(UUID())")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "CraftCacheTests-\(UUID())")
     defer { try? FileManager.default.removeItem(at: directory) }
     let file = directory.appendingPathComponent("cache.json")
-    let url = try XCTUnwrap(KnownGitHubReleaseSources.metadata(for: "ai.storyteller.futurecraft")?.apiURL)
+    let url = try XCTUnwrap(
+      KnownGitHubReleaseSources.metadata(for: "ai.storyteller.futurecraft")?.apiURL)
     let clock = DiscoveryClock()
     let cache = GitHubMissingReleaseCache(fileURL: file, now: { clock.now })
     await cache.remember(url)
@@ -146,18 +165,27 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
   }
 
   private func makeApplication() throws -> AppRecord {
-    let metadata = try XCTUnwrap(KnownGitHubReleaseSources.metadata(for: "ai.storyteller.futurecraft"))
+    let metadata = try XCTUnwrap(
+      KnownGitHubReleaseSources.metadata(for: "ai.storyteller.futurecraft"))
     return AppRecord(
-      name: "A localized application name", bundleIdentifier: "ai.storyteller.futurecraft",
-      applicationURL: URL(fileURLWithPath: "/nonexistent/FutureCraft.app"), currentVersion: "0.9.0",
-      source: .githubReleases, sourceURL: metadata.apiURL, sourceIdentifier: metadata.identifier
+      name: "A localized application name",
+      bundleIdentifier: "ai.storyteller.futurecraft",
+      applicationURL: URL(fileURLWithPath: "/nonexistent/FutureCraft.app"),
+      currentVersion: "0.9.0",
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .githubReleases, feedURL: metadata.apiURL, identifier: metadata.identifier)
     )
   }
 
-  private func provider(network: ReleaseResponses, cache: GitHubMissingReleaseCache = GitHubMissingReleaseCache()) -> GitHubReleasesUpdateProvider {
+  private func provider(
+    network: ReleaseResponses, cache: GitHubMissingReleaseCache = GitHubMissingReleaseCache()
+  ) -> GitHubReleasesUpdateProvider {
     GitHubReleasesUpdateProvider(
       fetchResponse: { try await network.response(for: $0) },
-      fetchData: { _ in XCTFail("No extra discovery or checksum requests expected"); return nil },
+      fetchData: { _ in
+        XCTFail("No extra discovery or checksum requests expected")
+        return nil
+      },
       missingReleaseCache: cache
     )
   }
@@ -167,7 +195,11 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
       "tag_name": "v1.0.0", "body": "New desktop features",
       "html_url": "https://github.com/\(repository)/releases/tag/v1.0.0",
       "assets": assets.map { name in
-        ["name": name, "browser_download_url": "https://github.com/\(repository)/releases/download/v1.0.0/\(name)"]
+        [
+          "name": name,
+          "browser_download_url":
+            "https://github.com/\(repository)/releases/download/v1.0.0/\(name)",
+        ]
       },
     ])
   }

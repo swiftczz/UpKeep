@@ -4,7 +4,7 @@ struct ElectronBuilderUpdateProvider: Sendable {
   func check(_ application: AppRecord) async -> AppRecord {
     var application = application
 
-    guard let feedURL = application.sourceURL,
+    guard let feedURL = application.updateConfiguration.feedURL,
       SecureUpdateURL.https(feedURL) != nil
     else {
       application.status = .selfManaged
@@ -14,7 +14,8 @@ struct ElectronBuilderUpdateProvider: Sendable {
     do {
       let manifest = try await loadManifest(from: feedURL)
       let package = manifest.selectedPackage(relativeTo: feedURL)
-      application.homepageURL = application.homepageURL ?? application.sourceURL
+      application.updateConfiguration.homepageURL =
+        application.updateConfiguration.homepageURL ?? application.updateConfiguration.feedURL
       application.applyRemoteRelease(
         version: manifest.version,
         releaseDate: manifest.releaseDate,
@@ -25,7 +26,7 @@ struct ElectronBuilderUpdateProvider: Sendable {
     } catch is CancellationError {
       return application
     } catch {
-      application.status = .unavailable("electron-updater 更新源暂时无法访问。")
+      application.status = .unavailable("Electron Updater 更新源暂时无法访问。")
     }
 
     return application
@@ -35,10 +36,10 @@ struct ElectronBuilderUpdateProvider: Sendable {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
-    guard let feedURL = application.sourceURL,
+    guard let feedURL = application.updateConfiguration.feedURL,
       SecureUpdateURL.https(feedURL) != nil
     else {
-      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 electron-updater 更新源。")
+      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 Electron Updater 更新源。")
     }
 
     progress(.indeterminate("正在检查更新…"))
@@ -61,7 +62,7 @@ struct ElectronBuilderUpdateProvider: Sendable {
       let text = String(data: data, encoding: .utf8),
       let manifest = ElectronBuilderYAML.parseManifest(text)
     else {
-      throw ProcessRunnerError.failed(status: 1, message: "无法读取 electron-updater 更新清单。")
+      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Electron Updater 更新清单。")
     }
     return manifest
   }

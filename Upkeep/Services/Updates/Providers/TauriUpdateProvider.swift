@@ -129,7 +129,7 @@ struct TauriUpdateProvider: Sendable {
   func check(_ application: AppRecord, fallbackNotes: AppRecord? = nil) async -> AppRecord {
     var application = application
 
-    guard let endpoint = application.sourceURL,
+    guard let endpoint = application.updateConfiguration.feedURL,
       SecureUpdateURL.https(endpoint) != nil
     else {
       application.status = .selfManaged
@@ -144,8 +144,10 @@ struct TauriUpdateProvider: Sendable {
       if let notes = manifest.notes?.nonBlankValue {
         releaseNotes = notes
       } else if let fallbackNotes,
-        fallbackNotes.latestVersion?.split(separator: ",").first.map(String.init) == manifest.version,
-        let notes = fallbackNotes.releaseNotes?.nonBlankValue {
+        fallbackNotes.latestVersion?.split(separator: ",").first.map(String.init)
+          == manifest.version,
+        let notes = fallbackNotes.releaseNotes?.nonBlankValue
+      {
         releaseNotes = notes
         notesURL = fallbackNotes.releaseNotesURL
       } else if let releaseNotesURL = manifest.releaseNotesURL {
@@ -160,7 +162,7 @@ struct TauriUpdateProvider: Sendable {
         )
       }
       if let homepageURL = manifest.homepageURL(endpoint: endpoint) {
-        application.homepageURL = homepageURL
+        application.updateConfiguration.homepageURL = homepageURL
       }
       application.applyRemoteRelease(
         version: manifest.version,
@@ -173,7 +175,7 @@ struct TauriUpdateProvider: Sendable {
     } catch is CancellationError {
       return application
     } catch {
-      application.status = .unavailable("Tauri updater 更新源暂时无法访问。")
+      application.status = .unavailable("Tauri Updater 更新源暂时无法访问。")
     }
 
     return application
@@ -183,10 +185,10 @@ struct TauriUpdateProvider: Sendable {
     _ application: AppRecord,
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
-    guard let endpoint = application.sourceURL,
+    guard let endpoint = application.updateConfiguration.feedURL,
       SecureUpdateURL.https(endpoint) != nil
     else {
-      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 Tauri updater 更新源。")
+      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 Tauri Updater 更新源。")
     }
 
     progress(.indeterminate("正在检查更新…"))
@@ -206,7 +208,7 @@ struct TauriUpdateProvider: Sendable {
 
   private func fetchManifest(from url: URL) async throws -> TauriUpdateManifest {
     guard let data = try await fetchData(url) else {
-      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
+      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri Updater 更新清单。")
     }
     if let manifest = TauriUpdateManifest.parse(data) {
       return manifest
@@ -218,7 +220,7 @@ struct TauriUpdateProvider: Sendable {
       let catalogData = try await fetchData(catalogURL),
       let manifest = TauriUpdateManifest.parse(catalogData)
     else {
-      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri updater 更新清单。")
+      throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri Updater 更新清单。")
     }
     return manifest
   }
@@ -272,7 +274,8 @@ enum TauriHomepage {
       "topics", "users",
     ]
     let normalizedOwner = owner.lowercased()
-    let normalizedRepository = repository
+    let normalizedRepository =
+      repository
       .replacingOccurrences(of: ".git", with: "", options: [.anchored, .backwards])
     guard !reservedOwners.contains(normalizedOwner),
       isRepositoryComponent(normalizedOwner),
@@ -309,7 +312,6 @@ enum TauriHomepage {
     !value.isEmpty && value != "." && value != ".." && value.count <= 100
   }
 }
-
 
 struct TauriUpdateCatalog: Equatable, Sendable {
   struct Release: Equatable, Sendable {

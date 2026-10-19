@@ -75,7 +75,7 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertTrue(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: true))
     XCTAssertTrue(claim(.sparkle, .updateAvailable, feed: true, brew: true))
     XCTAssertTrue(claim(.tauri, .upToDate, feed: true, brew: true))
-    XCTAssertTrue(claim(.releaseJSON, .checking, feed: true, brew: true))
+    XCTAssertTrue(claim(.customAPI, .checking, feed: true, brew: true))
     XCTAssertTrue(claim(.githubReleases, .upToDate, feed: true, brew: true))
   }
 
@@ -86,7 +86,7 @@ final class HomebrewUpdateProviderTests: XCTestCase {
     XCTAssertFalse(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: false))
     XCTAssertTrue(claim(.sparkle, .upToDate, feed: true, brew: false))
     XCTAssertTrue(claim(.tauri, .checking, feed: true, brew: false))
-    XCTAssertFalse(claim(.releaseJSON, .updateAvailable, feed: true, brew: false))
+    XCTAssertFalse(claim(.customAPI, .updateAvailable, feed: true, brew: false))
     XCTAssertTrue(claim(.githubReleases, .checking, feed: true, brew: false))
   }
 
@@ -128,29 +128,31 @@ final class HomebrewUpdateProviderTests: XCTestCase {
       bundleIdentifier: "com.fayazahmed.Screendrop",
       applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
       currentVersion: "0.31.3",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
       status: .upToDate,
-      sourceURL: URL(string: "https://example.com/appcast.xml"),
       lastInstalledAt: .now
     )
 
     let enriched = snapshot.applying(to: application)
 
-    XCTAssertEqual(enriched.source, .homebrew)
-    XCTAssertEqual(enriched.sourceIdentifier, "screendrop")
-    XCTAssertEqual(enriched.alternateUpdateSource, .sparkle)
-    XCTAssertEqual(enriched.alternateSourceURL, URL(string: "https://example.com/appcast.xml"))
+    XCTAssertEqual(enriched.updateConfiguration.mechanism, .homebrew)
+    XCTAssertEqual(enriched.updateConfiguration.identifier, "screendrop")
+    XCTAssertEqual(enriched.alternateUpdateConfiguration?.mechanism, .sparkle)
+    XCTAssertEqual(
+      enriched.alternateUpdateConfiguration?.feedURL, URL(string: "https://example.com/appcast.xml")
+    )
     XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
-    XCTAssertEqual(enriched.sourceTitle, "Homebrew")
-    XCTAssertNil(enriched.installedSource)
+    XCTAssertEqual(enriched.channelTitle, "Homebrew")
+    XCTAssertNil(enriched.installedUpdateConfiguration?.mechanism)
 
-    for source in UpdateSource.allCases where source.canBeAlternateUpdateSource {
+    for mechanism in UpdateMechanism.allCases where mechanism.canBeAlternateUpdateMechanism {
       var installed = application
-      installed.installedSource = source
+      installed.installedUpdateConfiguration = UpdateConfiguration(mechanism: mechanism)
       let checked = snapshot.applying(to: installed)
-      XCTAssertEqual(checked.source, .homebrew)
-      XCTAssertEqual(checked.sourceTitle, source.title)
-      XCTAssertEqual(checked.sourceSystemImage, source.systemImage)
+      XCTAssertEqual(checked.updateConfiguration.mechanism, .homebrew)
+      XCTAssertEqual(checked.channelTitle, "Homebrew")
+      XCTAssertEqual(checked.channelSystemImage, UpdateChannel.homebrew.systemImage)
     }
   }
 
@@ -192,15 +194,15 @@ final class HomebrewUpdateProviderTests: XCTestCase {
       bundleIdentifier: "com.fayazahmed.Screendrop",
       applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
       currentVersion: "0.31.3",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
       status: .updateAvailable,
-      latestVersion: "0.32.0",
-      sourceURL: URL(string: "https://example.com/appcast.xml")
+      latestVersion: "0.32.0"
     )
 
     let enriched = snapshot.applying(to: application)
 
-    XCTAssertEqual(enriched.source, .sparkle)
+    XCTAssertEqual(enriched.updateConfiguration.mechanism, .sparkle)
     XCTAssertEqual(enriched.latestVersion, "0.32.0")
     XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
   }
@@ -211,14 +213,14 @@ final class HomebrewUpdateProviderTests: XCTestCase {
       bundleIdentifier: "sh.termio.app",
       applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
       currentVersion: "0.48.0",
-      source: .homebrew,
+      updateConfiguration: UpdateConfiguration(mechanism: .homebrew, identifier: "termio"),
       status: .upToDate,
       latestVersion: "0.48.0",
-      sourceIdentifier: "termio",
       homebrewCaskToken: "termio"
     )
-    homebrew.alternateUpdateSource = .sparkle
-    homebrew.alternateSourceURL = URL(string: "https://downloads.termio.sh/appcast.xml")
+    homebrew.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .sparkle)
+    homebrew.alternateUpdateConfiguration?.feedURL = URL(
+      string: "https://downloads.termio.sh/appcast.xml")
 
     var checked = homebrew.alternateUpdateCheckRecord!
     checked.status = .upToDate
@@ -228,10 +230,10 @@ final class HomebrewUpdateProviderTests: XCTestCase {
 
     let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(checked, intoHomebrew: homebrew)
 
-    XCTAssertEqual(merged.source, .homebrew)
+    XCTAssertEqual(merged.updateConfiguration.mechanism, .homebrew)
     XCTAssertEqual(merged.releaseNotes, "Termio release notes")
     XCTAssertEqual(merged.releaseNotesURL, URL(string: "https://example.com/releases/0.48.0"))
-    XCTAssertEqual(merged.alternateUpdateSource, .sparkle)
+    XCTAssertEqual(merged.alternateUpdateConfiguration?.mechanism, .sparkle)
   }
 
   func testAlternateUpdateWinsWhenBrewIsCurrent() {
@@ -240,35 +242,34 @@ final class HomebrewUpdateProviderTests: XCTestCase {
       bundleIdentifier: "sh.termio.app",
       applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
       currentVersion: "0.48.0",
-      source: .homebrew,
+      updateConfiguration: UpdateConfiguration(mechanism: .homebrew, identifier: "termio"),
       status: .upToDate,
       latestVersion: "0.48.0",
-      sourceIdentifier: "termio",
       homebrewCaskToken: "termio",
-      installedSource: .homebrew
+      installedUpdateConfiguration: UpdateConfiguration(mechanism: .homebrew)
     )
     var checked = AppRecord(
       name: "Termio",
       bundleIdentifier: "sh.termio.app",
       applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
       currentVersion: "0.48.0",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://downloads.termio.sh/appcast.xml")),
       status: .updateAvailable,
       latestVersion: "0.49.0",
-      sourceURL: URL(string: "https://downloads.termio.sh/appcast.xml"),
       canAutomaticallyUpdate: true
     )
     checked.releaseNotes = "New first-party release"
 
     let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(checked, intoHomebrew: homebrew)
 
-    XCTAssertEqual(merged.source, .sparkle)
+    XCTAssertEqual(merged.updateConfiguration.mechanism, .sparkle)
     XCTAssertEqual(merged.latestVersion, "0.49.0")
     XCTAssertEqual(merged.homebrewCaskToken, "termio")
     XCTAssertEqual(merged.releaseNotes, "New first-party release")
-    XCTAssertEqual(merged.installedSource, .homebrew)
-    XCTAssertEqual(merged.sourceTitle, "Sparkle")
-    XCTAssertEqual(merged.sourceSystemImage, UpdateSource.sparkle.systemImage)
+    XCTAssertEqual(merged.installedUpdateConfiguration?.mechanism, .homebrew)
+    XCTAssertEqual(merged.channelTitle, "Website")
+    XCTAssertEqual(merged.channelSystemImage, UpdateChannel.website.systemImage)
   }
 
   func testFallsBackToHomebrewWhenFirstPartyCheckFails() {
@@ -310,13 +311,13 @@ final class HomebrewUpdateProviderTests: XCTestCase {
   }
 
   private func claim(
-    _ source: UpdateSource,
+    _ mechanism: UpdateMechanism,
     _ status: UpdateStatus,
     feed: Bool,
     brew: Bool
   ) -> Bool {
     HomebrewUpdateProvider.shouldClaimInstalledCask(
-      source: source,
+      mechanism: mechanism,
       status: status,
       hasCheckableFeed: feed,
       brewHasUpdate: brew
@@ -325,7 +326,8 @@ final class HomebrewUpdateProviderTests: XCTestCase {
 
   func testParsesCurlProgressBarPercent() {
     let parser = HomebrewOutputProgressParser()
-    let progress = parser.consuming("####                                                                     12.5%\r")
+    let progress = parser.consuming(
+      "####                                                                     12.5%\r")
     XCTAssertEqual(progress.status, "正在下载…")
     XCTAssertEqual(progress.fractionCompleted ?? 0, 0.125, accuracy: 0.0001)
   }
@@ -348,7 +350,8 @@ final class HomebrewUpdateProviderTests: XCTestCase {
 
   func testCapsDownloadProgressThenSwitchesToInstalling() {
     let parser = HomebrewOutputProgressParser()
-    let downloading = parser.consuming("######################################################################## 100.0%\r")
+    let downloading = parser.consuming(
+      "######################################################################## 100.0%\r")
     XCTAssertEqual(downloading.fractionCompleted ?? 0, 0.9, accuracy: 0.0001)
 
     let installing = parser.consuming("\n==> Installing Cask token\n")

@@ -11,7 +11,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     let application = makeUpdateApplication()
-    let library = AppLibrary(applications: [application], userDefaults: defaults,
+    let library = AppLibrary(
+      applications: [application], userDefaults: defaults,
       libraryStore: .memory())
 
     XCTAssertEqual(library.availableUpdates.map(\.id), [application.id])
@@ -24,7 +25,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertEqual(library.ignoredApplicationIDs, [application.id])
     XCTAssertEqual(library.ignoredUpdates.map(\.id), [application.id])
 
-    let restoredLibrary = AppLibrary(applications: [application], userDefaults: defaults,
+    let restoredLibrary = AppLibrary(
+      applications: [application], userDefaults: defaults,
       libraryStore: .memory())
     XCTAssertTrue(restoredLibrary.isUpdateIgnored(application))
     XCTAssertTrue(restoredLibrary.availableUpdates.isEmpty)
@@ -41,10 +43,11 @@ final class AppLibraryIgnoreTests: XCTestCase {
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
-    var application = makeUpdateApplication(source: .sparkle, canAutomaticallyUpdate: true)
+    var application = makeUpdateApplication(mechanism: .sparkle, canAutomaticallyUpdate: true)
     application.status = .upToDate
     application.latestVersion = nil
-    let library = AppLibrary(applications: [application], userDefaults: defaults,
+    let library = AppLibrary(
+      applications: [application], userDefaults: defaults,
       libraryStore: .memory())
 
     library.ignoreUpdates(for: application.id)
@@ -54,7 +57,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertEqual(library.sidebarSections.ignoredUpdates.map(\.id), [application.id])
     XCTAssertEqual(library.sidebarSections.ignoredApplicationIDs, [application.id])
 
-    let restored = AppLibrary(applications: [application], userDefaults: defaults,
+    let restored = AppLibrary(
+      applications: [application], userDefaults: defaults,
       libraryStore: .memory())
     XCTAssertTrue(restored.isUpdateIgnored(application))
     XCTAssertEqual(restored.sidebarSections.ignoredUpdates.map(\.id), [application.id])
@@ -74,8 +78,9 @@ final class AppLibraryIgnoreTests: XCTestCase {
     let suiteName = "UpkeepTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
-    let application = makeUpdateApplication(source: .selfManaged)
-    let library = AppLibrary(applications: [application], userDefaults: defaults,
+    let application = makeUpdateApplication(mechanism: .selfManaged)
+    let library = AppLibrary(
+      applications: [application], userDefaults: defaults,
       libraryStore: .memory())
     library.ignoreUpdates(for: application.id)
 
@@ -88,7 +93,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
     XCTAssertTrue(library.sidebarSections.ignoredApplicationIDs.isEmpty)
     XCTAssertTrue(library.sidebarSections.ignoredUpdates.isEmpty)
     XCTAssertEqual(library.sidebarSections.installedApplications.map(\.id), [application.id])
-    let restored = AppLibrary(applications: library.applications, userDefaults: defaults,
+    let restored = AppLibrary(
+      applications: library.applications, userDefaults: defaults,
       libraryStore: .memory())
     XCTAssertFalse(restored.isUpdateIgnored(application))
   }
@@ -108,7 +114,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
       bundleIdentifier: "com.example.second",
       releaseDate: Date(timeIntervalSince1970: 100)
     )
-    let library = AppLibrary(applications: [first, second], userDefaults: defaults,
+    let library = AppLibrary(
+      applications: [first, second], userDefaults: defaults,
       libraryStore: .memory())
     XCTAssertEqual(library.selectedApplicationID, first.id)
 
@@ -133,7 +140,8 @@ final class AppLibraryIgnoreTests: XCTestCase {
       bundleIdentifier: "com.example.newer",
       releaseDate: Date(timeIntervalSince1970: 200)
     )
-    let library = AppLibrary(applications: [older, newer], userDefaults: defaults,
+    let library = AppLibrary(
+      applications: [older, newer], userDefaults: defaults,
       libraryStore: .memory())
 
     XCTAssertEqual(library.availableUpdates.map(\.name), ["Newer", "Older"])
@@ -146,10 +154,11 @@ final class AppLibraryIgnoreTests: XCTestCase {
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     let application = makeUpdateApplication(
-      source: .homebrew,
+      mechanism: .homebrew,
       canAutomaticallyUpdate: true
     )
-    let library = AppLibrary(applications: [application], userDefaults: defaults,
+    let library = AppLibrary(
+      applications: [application], userDefaults: defaults,
       libraryStore: .memory())
 
     XCTAssertEqual(library.automaticUpdates.map(\.id), [application.id])
@@ -162,7 +171,7 @@ final class AppLibraryIgnoreTests: XCTestCase {
   private func makeUpdateApplication(
     name: String = "Example",
     bundleIdentifier: String = "com.example.update",
-    source: UpdateSource = .appStore,
+    mechanism: UpdateMechanism = .appStore,
     canAutomaticallyUpdate: Bool = false,
     releaseDate: Date? = nil
   ) -> AppRecord {
@@ -171,7 +180,7 @@ final class AppLibraryIgnoreTests: XCTestCase {
       bundleIdentifier: bundleIdentifier,
       applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
-      source: source,
+      updateConfiguration: UpdateConfiguration(mechanism: mechanism),
       status: .updateAvailable,
       latestVersion: "2.0",
       releaseDate: releaseDate,

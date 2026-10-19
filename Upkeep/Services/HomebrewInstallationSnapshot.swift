@@ -22,20 +22,24 @@ struct HomebrewInstallationSnapshot {
   init(caskroomURLs: [URL] = Self.caskroomURLs) {
     let fileManager = FileManager.default
     for caskroom in caskroomURLs {
-      let casks = (try? fileManager.contentsOfDirectory(
-        at: caskroom, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
-      )) ?? []
+      let casks =
+        (try? fileManager.contentsOfDirectory(
+          at: caskroom, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
+        )) ?? []
       for cask in casks {
-        guard let data = try? Data(contentsOf: cask.appendingPathComponent(".metadata/INSTALL_RECEIPT.json")),
+        guard
+          let data = try? Data(
+            contentsOf: cask.appendingPathComponent(".metadata/INSTALL_RECEIPT.json")),
           let receipt = try? JSONDecoder().decode(Receipt.self, from: data),
           receipt.time.isFinite, receipt.time > 0,
           receipt.source.version != "latest",
           !receipt.source.version.contains("/"), receipt.source.version != ".."
         else { continue }
         let versionURL = cask.appendingPathComponent(receipt.source.version)
-        let artifacts = (try? fileManager.contentsOfDirectory(
-          at: versionURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
-        )) ?? []
+        let artifacts =
+          (try? fileManager.contentsOfDirectory(
+            at: versionURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
+          )) ?? []
         for artifact in artifacts where artifact.pathExtension.lowercased() == "app" {
           guard (try? fileManager.destinationOfSymbolicLink(atPath: artifact.path)) != nil else {
             continue
@@ -54,7 +58,7 @@ struct HomebrewInstallationSnapshot {
   }
 
   func applying(to application: AppRecord) -> AppRecord {
-    guard application.source != .appStore,
+    guard application.updateConfiguration.mechanism != .appStore,
       let installation = installations[application.applicationURL.standardizedFileURL.path]
     else { return application }
 
@@ -69,7 +73,7 @@ struct HomebrewInstallationSnapshot {
     guard installed.hasSameRelease(as: receipt) else { return application }
 
     // A later native update must not be relabeled using an old Homebrew receipt.
-    if let source = application.installedSource, source != .homebrew {
+    if let source = application.installedUpdateConfiguration?.mechanism, source != .homebrew {
       guard let lastInstalledAt = application.lastInstalledAt,
         installation.date > lastInstalledAt
       else { return application }
@@ -77,13 +81,19 @@ struct HomebrewInstallationSnapshot {
     let values = try? application.applicationURL.resourceValues(
       forKeys: [.creationDateKey, .contentModificationDateKey]
     )
-    let dates = [values?.creationDate, values?.contentModificationDate, application.applicationModificationDate]
-    guard dates.compactMap({ $0 }).allSatisfy({ $0 <= installation.date.addingTimeInterval(2) }) else {
+    let dates = [
+      values?.creationDate, values?.contentModificationDate,
+      application.applicationModificationDate,
+    ]
+    guard dates.compactMap({ $0 }).allSatisfy({ $0 <= installation.date.addingTimeInterval(2) })
+    else {
       return application
     }
 
-    application.installedSource = .homebrew
-    application.lastInstalledAt = max(application.lastInstalledAt ?? .distantPast, installation.date)
+    application.installedUpdateConfiguration = UpdateConfiguration(
+      mechanism: .homebrew, identifier: installation.token)
+    application.lastInstalledAt = max(
+      application.lastInstalledAt ?? .distantPast, installation.date)
     return application
   }
 }

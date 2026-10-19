@@ -2,7 +2,9 @@ import Foundation
 
 struct HomebrewUpdateProvider: Sendable {
   private let cache = SnapshotCache()
-  var fetchData: @Sendable (URL) async throws -> Data? = { try await UpdateHTTP.successfulData(from: $0) }
+  var fetchData: @Sendable (URL) async throws -> Data? = {
+    try await UpdateHTTP.successfulData(from: $0)
+  }
 
   func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
     await enrich(applications, cachePolicy: .allowed)
@@ -24,7 +26,7 @@ struct HomebrewUpdateProvider: Sendable {
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
     guard let brewURL = HomebrewCLI.executableURL,
-      let token = application.sourceIdentifier,
+      let token = application.updateConfiguration.identifier,
       application.canAutomaticallyUpdate
     else {
       throw ProcessRunnerError.failed(status: 1, message: "此应用不能由 Homebrew 自动更新。")
@@ -70,12 +72,12 @@ struct HomebrewUpdateProvider: Sendable {
   /// first-party update that is already available. For installed apps, show
   /// Homebrew while retaining first-party metadata for release notes and checks.
   static func shouldClaimInstalledCask(
-    source: UpdateSource,
+    mechanism: UpdateMechanism,
     status: UpdateStatus,
     hasCheckableFeed: Bool,
     brewHasUpdate: Bool
   ) -> Bool {
-    if source == .appStore {
+    if mechanism == .appStore {
       return false
     }
     if brewHasUpdate {
@@ -83,7 +85,7 @@ struct HomebrewUpdateProvider: Sendable {
     }
 
     switch status {
-    case .updateAvailable where source.canBeAlternateUpdateSource && hasCheckableFeed:
+    case .updateAvailable where mechanism.canBeAlternateUpdateMechanism && hasCheckableFeed:
       return false
     case .checking, .unavailable, .selfManaged, .upToDate, .updateAvailable:
       return true
@@ -95,16 +97,16 @@ struct HomebrewUpdateProvider: Sendable {
     intoHomebrew application: AppRecord
   ) -> AppRecord {
     var merged = application
-    merged.rememberAlternateUpdateSource(from: checked)
-    if merged.homepageURL == nil {
-      merged.homepageURL = checked.homepageURL
+    merged.rememberAlternateUpdateConfiguration(from: checked)
+    if merged.updateConfiguration.homepageURL == nil {
+      merged.updateConfiguration.homepageURL = checked.updateConfiguration.homepageURL
     }
 
     if checked.needsUpdate && !application.needsUpdate {
       var alternate = checked
       alternate.homebrewCaskToken = application.homebrewManagedCaskToken
       alternate.lastInstalledAt = application.lastInstalledAt
-      alternate.installedSource = application.installedSource
+      alternate.installedUpdateConfiguration = application.installedUpdateConfiguration
       return alternate
     }
 
@@ -139,9 +141,11 @@ struct HomebrewUpdateProvider: Sendable {
 
     for line in fileList.split(whereSeparator: \.isNewline) {
       let components = line.split(separator: "/", omittingEmptySubsequences: true)
-      guard let appIndex = components.firstIndex(where: {
-        $0.lowercased().hasSuffix(".app")
-      }) else {
+      guard
+        let appIndex = components.firstIndex(where: {
+          $0.lowercased().hasSuffix(".app")
+        })
+      else {
         continue
       }
 
@@ -232,11 +236,12 @@ struct HomebrewUpdateProvider: Sendable {
     // with multiple assets in a single release. Cache empty responses briefly too.
     var requested = Set<URL>()
     var urls: [URL] = []
-    for application in applications where application.source == .homebrew {
+    for application in applications where application.updateConfiguration.mechanism == .homebrew {
       guard application.packageByteCount == nil || application.releaseNotes?.nonBlankValue == nil,
-        let token = application.sourceIdentifier,
+        let token = application.updateConfiguration.identifier,
         let download = snapshot.gitHubReleaseDownload(for: token), let url = download.apiURL,
-        requested.insert(url).inserted, cache.releaseData(for: url) == nil else { continue }
+        requested.insert(url).inserted, cache.releaseData(for: url) == nil
+      else { continue }
       urls.append(url)
     }
     await withTaskGroup(of: (URL, Data, Bool).self) { group in
@@ -257,22 +262,29 @@ struct HomebrewUpdateProvider: Sendable {
       }
       var limited = false
       for await (url, data, rateLimited) in group {
-        if Task.isCancelled { group.cancelAll(); break }
+        if Task.isCancelled {
+          group.cancelAll()
+          break
+        }
         cache.store(releaseData: data, for: url)
         limited = limited || rateLimited
         if !limited, let next = pending.next() { enqueue(next) }
       }
     }
     return applications.map { application in
-      guard application.source == .homebrew, let token = application.sourceIdentifier,
+      guard application.updateConfiguration.mechanism == .homebrew,
+        let token = application.updateConfiguration.identifier,
         let download = snapshot.gitHubReleaseDownload(for: token), let url = download.apiURL,
-        let data = cache.releaseData(for: url) else { return application }
+        let data = cache.releaseData(for: url)
+      else { return application }
       return Self.applyingGitHubRelease(data, download: download, to: application)
     }
   }
 
-  static func applyingGitHubRelease(_ data: Data, download: GitHubReleaseDownload,
-    to application: AppRecord) -> AppRecord {
+  static func applyingGitHubRelease(
+    _ data: Data, download: GitHubReleaseDownload,
+    to application: AppRecord
+  ) -> AppRecord {
     var result = application
     guard let release = GitHubReleaseManifest.parse(data),
       let version = application.latestVersion?.split(separator: ",").first,
@@ -280,12 +292,15 @@ struct HomebrewUpdateProvider: Sendable {
       release.assets.contains(where: { GitHubReleaseDownload.parse($0.downloadURL) == download })
     else { return result }
     if result.packageByteCount == nil {
-      result.packageByteCount = GitHubReleaseManifest.packageByteCount(named: download.fileName, in: data)
+      result.packageByteCount = GitHubReleaseManifest.packageByteCount(
+        named: download.fileName, in: data)
     }
     if result.releaseNotes?.nonBlankValue == nil, let notes = release.releaseNotes?.nonBlankValue {
       result.releaseNotes = notes
-      result.releaseNotesURL = URL(string:
-        "https://github.com/\(download.owner)/\(download.repository)/releases/tag/\(download.tag)")
+      result.releaseNotesURL = URL(
+        string:
+          "https://github.com/\(download.owner)/\(download.repository)/releases/tag/\(download.tag)"
+      )
       result.releaseDate = result.releaseDate ?? release.releaseDate
     }
     return result
@@ -337,7 +352,7 @@ struct HomebrewSnapshot {
   }
 
   func applying(to application: AppRecord) -> AppRecord {
-    guard application.source != .appStore,
+    guard application.updateConfiguration.mechanism != .appStore,
       let cask = caskByTargetPath[application.applicationURL.standardizedFileURL.path]
     else {
       return application
@@ -356,14 +371,14 @@ struct HomebrewSnapshot {
 
     let detectedApplication = application
     var application = application
-    application.rememberAlternateUpdateSource(from: detectedApplication)
+    application.rememberAlternateUpdateConfiguration(from: detectedApplication)
     application.homebrewCaskToken = cask.token
 
     guard
       HomebrewUpdateProvider.shouldClaimInstalledCask(
-        source: application.source,
+        mechanism: application.updateConfiguration.mechanism,
         status: application.status,
-        hasCheckableFeed: application.sourceURL != nil,
+        hasCheckableFeed: application.updateConfiguration.feedURL != nil,
         brewHasUpdate: brewHasUpdate
       )
     else {
@@ -386,18 +401,19 @@ struct HomebrewSnapshot {
       build: application.buildVersion
     )
     let preservedPackageByteCount =
-      application.source == .homebrew
-      && (application.latestVersion == remoteVersion || !remoteIsNewer)
+      application.updateConfiguration.mechanism == .homebrew
+        && (application.latestVersion == remoteVersion || !remoteIsNewer)
       ? application.packageByteCount
       : nil
-    application.source = .homebrew
-    application.sourceIdentifier = cask.token
-    application.homebrewCaskToken = cask.token
-    application.homepageURL = HomebrewUpdateProvider.homepageURL(
+    let homepageURL = HomebrewUpdateProvider.homepageURL(
       caskHomepage: cask.homepage,
-      existing: application.homepageURL
+      existing: application.updateConfiguration.homepageURL
     )
-    application.sourceURL = application.homepageURL
+    application.updateConfiguration = UpdateConfiguration(
+      mechanism: .homebrew, feedURL: homepageURL, homepageURL: homepageURL,
+      identifier: cask.token
+    )
+    application.homebrewCaskToken = cask.token
     application.packageByteCount = preservedPackageByteCount
     application.status = HomebrewUpdateProvider.resolvedStatus(
       currentVersion: application.currentVersion,
@@ -448,7 +464,9 @@ private final class SnapshotCache: @unchecked Sendable {
   func releaseData(for url: URL) -> Data? {
     lock.lock()
     defer { lock.unlock() }
-    guard let entry = releases[url], Date().timeIntervalSince(entry.date) < timeToLive else { return nil }
+    guard let entry = releases[url], Date().timeIntervalSince(entry.date) < timeToLive else {
+      return nil
+    }
     return entry.data
   }
 
@@ -591,10 +609,11 @@ struct BrewArtifact: Decodable, Sendable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     isApplication = container.contains(.app)
     target = try container.decodeIfPresent(String.self, forKey: .target)
-    packageReceiptIdentifiers = try container.decodeIfPresent(
-      [BrewUninstallArtifact].self,
-      forKey: .uninstall
-    )?.flatMap(\.packageReceiptIdentifiers) ?? []
+    packageReceiptIdentifiers =
+      try container.decodeIfPresent(
+        [BrewUninstallArtifact].self,
+        forKey: .uninstall
+      )?.flatMap(\.packageReceiptIdentifiers) ?? []
   }
 }
 

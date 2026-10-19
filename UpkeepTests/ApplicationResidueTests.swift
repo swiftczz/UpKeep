@@ -91,7 +91,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "PDF Marker",
       bundleIdentifier: "com.billcz.pdfmarker.PDFMarker",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
 
     let names = Set(scanner.items(for: application).map(\.displayName))
@@ -194,7 +195,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "Sequel Ace",
       bundleIdentifier: "com.sequel-ace.sequel-ace",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
     let items = scanner.items(for: application)
     let names = Set(items.map(\.displayName))
@@ -254,7 +256,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "Demo",
       bundleIdentifier: "com.example.demo",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
 
     let names = Set(scanner.items(for: application).map(\.displayName))
@@ -291,7 +294,7 @@ final class ApplicationResidueTests: XCTestCase {
       bundleIdentifier: "com.fayazahmed.Screendrop",
       applicationURL: applicationURL,
       currentVersion: "0.31.3",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .upToDate,
       homebrewCaskToken: "screendrop"
     )
@@ -320,7 +323,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "Demo",
       bundleIdentifier: "com.example.demo",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
     let items = [
       ApplicationResidueItem(
@@ -381,7 +385,7 @@ final class ApplicationResidueTests: XCTestCase {
       bundleIdentifier: "com.fayazahmed.Screendrop",
       applicationURL: applicationURL,
       currentVersion: "0.31.3",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .upToDate,
       homebrewCaskToken: "screendrop"
     )
@@ -424,7 +428,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "Demo",
       bundleIdentifier: "com.example.demo",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
     let items = [
       ApplicationResidueItem(
@@ -484,7 +489,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "Demo",
       bundleIdentifier: "com.example.demo",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
     let item = ApplicationResidueItem(
       url: residueURL,
@@ -529,7 +535,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "Demo",
       bundleIdentifier: "com.example.demo",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
     let item = ApplicationResidueItem(
       url: applicationURL,
@@ -615,7 +622,8 @@ final class ApplicationResidueTests: XCTestCase {
       name: "Demo",
       bundleIdentifier: "com.example.demo",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
     let item = ApplicationResidueItem(
       url: applicationURL,
@@ -782,26 +790,32 @@ final class ApplicationResidueTests: XCTestCase {
   }
 
   func testFinderBatchTrashUsesOneNativeBatch() async throws {
-    let targets = [URL(fileURLWithPath: "/Applications/Example.app"),
-      URL(fileURLWithPath: "/Library/Caches/com.example.app")]
+    let targets = [
+      URL(fileURLWithPath: "/Applications/Example.app"),
+      URL(fileURLWithPath: "/Library/Caches/com.example.app"),
+    ]
     let calls = LockedCounter()
-    try await FinderBatchTrash.moveToTrash(targets, recycle: { urls in
-      calls.increment()
-      XCTAssertEqual(urls, targets)
-      return Dictionary(uniqueKeysWithValues: urls.map { ($0, $0) })
-    })
+    try await FinderBatchTrash.moveToTrash(
+      targets,
+      recycle: { urls in
+        calls.increment()
+        XCTAssertEqual(urls, targets)
+        return Dictionary(uniqueKeysWithValues: urls.map { ($0, $0) })
+      })
     XCTAssertEqual(calls.value, 1)
   }
 
   func testFinderBatchTrashRejectsUnsafeBatchBeforeNativeRequest() async {
     do {
-      try await FinderBatchTrash.moveToTrash([
-        URL(fileURLWithPath: "/Applications/Example.app"),
-        URL(fileURLWithPath: "/System/Library")
-      ], recycle: { _ in
-        XCTFail("Unsafe batch must not reach the system")
-        return [:]
-      })
+      try await FinderBatchTrash.moveToTrash(
+        [
+          URL(fileURLWithPath: "/Applications/Example.app"),
+          URL(fileURLWithPath: "/System/Library"),
+        ],
+        recycle: { _ in
+          XCTFail("Unsafe batch must not reach the system")
+          return [:]
+        })
       XCTFail("Expected unsafe targets to be rejected")
     } catch let error as FinderTrashError {
       guard case .unsafeTargets = error else { return XCTFail("Unexpected error: \(error)") }
@@ -811,14 +825,17 @@ final class ApplicationResidueTests: XCTestCase {
   func testFinderBatchTrashReportsCancelledAuthorizationWithoutRetrying() async {
     let calls = LockedCounter()
     do {
-      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+      try await FinderBatchTrash.moveToTrash(
+        [URL(fileURLWithPath: "/Applications/Example.app")],
         recycle: { _ in
           calls.increment()
           throw NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
         }, authorizedRecycle: { _ in XCTFail("Cancelled authorization must not prompt again") })
       XCTFail("Expected cancellation")
     } catch let error as FinderTrashError {
-      guard case .authorizationCancelled = error else { return XCTFail("Unexpected error: \(error)") }
+      guard case .authorizationCancelled = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
     } catch { XCTFail("Unexpected error: \(error)") }
     XCTAssertEqual(calls.value, 1)
   }
@@ -827,32 +844,41 @@ final class ApplicationResidueTests: XCTestCase {
     let removed = URL(fileURLWithPath: "/Library/Caches/com.example.app")
     let application = URL(fileURLWithPath: "/Applications/Example.app")
     let calls = LockedCounter()
-    try await FinderBatchTrash.moveToTrash([removed, application], recycle: { _ in
-      throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
-    }, authorizedRecycle: { urls in
-      calls.increment()
-      XCTAssertEqual(urls, [application])
-    }, exists: { $0 == application })
+    try await FinderBatchTrash.moveToTrash(
+      [removed, application],
+      recycle: { _ in
+        throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
+      },
+      authorizedRecycle: { urls in
+        calls.increment()
+        XCTAssertEqual(urls, [application])
+      }, exists: { $0 == application })
     XCTAssertEqual(calls.value, 1)
   }
 
   func testUnderlyingPermissionErrorAlsoRequestsAuthorization() async throws {
     let application = URL(fileURLWithPath: "/Applications/Example.app")
     let calls = LockedCounter()
-    try await FinderBatchTrash.moveToTrash([application], recycle: { _ in
-      throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
-        userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))])
-    }, authorizedRecycle: { urls in
-      calls.increment()
-      XCTAssertEqual(urls, [application])
-    }, exists: { _ in true })
+    try await FinderBatchTrash.moveToTrash(
+      [application],
+      recycle: { _ in
+        throw NSError(
+          domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
+          userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))])
+      },
+      authorizedRecycle: { urls in
+        calls.increment()
+        XCTAssertEqual(urls, [application])
+      }, exists: { _ in true })
     XCTAssertEqual(calls.value, 1)
   }
 
   func testOtherNativeFailuresDoNotRequestAuthorization() async {
     do {
-      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
-        recycle: { _ in throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError) },
+      try await FinderBatchTrash.moveToTrash(
+        [URL(fileURLWithPath: "/Applications/Example.app")],
+        recycle: { _ in throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError)
+        },
         authorizedRecycle: { _ in XCTFail("A full disk cannot be fixed by authorization") })
       XCTFail("Expected the native error")
     } catch {
@@ -863,15 +889,20 @@ final class ApplicationResidueTests: XCTestCase {
   func testCancelledFinderAuthorizationIsReturnedWithoutRetrying() async {
     let calls = LockedCounter()
     do {
-      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
-        recycle: { _ in throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError) },
+      try await FinderBatchTrash.moveToTrash(
+        [URL(fileURLWithPath: "/Applications/Example.app")],
+        recycle: { _ in
+          throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
+        },
         authorizedRecycle: { _ in
           calls.increment()
           throw FinderTrashError.authorizationCancelled
         }, exists: { _ in true })
       XCTFail("Expected cancellation")
     } catch let error as FinderTrashError {
-      guard case .authorizationCancelled = error else { return XCTFail("Unexpected error: \(error)") }
+      guard case .authorizationCancelled = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
     } catch { XCTFail("Unexpected error: \(error)") }
     XCTAssertEqual(calls.value, 1)
   }
@@ -885,7 +916,8 @@ final class ApplicationResidueTests: XCTestCase {
 
   func testFinderBatchTrashDoesNotReportPartialNativeResultAsSuccess() async {
     do {
-      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+      try await FinderBatchTrash.moveToTrash(
+        [URL(fileURLWithPath: "/Applications/Example.app")],
         recycle: { _ in [:] })
       XCTFail("Expected incomplete deletion to be reported")
     } catch let error as FinderTrashError {
@@ -921,7 +953,8 @@ final class ApplicationResidueTests: XCTestCase {
     let clock = ContinuousClock()
     let startedAt = clock.now
     let trashTask = Task {
-      try await FinderBatchTrash.moveToTrash([URL(fileURLWithPath: "/Applications/Example.app")],
+      try await FinderBatchTrash.moveToTrash(
+        [URL(fileURLWithPath: "/Applications/Example.app")],
         recycle: { urls in
           try await Task.sleep(for: .milliseconds(250))
           return Dictionary(uniqueKeysWithValues: urls.map { ($0, $0) })

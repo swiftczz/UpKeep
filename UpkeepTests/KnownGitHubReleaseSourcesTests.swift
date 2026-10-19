@@ -14,13 +14,14 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
       defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
       let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
 
-      XCTAssertEqual(record.source, .githubReleases, slug)
-      XCTAssertEqual(record.sourceIdentifier, "storytold/\(slug)", slug)
+      XCTAssertEqual(record.updateConfiguration.mechanism, .githubReleases, slug)
+      XCTAssertEqual(record.updateConfiguration.identifier, "storytold/\(slug)", slug)
       XCTAssertEqual(
-        record.sourceURL?.absoluteString,
+        record.updateConfiguration.feedURL?.absoluteString,
         "https://api.github.com/repos/storytold/\(slug)/releases/latest", slug)
       XCTAssertEqual(
-        record.homepageURL?.absoluteString, "https://github.com/storytold/\(slug)", slug)
+        record.updateConfiguration.homepageURL?.absoluteString,
+        "https://github.com/storytold/\(slug)", slug)
       XCTAssertEqual(record.status, .checking, slug)
       XCTAssertEqual(record.currentVersion, "0.7.0", slug)
     }
@@ -38,8 +39,8 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
       defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
       let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
 
-      XCTAssertEqual(record.source, .selfManaged, identifier)
-      XCTAssertNil(record.sourceURL, identifier)
+      XCTAssertEqual(record.updateConfiguration.mechanism, .selfManaged, identifier)
+      XCTAssertNil(record.updateConfiguration.feedURL, identifier)
     }
   }
 
@@ -48,24 +49,24 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     let record = try XCTUnwrap(ApplicationScanner.makeInstalledApplicationRecord(from: url))
 
-    XCTAssertEqual(record.source, .githubReleases)
-    XCTAssertEqual(record.sourceIdentifier, "storytold/futurecraft")
+    XCTAssertEqual(record.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(record.updateConfiguration.identifier, "storytold/futurecraft")
   }
 
   func testRecoversUnchangedApplicationPreviouslyCachedWithoutAnUpdateSource() throws {
     let url = try makeApplication(bundleIdentifier: "ai.storyteller.futurecraft")
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
-    cached.source = .selfManaged
-    cached.sourceURL = nil
-    cached.sourceIdentifier = nil
+    cached.updateConfiguration.mechanism = .selfManaged
+    cached.updateConfiguration.feedURL = nil
+    cached.updateConfiguration.identifier = nil
     cached.status = .selfManaged
 
     let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url, reusing: cached))
 
     XCTAssertEqual(record.applicationModificationDate, cached.applicationModificationDate)
-    XCTAssertEqual(record.source, .githubReleases)
-    XCTAssertEqual(record.sourceIdentifier, "storytold/futurecraft")
+    XCTAssertEqual(record.updateConfiguration.mechanism, .githubReleases)
+    XCTAssertEqual(record.updateConfiguration.identifier, "storytold/futurecraft")
     XCTAssertEqual(record.status, .checking)
   }
 
@@ -94,8 +95,8 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
       ApplicationScanner.makeInstalledApplicationRecord(from: url),
     ] {
       let record = try XCTUnwrap(record)
-      XCTAssertEqual(record.source, .sparkle)
-      XCTAssertEqual(record.sourceURL?.absoluteString, feed)
+      XCTAssertEqual(record.updateConfiguration.mechanism, .sparkle)
+      XCTAssertEqual(record.updateConfiguration.feedURL?.absoluteString, feed)
     }
   }
 
@@ -111,20 +112,21 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
       ApplicationScanner.makeRecord(from: url),
       ApplicationScanner.makeInstalledApplicationRecord(from: url),
     ] {
-      XCTAssertEqual(try XCTUnwrap(record).source, .appStore)
+      XCTAssertEqual(try XCTUnwrap(record).updateConfiguration.mechanism, .appStore)
     }
   }
 
   func testRecognizesInstalledCraftApplicationsWhenPresent() throws {
     var checked = 0
     for name in [
-      "PhotoCraft", "VectorCraft", "FilmCraft", "PdfCraft", "WordCraft", "DeckCraft", "GridCraft", "FigCraft",
+      "PhotoCraft", "VectorCraft", "FilmCraft", "PdfCraft", "WordCraft", "DeckCraft", "GridCraft",
+      "FigCraft",
     ] {
       let url = URL(fileURLWithPath: "/Applications/\(name).app")
       guard FileManager.default.fileExists(atPath: url.path) else { continue }
       let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
-      XCTAssertEqual(record.source, .githubReleases, name)
-      XCTAssertEqual(record.sourceIdentifier, "storytold/\(name.lowercased())", name)
+      XCTAssertEqual(record.updateConfiguration.mechanism, .githubReleases, name)
+      XCTAssertEqual(record.updateConfiguration.identifier, "storytold/\(name.lowercased())", name)
       checked += 1
     }
     if checked == 0 { throw XCTSkip("No Craft applications installed on this machine.") }

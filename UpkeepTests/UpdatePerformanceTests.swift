@@ -12,11 +12,15 @@ final class UpdatePerformanceTests: XCTestCase {
     let second = application("Second")
     let prefixCollision = application("First.app-backup")
     let calls = Mutex(0)
-    let running = await ApplicationProcess.runningApplicationIDs(in: [first, second, prefixCollision]) {
+    let running = await ApplicationProcess.runningApplicationIDs(in: [
+      first, second, prefixCollision,
+    ]) {
       XCTAssertFalse(Thread.isMainThread)
       calls.withLock { $0 += 1 }
-      return [first.applicationURL.path + "/Contents/MacOS/First",
-        second.applicationURL.path + "/Contents/MacOS/Second"]
+      return [
+        first.applicationURL.path + "/Contents/MacOS/First",
+        second.applicationURL.path + "/Contents/MacOS/Second",
+      ]
     }
     XCTAssertEqual(running, [first.id, second.id])
     XCTAssertEqual(calls.withLock { $0 }, 1)
@@ -45,11 +49,13 @@ final class UpdatePerformanceTests: XCTestCase {
     let calls = Mutex(0)
     let app = application("Cancelled")
     let empty = await ApplicationProcess.runningApplicationIDs(in: []) {
-      calls.withLock { $0 += 1 }; return []
+      calls.withLock { $0 += 1 }
+      return []
     }
     let task = Task { @MainActor in
       await ApplicationProcess.runningApplicationIDs(in: [app]) {
-        calls.withLock { $0 += 1 }; return []
+        calls.withLock { $0 += 1 }
+        return []
       }
     }
     task.cancel()
@@ -63,14 +69,18 @@ final class UpdatePerformanceTests: XCTestCase {
     let app = application("WhatCable")
     let root = app.applicationURL.path
     let running = await ApplicationProcess.runningApplicationIDs(in: [app]) {
-      [root + "/Contents/PlugIns/WhatCableWidget.appex/Contents/MacOS/WhatCableWidget",
+      [
+        root + "/Contents/PlugIns/WhatCableWidget.appex/Contents/MacOS/WhatCableWidget",
         root + "/Contents/Helpers/WhatCableHelper",
-        root + "/Contents/MacOS/whatcable-cli"]
+        root + "/Contents/MacOS/whatcable-cli",
+      ]
     }
     XCTAssertTrue(running.isEmpty)
     let withMain = await ApplicationProcess.runningApplicationIDs(in: [app]) {
-      [root + "/Contents/MacOS/WhatCable",
-        root + "/Contents/PlugIns/WhatCableWidget.appex/Contents/MacOS/WhatCableWidget"]
+      [
+        root + "/Contents/MacOS/WhatCable",
+        root + "/Contents/PlugIns/WhatCableWidget.appex/Contents/MacOS/WhatCableWidget",
+      ]
     }
     XCTAssertEqual(withMain, [app.id])
   }
@@ -81,12 +91,15 @@ final class UpdatePerformanceTests: XCTestCase {
     let contents = url.appendingPathComponent("Contents")
     try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let info: [String: Any] = ["CFBundleIdentifier": "com.example.renamed",
-      "CFBundleExecutable": "ActualExecutable", "CFBundlePackageType": "APPL"]
+    let info: [String: Any] = [
+      "CFBundleIdentifier": "com.example.renamed",
+      "CFBundleExecutable": "ActualExecutable", "CFBundlePackageType": "APPL",
+    ]
     try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
       .write(to: contents.appendingPathComponent("Info.plist"))
     let executable = contents.appendingPathComponent("MacOS/ActualExecutable")
-    try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(),
+    try FileManager.default.createDirectory(
+      at: executable.deletingLastPathComponent(),
       withIntermediateDirectories: false)
     try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: executable)
     let app = application("Display Name", url: url)
@@ -156,7 +169,10 @@ final class UpdatePerformanceTests: XCTestCase {
     let latest = progress(0.75)
     let consumer = Task {
       for await value in relay.stream {
-        if value == latest { delivered.fulfill(); return }
+        if value == latest {
+          delivered.fulfill()
+          return
+        }
       }
     }
     relay.submit(latest)
@@ -179,11 +195,19 @@ final class UpdatePerformanceTests: XCTestCase {
       _ = library.updateStatesByID
       _ = library.sidebarSections
       _ = firstState.isUpdating
-    } onChange: { parentChanges.withLock { $0 += 1 } }
-    withObservationTracking { _ = secondState.progress }
-      onChange: { secondChanges.withLock { $0 += 1 } }
-    withObservationTracking { _ = firstState.progress }
-      onChange: { progressChanges.withLock { $0 += 1 } }
+    } onChange: {
+      parentChanges.withLock { $0 += 1 }
+    }
+    withObservationTracking {
+      _ = secondState.progress
+    } onChange: {
+      secondChanges.withLock { $0 += 1 }
+    }
+    withObservationTracking {
+      _ = firstState.progress
+    } onChange: {
+      progressChanges.withLock { $0 += 1 }
+    }
     firstState.report(progress(0.5))
     XCTAssertEqual(parentChanges.withLock { $0 }, 0)
     XCTAssertEqual(secondChanges.withLock { $0 }, 0)
@@ -203,7 +227,10 @@ final class UpdatePerformanceTests: XCTestCase {
     let calls = Mutex([[AppRecord.ID]]())
     let coordinator = BurstUpdateCoordinator()
     let process = ApplicationProcessClient(
-      isRunning: { _ in XCTFail("Expected batch scan"); return false },
+      isRunning: { _ in
+        XCTFail("Expected batch scan")
+        return false
+      },
       quit: { _ in }, launch: { _ in },
       runningApplicationIDs: { apps in
         calls.withLock { $0.append(apps.map(\.id)) }
@@ -269,10 +296,15 @@ final class UpdatePerformanceTests: XCTestCase {
 
   private func application(_ name: String, url: URL? = nil) -> AppRecord {
     AppRecord(
-      name: name, bundleIdentifier: "com.upkeep.tests.\(name)",
-      applicationURL: url ?? URL(fileURLWithPath: "/tmp/upkeep-missing-performance-tests/\(name).app"),
-      currentVersion: "1.0", source: .sparkle, status: .updateAvailable,
-      latestVersion: "2.0", canAutomaticallyUpdate: true
+      name: name,
+      bundleIdentifier: "com.upkeep.tests.\(name)",
+      applicationURL: url
+        ?? URL(fileURLWithPath: "/tmp/upkeep-missing-performance-tests/\(name).app"),
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
+      status: .updateAvailable,
+      latestVersion: "2.0",
+      canAutomaticallyUpdate: true
     )
   }
 
@@ -309,7 +341,9 @@ private actor BurstUpdateCoordinator: UpdateCoordinating {
   }
   func enrich(_ applications: [AppRecord]) async -> [AppRecord] { applications }
   func check(_ application: AppRecord) async -> AppRecord { application }
-  func update(_ application: AppRecord, progress: @escaping @Sendable (UpdateProgress) -> Void) async throws {
+  func update(_ application: AppRecord, progress: @escaping @Sendable (UpdateProgress) -> Void)
+    async throws
+  {
     updatedIDs.append(application.id)
     callback = progress
     for index in 0..<10_000 {

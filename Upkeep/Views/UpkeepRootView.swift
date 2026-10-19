@@ -88,7 +88,7 @@ struct UpkeepRootView: View {
               reveal(application.applicationURL)
             },
             openHomepage: {
-              guard let homepageURL = application.homepageURL else { return }
+              guard let homepageURL = application.updateConfiguration.homepageURL else { return }
               open(homepageURL)
             },
             openReleaseNotes: {
@@ -100,7 +100,8 @@ struct UpkeepRootView: View {
             }
           )
           .task(
-            id: "\(application.id)|\(application.latestVersion ?? "")|\(application.releaseNotes == nil)"
+            id:
+              "\(application.id)|\(application.latestVersion ?? "")|\(application.releaseNotes == nil)"
           ) {
             await library.refreshReleaseMetadataIfNeeded(for: application.id)
           }
@@ -111,7 +112,7 @@ struct UpkeepRootView: View {
     }
     .navigationSplitViewStyle(.balanced)
     .animation(nil, value: library.selectedApplicationID)
-    .searchable(text: $library.searchText, placement: .sidebar, prompt: "搜索应用或更新来源")
+    .searchable(text: $library.searchText, placement: .sidebar, prompt: "搜索应用、来源或机制")
     .toolbar {
       ToolbarItem(placement: .automatic) {
         SettingsLink {

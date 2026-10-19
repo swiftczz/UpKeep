@@ -22,8 +22,8 @@ final class MacAppStoreUpdateProviderTests: XCTestCase {
       startUpdate: { _, _, _, _ in XCTFail("Update session must not start") }
     )
     var application = makeApplication()
-    application.sourceIdentifier = nil
-    application.sourceURL = nil
+    application.updateConfiguration.identifier = nil
+    application.updateConfiguration.feedURL = nil
 
     await XCTAssertThrowsErrorAsync(try await provider.upgrade(application) { _ in }) {
       XCTAssertTrue($0.localizedDescription.contains("缺少 App Store 应用编号"))
@@ -98,11 +98,10 @@ final class MacAppStoreUpdateProviderTests: XCTestCase {
       bundleIdentifier: "com.tencent.QQMusicMac",
       applicationURL: URL(fileURLWithPath: "/Applications/QQMusic.app"),
       currentVersion: "11.8.1",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "595615424"),
       appStorePlatform: platform,
       status: .updateAvailable,
-      latestVersion: "11.9.0",
-      sourceIdentifier: "595615424"
+      latestVersion: "11.9.0"
     )
   }
 }

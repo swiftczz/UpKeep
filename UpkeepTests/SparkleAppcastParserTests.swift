@@ -19,10 +19,17 @@ final class SparkleAppcastParserTests: XCTestCase {
     XCTAssertTrue(candidate.hasSecureDownload(relativeTo: feed))
     XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
     let provider = SparkleUpdateProvider(fetchData: { _ in Data(xml.utf8) })
-    let result = await provider.check(AppRecord(name: "AdGuard", bundleIdentifier: "com.adguard.mac.adguard",
-      applicationURL: URL(fileURLWithPath: "/Applications/AdGuard.app"), currentVersion: "2.19",
-      source: .sparkle, status: .updateAvailable, latestVersion: "2.20",
-      sourceURL: feed, canAutomaticallyUpdate: true))
+    let result = await provider.check(
+      AppRecord(
+        name: "AdGuard",
+        bundleIdentifier: "com.adguard.mac.adguard",
+        applicationURL: URL(fileURLWithPath: "/Applications/AdGuard.app"),
+        currentVersion: "2.19",
+        updateConfiguration: UpdateConfiguration(mechanism: .sparkle, feedURL: feed),
+        status: .updateAvailable,
+        latestVersion: "2.20",
+        canAutomaticallyUpdate: true
+      ))
     XCTAssertEqual(result.status, .updateAvailable)
     XCTAssertEqual(result.latestVersion, "2.20")
     XCTAssertEqual(result.releaseNotes, "AdGuard update notes")
@@ -32,12 +39,14 @@ final class SparkleAppcastParserTests: XCTestCase {
   func testApplicationDMGRemainsInstallableAndOtherInstallerTypesAreRejected() {
     let feed = URL(string: "https://example.com/appcast.xml")!
     for type in [nil, "application", " APPLICATION "] as [String?] {
-      let candidate = SparkleCandidate(downloadURL: URL(string: "https://example.com/App.dmg"),
+      let candidate = SparkleCandidate(
+        downloadURL: URL(string: "https://example.com/App.dmg"),
         installationType: type)
       XCTAssertNotNil(candidate.supportedPackageURL(relativeTo: feed))
     }
     for type in ["package", "guided-package", "unknown"] {
-      let candidate = SparkleCandidate(downloadURL: URL(string: "https://example.com/App.zip"),
+      let candidate = SparkleCandidate(
+        downloadURL: URL(string: "https://example.com/App.zip"),
         installationType: type)
       XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
     }
@@ -82,7 +91,8 @@ final class SparkleAppcastParserTests: XCTestCase {
       XCTAssertNil(candidate.manualUpdateURL(relativeTo: feedURL))
     }
     let relative = SparkleCandidate(updatePageURL: URL(string: "next"))
-    XCTAssertEqual(relative.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
+    XCTAssertEqual(
+      relative.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
       "https://example.com/releases/next")
     let downloadable = SparkleCandidate(
       updatePageURL: URL(string: "https://example.com/update"),
@@ -348,7 +358,7 @@ final class SparkleAppcastParserTests: XCTestCase {
       applicationURL: URL(fileURLWithPath: "/Applications/ExcalidrawZ.app"),
       currentVersion: "2.4.1",
       buildVersion: "108",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .updateAvailable,
       latestVersion: "2.4.1",
       latestBuildVersion: "110"
@@ -366,7 +376,7 @@ final class SparkleAppcastParserTests: XCTestCase {
       applicationURL: URL(fileURLWithPath: "/Applications/macshot.app"),
       currentVersion: "4.2.1",
       buildVersion: "99",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .updateAvailable,
       latestVersion: "4.2.2-beta.2",
       latestBuildVersion: "101"

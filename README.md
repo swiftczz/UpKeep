@@ -19,20 +19,22 @@ Upkeep 会扫描本机已安装的 `.app`，识别各应用的更新来源，集
 - **集中检查更新**：自动识别应用使用的更新来源，查看当前版本、最新版本、发布日期和更新包大小。
 - **单独或批量更新**：安装可自动更新的应用；需要退出正在运行的应用时，会先提示确认。
 - **直接阅读更新说明**：在详情页查看 Markdown 或网页正文，也可以打开完整说明。
-- **搜索与忽略更新**：按应用名、Bundle ID 或更新来源搜索，将暂时不想更新的应用放入忽略列表。
+- **搜索与忽略更新**：按应用名、Bundle ID、更新来源或更新机制搜索，将暂时不想更新的应用放入忽略列表。
 - **卸载与关联文件清理**：查看并选择要移除的文件，将应用和选中的关联文件移到废纸篓。
 
-## 支持的更新来源
+## 更新来源与更新机制
 
-| 来源 | 处理方式 |
-| --- | --- |
-| Mac App Store | 支持条件满足时下载安装；需要通过商店处理的应用会跳转到 App Store。 |
-| Homebrew | 识别由 Homebrew Cask 管理的应用，并通过 Homebrew 更新。 |
-| Sparkle、electron-updater、Tauri updater | 读取应用的更新清单，获取版本、更新说明和安装包。 |
-| VS Code updater | 支持识别到的对应更新协议。 |
-| JSON release | 支持 JSON 文件及官网更新 API，读取数组或字典形式的安装包列表，并匹配平台、架构和版本对应的说明。 |
-| GitHub Releases | 读取版本、说明和兼容的安装包；从内置地址模板识别发布标签前缀，区分同仓库中的桌面版、CLI 和移动版。 |
-| 应用自行更新 | 提供打开应用的入口，使用应用自身的更新功能。 |
+“更新来源”表示获取版本信息的渠道，统一为 **App Store、Homebrew、GitHub、Website、Unknown**；“更新机制”表示读取更新信息所用的协议或接口。详情页分别显示两项，列表图标表示来源。
+
+| 更新来源 | 更新机制 | 处理方式 |
+| --- | --- | --- |
+| App Store | App Store | 支持条件满足时下载安装；需要通过商店处理的应用会跳转到 App Store。 |
+| Homebrew | Homebrew Cask | 识别由 Homebrew Cask 管理的应用，并通过 Homebrew 更新。 |
+| Website / GitHub | Sparkle、Electron Updater、Tauri Updater | 读取应用的更新清单，获取版本、更新说明和安装包；清单托管在 GitHub 时来源显示 GitHub。 |
+| Website | VS Code Updater | 支持识别到的对应更新协议。 |
+| Website / GitHub | Custom API | 支持 JSON 文件及更新 API，匹配平台、架构和版本对应的说明。 |
+| GitHub | GitHub Releases | 读取版本、说明和兼容的安装包；区分同仓库中的桌面版、CLI 和移动版。 |
+| Unknown | Unknown | 提供打开应用的入口，使用应用自身的更新功能。 |
 
 扫描范围包括应用主程序及包内名称匹配的辅助应用。更新接口、仓库及发布渠道从应用自身配置和程序内容识别；来源未知的应用会在完整检查时重新识别。
 
@@ -46,9 +48,9 @@ Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 M
 
 ## 日常使用
 
-左侧列表分为“可用更新”“已安装的应用”和“已忽略的应用”三组。搜索框支持输入 `Sparkle`、`Homebrew`、`GitHub` 等来源名称。
+左侧列表分为“可用更新”“已安装的应用”和“已忽略的应用”三组。搜索框支持输入 `Website`、`Homebrew`、`GitHub` 等来源名称，也支持 `Sparkle`、`Tauri Updater` 等机制名称。来源和机制关键词只匹配当前显示的渠道和机制，不匹配备用通道；`未知`、`Unknown` 均筛选当前来源为 Unknown 的应用。
 
-更新来源优先显示最近一次通过 Upkeep 成功安装当前版本的渠道，也会根据本地 Homebrew 收据识别在终端完成的安装或更新；没有确切记录时，显示检测到的更新渠道。刷新检查或读取其他渠道的更新说明不会覆盖已确认的来源。
+更新来源按当前检查渠道的更新接口判断，不受是否发现新版本影响，也不根据安装包最终下载域名或历史安装渠道改变。最近一次成功安装的渠道及本地 Homebrew 收据仍保留在安装记录中。
 
 选中应用后，右侧展示版本和更新说明。主按钮右侧的菜单提供“在 Finder 中显示”和“卸载”等操作；在侧栏右键点击应用，可以添加忽略或取消忽略。已忽略的应用会统一放入忽略列表，无论当前是否有可用更新。
 
@@ -126,8 +128,13 @@ Package.swift                       Swift Package Manager 配置
 Resources/                          应用图标
 scripts/                            构建、打包、更新记录与图标生成脚本
 Upkeep/
-  Models/                           应用、更新来源与状态模型
-  Services/                         扫描、更新源、说明解析、安装与卸载
+  Models/                           应用记录、显示、搜索与缓存兼容
+    Updates/                        来源、机制、更新配置、状态与进度
+  Services/                         说明解析、安装、卸载及系统服务
+    Updates/
+      Detection/                    扫描应用及识别更新配置
+      Providers/                    按更新机制读取清单与执行更新
+      UpdateCoordinator.swift       按机制调度主配置与备用配置
   Store/                            应用列表状态与本地缓存
   Views/                            侧栏、详情与卸载界面
 UpkeepPrivilegedHelper/             App Store pkg 安装与受保护应用卸载助手
@@ -135,6 +142,10 @@ UpkeepPrivilegedHelperProtocol/     主程序与助手共用的 XPC 协议
 UpkeepTests/                        主程序测试
 UpkeepPrivilegedHelperTests/        后台助手测试
 ```
+
+更新配置由 `UpdateConfiguration` 统一描述，包含 `mechanism`、`feedURL`、`identifier`、`homepageURL` 和 GitHub 发布标签前缀。`UpdateChannel` 表示来源，按机制和更新接口推导，避免接口变更后来源残留；`UpdateMechanism` 表示协议，更新调度只依据机制选择处理模块。
+
+应用的 `updateConfiguration`、`alternateUpdateConfiguration`、`installedUpdateConfiguration` 分别保存当前、备用和已确认安装的完整配置。切换配置时整体复制，GitHub 桌面版标签前缀等信息不会串到其他通道。旧版扁平缓存仅在 `AppRecord+Codable.swift` 中迁移，新缓存使用嵌套配置结构。
 
 ### 修改图标
 

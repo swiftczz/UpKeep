@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import Upkeep
 
 final class SparklePrereleaseTests: XCTestCase, @unchecked Sendable {
@@ -24,16 +25,22 @@ final class SparklePrereleaseTests: XCTestCase, @unchecked Sendable {
     """
 
   private func feed(_ items: String) -> Data {
-    Data("""
+    Data(
+      """
       <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
       <channel>\(items)</channel></rss>
       """.utf8)
   }
 
   private func app(build: String = "856") -> AppRecord {
-    AppRecord(name: "PlayCover", bundleIdentifier: "io.playcover.PlayCover",
+    AppRecord(
+      name: "PlayCover",
+      bundleIdentifier: "io.playcover.PlayCover",
       applicationURL: URL(fileURLWithPath: "/Applications/PlayCover.app"),
-      currentVersion: "3.1.0", buildVersion: build, source: .sparkle, sourceURL: feedURL)
+      currentVersion: "3.1.0",
+      buildVersion: build,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle, feedURL: feedURL)
+    )
   }
 
   func testPlayCoverFeedSelectsStableReleaseDespitePlainShortVersion() throws {
@@ -47,18 +54,25 @@ final class SparklePrereleaseTests: XCTestCase, @unchecked Sendable {
     let candidates = [
       SparkleCandidate(title: "4.0.0-prerelease", shortVersion: "4.0.0"),
       SparkleCandidate(title: "PlayCover v4.0.0 Pre-release", shortVersion: "4.0.0"),
-      SparkleCandidate(shortVersion: "4.0.0", releaseNotesURL:
-        URL(string: "https://example.com/releases/v4.0.0-rc.1")),
-      SparkleCandidate(shortVersion: "4.0.0", updatePageURL:
-        URL(string: "https://example.com/releases/v4.0.0-beta")),
-      SparkleCandidate(shortVersion: "4.0.0", downloadURL:
-        URL(string: "https://example.com/PlayCover_4.0.0-prerelease.dmg")),
+      SparkleCandidate(
+        shortVersion: "4.0.0",
+        releaseNotesURL:
+          URL(string: "https://example.com/releases/v4.0.0-rc.1")),
+      SparkleCandidate(
+        shortVersion: "4.0.0",
+        updatePageURL:
+          URL(string: "https://example.com/releases/v4.0.0-beta")),
+      SparkleCandidate(
+        shortVersion: "4.0.0",
+        downloadURL:
+          URL(string: "https://example.com/PlayCover_4.0.0-prerelease.dmg")),
     ]
     for candidate in candidates {
       XCTAssertTrue(candidate.isPrerelease, "\(candidate)")
       XCTAssertNil(SparkleUpdateProvider.bestCandidate(from: [candidate]))
     }
-    let stable = SparkleCandidate(title: "BetaApp 4.0.0", shortVersion: "4.0.0",
+    let stable = SparkleCandidate(
+      title: "BetaApp 4.0.0", shortVersion: "4.0.0",
       downloadURL: URL(string: "https://example.com/beta/PreviewApp_4.0.0.dmg"))
     XCTAssertFalse(stable.isPrerelease)
   }

@@ -6,8 +6,10 @@ import XCTest
 final class TauriReleaseNotesTests: XCTestCase, @unchecked Sendable {
   private let catalog = URL(string: "https://dl.reasonix.io/studio/versions.json")!
   private let manifest = URL(string: "https://dl.reasonix.io/studio/test-latest.json")!
-  private let release = URL(string: "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.20.0")!
-  private let api = URL(string: "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/studio-v2.20.0")!
+  private let release = URL(
+    string: "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/studio-v2.20.0")!
+  private let api = URL(
+    string: "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/studio-v2.20.0")!
 
   // The repository header, tag selector and assets are siblings of the release body.
   private let githubPage = """
@@ -45,9 +47,11 @@ final class TauriReleaseNotesTests: XCTestCase, @unchecked Sendable {
   }
 
   func testMissingReleaseBodyDoesNotReturnPageOrRetrySameAPIFromPackage() async {
-    let app = await check(pages: [release:
-      "<html><main><h1>Repository</h1><div>Choose a tag to compare</div><div>Assets 24</div></main></html>"
-    ], failingURLs: [api])
+    let app = await check(
+      pages: [
+        release:
+          "<html><main><h1>Repository</h1><div>Choose a tag to compare</div><div>Assets 24</div></main></html>"
+      ], failingURLs: [api])
     XCTAssertNil(app.releaseNotes)
     XCTAssertEqual(app.releaseNotesURL, release)
     XCTAssertEqual(app.status, .updateAvailable)
@@ -63,12 +67,14 @@ final class TauriReleaseNotesTests: XCTestCase, @unchecked Sendable {
     let provider = TauriUpdateProvider(fetchData: { url in
       await requests.record(url)
       if url == catalog {
-        return Data("""
+        return Data(
+          """
           {"versions":[{"version":"2.20.0","manifest":"\(manifest.absoluteString)"}]}
           """.utf8)
       }
       if url == manifest {
-        return Data("""
+        return Data(
+          """
           {"version":"2.20.0","release_notes_url":"\(release.absoluteString)","platforms":{
             "darwin-universal":{"url":"https://github.com/esengine/DeepSeek-Reasonix/releases/download/studio-v2.20.0/Studio.app.tar.gz"}
           }}
@@ -81,12 +87,15 @@ final class TauriReleaseNotesTests: XCTestCase, @unchecked Sendable {
       }
       return Data(page.utf8)
     })
-    let checked = await provider.check(AppRecord(
-      name: "Reasonix Studio", bundleIdentifier: "io.reasonix.studio",
-      applicationURL: URL(fileURLWithPath: "/Applications/ReasonixStudio.app"),
-      currentVersion: "2.19.0", source: .tauri,
-      releaseNotes: "Notifications Star Choose a tag to compare", sourceURL: catalog
-    ))
+    let checked = await provider.check(
+      AppRecord(
+        name: "Reasonix Studio",
+        bundleIdentifier: "io.reasonix.studio",
+        applicationURL: URL(fileURLWithPath: "/Applications/ReasonixStudio.app"),
+        currentVersion: "2.19.0",
+        updateConfiguration: UpdateConfiguration(mechanism: .tauri, feedURL: catalog),
+        releaseNotes: "Notifications Star Choose a tag to compare"
+      ))
     let apiRequests = await requests.count(for: api)
     XCTAssertEqual(apiRequests, 1)
     return checked

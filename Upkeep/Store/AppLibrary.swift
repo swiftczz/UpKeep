@@ -254,10 +254,10 @@ final class AppLibrary {
     guard application.releaseNotes == nil else {
       return
     }
-    switch application.source {
-    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
+    switch application.updateConfiguration.mechanism {
+    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .customAPI, .githubReleases:
       break
-    case .sparkle where application.sourceURL != nil:
+    case .sparkle where application.updateConfiguration.feedURL != nil:
       break
     case .homebrew where application.alternateUpdateCheckRecord != nil:
       break
@@ -515,7 +515,8 @@ final class AppLibrary {
     _ incoming: [AppRecord],
     previous: [AppRecord]
   ) -> [AppRecord] {
-    let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let previousByID = Dictionary(
+      previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     return uniqueApplications(incoming).map { current in
       guard let previous = previousByID[current.id] else {
         return current
@@ -524,7 +525,9 @@ final class AppLibrary {
       if previousReleaseIsIncompatible(previous, with: current) {
         return current
       }
-      if current.source == .selfManaged, previous.source == .selfManaged {
+      if current.updateConfiguration.mechanism == .selfManaged,
+        previous.updateConfiguration.mechanism == .selfManaged
+      {
         var cleaned = carryingMetadata(from: previous, onto: current)
         cleaned.discardRemoteRelease()
         return cleaned
@@ -532,20 +535,23 @@ final class AppLibrary {
 
       // Homebrew enrichment has already checked this version. Do not replace
       // a fresh up-to-date result with a previously cached update.
-      if current.source == .homebrew,
+      if current.updateConfiguration.mechanism == .homebrew,
         current.status == .updateAvailable || current.status == .upToDate
       {
         return carryingMetadata(from: previous, onto: current)
       }
 
-      if previous.source == .githubReleases, current.source != .githubReleases {
+      if previous.updateConfiguration.mechanism == .githubReleases,
+        current.updateConfiguration.mechanism != .githubReleases
+      {
         return carryingMetadata(from: previous, onto: current)
       }
 
       let versionChanged =
         current.currentVersion != previous.currentVersion
         || current.buildVersion != previous.buildVersion
-        || (current.source == .vscodeUpdater && current.sourceIdentifier != previous.sourceIdentifier)
+        || (current.updateConfiguration.mechanism == .vscodeUpdater
+          && current.updateConfiguration.identifier != previous.updateConfiguration.identifier)
       if versionChanged {
         return carryingPendingUpdate(from: previous, onto: current)
       }
@@ -560,7 +566,9 @@ final class AppLibrary {
         }
       }
 
-      if previous.source == current.source, previous.status != .checking {
+      if previous.updateConfiguration.mechanism == current.updateConfiguration.mechanism,
+        previous.status != .checking
+      {
         merged.status = previous.status
         merged.latestVersion = previous.latestVersion
         merged.latestBuildVersion = previous.latestBuildVersion
@@ -578,7 +586,8 @@ final class AppLibrary {
     _ installedApplications: [AppRecord],
     previous: [AppRecord]
   ) -> [AppRecord] {
-    let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let previousByID = Dictionary(
+      previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
     return uniqueApplications(installedApplications).map { disk in
       guard let existing = previousByID[disk.id] else {
@@ -588,7 +597,8 @@ final class AppLibrary {
       let versionChanged =
         disk.currentVersion != existing.currentVersion
         || disk.buildVersion != existing.buildVersion
-        || (disk.source == .vscodeUpdater && disk.sourceIdentifier != existing.sourceIdentifier)
+        || (disk.updateConfiguration.mechanism == .vscodeUpdater
+          && disk.updateConfiguration.identifier != existing.updateConfiguration.identifier)
       guard versionChanged else {
         return carryingInstalledState(from: existing, onto: disk)
       }
@@ -599,11 +609,13 @@ final class AppLibrary {
 
   static func coalesceCheckResult(_ incoming: AppRecord, over existing: AppRecord) -> AppRecord {
     var incoming = incoming
-    if incoming.source == .selfManaged, existing.source == .selfManaged {
+    if incoming.updateConfiguration.mechanism == .selfManaged,
+      existing.updateConfiguration.mechanism == .selfManaged
+    {
       incoming.discardRemoteRelease()
     }
     let result: AppRecord
-    if existing.status == .updateAvailable, existing.source != .selfManaged {
+    if existing.status == .updateAvailable, existing.updateConfiguration.mechanism != .selfManaged {
       switch incoming.status {
       case .checking, .selfManaged, .unavailable:
         result = carryingPendingUpdate(from: existing, onto: incoming)
@@ -618,8 +630,8 @@ final class AppLibrary {
     if merged.lastInstalledAt == nil {
       merged.lastInstalledAt = existing.lastInstalledAt
     }
-    if merged.installedSource == nil, hasSameInstalledVersion(merged, existing) {
-      merged.installedSource = existing.installedSource
+    if merged.installedUpdateConfiguration == nil, hasSameInstalledVersion(merged, existing) {
+      merged.installedUpdateConfiguration = existing.installedUpdateConfiguration
     }
     return merged
   }
@@ -630,10 +642,17 @@ final class AppLibrary {
       && lhs.buildVersion == rhs.buildVersion
   }
 
-  private static func previousReleaseIsIncompatible(_ previous: AppRecord, with current: AppRecord) -> Bool {
+  private static func previousReleaseIsIncompatible(_ previous: AppRecord, with current: AppRecord)
+    -> Bool
+  {
     guard previous.bundleIdentifier == current.bundleIdentifier else { return true }
-    if previous.source == .githubReleases, current.source == .githubReleases,
-      previous.githubReleaseTagPrefix != current.githubReleaseTagPrefix { return true }
+    if previous.updateConfiguration.mechanism == .githubReleases,
+      current.updateConfiguration.mechanism == .githubReleases,
+      previous.updateConfiguration.githubReleaseTagPrefix
+        != current.updateConfiguration.githubReleaseTagPrefix
+    {
+      return true
+    }
     guard !hasSameInstalledVersion(previous, current) else { return false }
     // Replacements can restart their numbering (for example, 1.x -> 0.x).
     // Preserve ordinary forward updates and the cheap scan's incomplete source detection.
@@ -645,9 +664,9 @@ final class AppLibrary {
     {
       return true
     }
-    return current.source != .selfManaged && (
-      current.source != previous.source || current.sourceURL != previous.sourceURL
-    )
+    return current.updateConfiguration.mechanism != .selfManaged
+      && (current.updateConfiguration.mechanism != previous.updateConfiguration.mechanism
+        || current.updateConfiguration.feedURL != previous.updateConfiguration.feedURL)
   }
 
   private static func carryingPendingUpdate(
@@ -655,7 +674,9 @@ final class AppLibrary {
     onto current: AppRecord
   ) -> AppRecord {
     guard !previousReleaseIsIncompatible(previous, with: current) else { return current }
-    if current.source == .selfManaged, previous.source == .selfManaged {
+    if current.updateConfiguration.mechanism == .selfManaged,
+      previous.updateConfiguration.mechanism == .selfManaged
+    {
       var cleaned = carryingMetadata(from: previous, onto: current)
       cleaned.discardRemoteRelease()
       return cleaned
@@ -671,9 +692,11 @@ final class AppLibrary {
     merged.releaseNotes = previous.releaseNotes
     merged.releaseDate = previous.releaseDate
     merged.releaseNotesURL = previous.releaseNotesURL
-    merged.updatePageURL = previous.source == current.source ? previous.updatePageURL : nil
+    merged.updatePageURL =
+      previous.updateConfiguration.mechanism == current.updateConfiguration.mechanism
+      ? previous.updatePageURL : nil
     merged.canAutomaticallyUpdate =
-      previous.source == current.source
+      previous.updateConfiguration.mechanism == current.updateConfiguration.mechanism
       ? previous.canAutomaticallyUpdate
       : current.canAutomaticallyUpdate
     return carryingMetadata(from: previous, onto: merged)
@@ -684,35 +707,40 @@ final class AppLibrary {
     onto current: AppRecord
   ) -> AppRecord {
     var merged = current
-    if merged.sourceURL == nil, previous.source == merged.source {
-      merged.sourceURL = previous.sourceURL
+    if merged.updateConfiguration.feedURL == nil,
+      previous.updateConfiguration.mechanism == merged.updateConfiguration.mechanism
+    {
+      merged.updateConfiguration.feedURL = previous.updateConfiguration.feedURL
     }
-    if merged.homepageURL == nil {
-      merged.homepageURL = previous.homepageURL
+    if merged.updateConfiguration.homepageURL == nil {
+      merged.updateConfiguration.homepageURL = previous.updateConfiguration.homepageURL
     }
-    if merged.sourceIdentifier == nil, previous.source == merged.source {
-      merged.sourceIdentifier = previous.sourceIdentifier
+    if merged.updateConfiguration.identifier == nil,
+      previous.updateConfiguration.mechanism == merged.updateConfiguration.mechanism
+    {
+      merged.updateConfiguration.identifier = previous.updateConfiguration.identifier
     }
-    if merged.githubReleaseTagPrefix == nil, previous.sourceURL == merged.sourceURL,
-      previous.source == merged.source {
-      merged.githubReleaseTagPrefix = previous.githubReleaseTagPrefix
+    if merged.updateConfiguration.githubReleaseTagPrefix == nil,
+      previous.updateConfiguration.feedURL == merged.updateConfiguration.feedURL,
+      previous.updateConfiguration.mechanism == merged.updateConfiguration.mechanism
+    {
+      merged.updateConfiguration.githubReleaseTagPrefix =
+        previous.updateConfiguration.githubReleaseTagPrefix
     }
-    if merged.alternateUpdateSource == nil {
-      merged.alternateUpdateSource = previous.alternateUpdateSource
-      merged.alternateSourceURL = previous.alternateSourceURL
-      merged.alternateSourceIdentifier = previous.alternateSourceIdentifier
-      merged.alternateHomepageURL = previous.alternateHomepageURL
-      if previous.alternateUpdateSource == .githubReleases {
-        merged.githubReleaseTagPrefix = previous.githubReleaseTagPrefix
-      }
+    if merged.alternateUpdateConfiguration == nil {
+      merged.alternateUpdateConfiguration = previous.alternateUpdateConfiguration
     }
-    if merged.homebrewCaskToken == nil, merged.source != .appStore {
+    if merged.homebrewCaskToken == nil, merged.updateConfiguration.mechanism != .appStore {
       merged.homebrewCaskToken = previous.homebrewCaskToken
     }
-    if merged.appStoreCountryCode == nil, previous.source == merged.source {
+    if merged.appStoreCountryCode == nil,
+      previous.updateConfiguration.mechanism == merged.updateConfiguration.mechanism
+    {
       merged.appStoreCountryCode = previous.appStoreCountryCode
     }
-    if merged.appStoreAccountCountryCode == nil, previous.source == merged.source {
+    if merged.appStoreAccountCountryCode == nil,
+      previous.updateConfiguration.mechanism == merged.updateConfiguration.mechanism
+    {
       merged.appStoreAccountCountryCode = previous.appStoreAccountCountryCode
     }
     if merged.hasSameRelease(as: previous) {
@@ -735,8 +763,8 @@ final class AppLibrary {
     if merged.lastInstalledAt == nil {
       merged.lastInstalledAt = previous.lastInstalledAt
     }
-    if merged.installedSource == nil, hasSameInstalledVersion(merged, previous) {
-      merged.installedSource = previous.installedSource
+    if merged.installedUpdateConfiguration == nil, hasSameInstalledVersion(merged, previous) {
+      merged.installedUpdateConfiguration = previous.installedUpdateConfiguration
     }
     return merged
   }
@@ -745,31 +773,38 @@ final class AppLibrary {
     from previous: AppRecord,
     onto disk: AppRecord
   ) -> AppRecord {
-    if disk.source != .selfManaged, disk.source != previous.source {
+    if disk.updateConfiguration.mechanism != .selfManaged,
+      disk.updateConfiguration.mechanism != previous.updateConfiguration.mechanism
+    {
       return carryingMetadata(from: previous, onto: disk)
     }
 
     var merged = carryingMetadata(from: previous, onto: disk)
-    let detectedSameSource = disk.source == previous.source
-    merged.source = previous.source
-    merged.githubReleaseTagPrefix = previous.githubReleaseTagPrefix
-    merged.appStorePlatform = detectedSameSource
+    let detectedSameSource =
+      disk.updateConfiguration.mechanism == previous.updateConfiguration.mechanism
+    var configuration = previous.updateConfiguration
+    configuration.homepageURL = merged.updateConfiguration.homepageURL
+    if detectedSameSource {
+      configuration.feedURL = disk.updateConfiguration.feedURL ?? configuration.feedURL
+      configuration.identifier = disk.updateConfiguration.identifier ?? configuration.identifier
+    }
+    merged.updateConfiguration = configuration
+    merged.appStorePlatform =
+      detectedSameSource
       ? disk.appStorePlatform ?? previous.appStorePlatform
       : previous.appStorePlatform
-    merged.appStoreCountryCode = detectedSameSource
+    merged.appStoreCountryCode =
+      detectedSameSource
       ? disk.appStoreCountryCode ?? previous.appStoreCountryCode
       : previous.appStoreCountryCode
-    merged.appStoreAccountCountryCode = detectedSameSource
+    merged.appStoreAccountCountryCode =
+      detectedSameSource
       ? disk.appStoreAccountCountryCode ?? previous.appStoreAccountCountryCode
       : previous.appStoreAccountCountryCode
     merged.status = previous.status
     merged.latestVersion = previous.latestVersion
     merged.latestBuildVersion = previous.latestBuildVersion
-    merged.sourceURL = detectedSameSource ? disk.sourceURL ?? previous.sourceURL : previous.sourceURL
     merged.updatePageURL = previous.updatePageURL
-    merged.sourceIdentifier = detectedSameSource
-      ? disk.sourceIdentifier ?? previous.sourceIdentifier
-      : previous.sourceIdentifier
     merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
     return merged
   }
@@ -782,7 +817,8 @@ final class AppLibrary {
     if previousReleaseIsIncompatible(application, with: disk) {
       var record = disk
       record.discardRemoteRelease()
-      record.status = record.source == .selfManaged ? .selfManaged : .upToDate
+      record.status =
+        record.updateConfiguration.mechanism == .selfManaged ? .selfManaged : .upToDate
       record.lastInstalledAt = installedAt
       return record
     }
@@ -793,7 +829,8 @@ final class AppLibrary {
       record.status = .updateAvailable
       record.canAutomaticallyUpdate = application.canAutomaticallyUpdate
     } else {
-      record.status = record.source == .selfManaged ? .selfManaged : .upToDate
+      record.status =
+        record.updateConfiguration.mechanism == .selfManaged ? .selfManaged : .upToDate
       record.canAutomaticallyUpdate = false
     }
     return record
@@ -810,8 +847,8 @@ final class AppLibrary {
     }
 
     if application.needsUpdate,
-      application.source == .appStore,
-      application.sourceURL != nil
+      application.updateConfiguration.mechanism == .appStore,
+      application.updateConfiguration.feedURL != nil
     {
       return Self.nativeAppStoreUpdateURL(for: application)
     }
@@ -826,8 +863,8 @@ final class AppLibrary {
   func appStoreURL(for applicationID: AppRecord.ID) -> URL? {
     guard
       let application = applications.first(where: { $0.id == applicationID }),
-      application.source == .appStore,
-      let sourceURL = application.sourceURL
+      application.updateConfiguration.mechanism == .appStore,
+      let sourceURL = application.updateConfiguration.feedURL
     else {
       return nil
     }
@@ -889,10 +926,11 @@ final class AppLibrary {
 
     do {
       try await performCoordinatorUpdate(application, state: state)
-      state.report(UpdateProgress(
-        fractionCompleted: 1,
-        status: "正在完成…"
-      ))
+      state.report(
+        UpdateProgress(
+          fractionCompleted: 1,
+          status: "正在完成…"
+        ))
       let diskRecord = await waitForInstalledDiskRecord(application)
       guard let diskRecord else {
         clearUpdateProgress(for: application)
@@ -979,7 +1017,7 @@ final class AppLibrary {
     }
 
     var record = Self.installedDiskRecord(disk, replacing: application, installedAt: .now)
-    record.installedSource = application.source
+    record.installedUpdateConfiguration = application.updateConfiguration
 
     applications[index] = record
     persistSnapshot()
@@ -1000,7 +1038,7 @@ final class AppLibrary {
     if application.requiresAppStoreUpdatePageHandoff {
       return URL(string: "macappstore://showUpdatesPage")
     }
-    guard let sourceURL = application.sourceURL else {
+    guard let sourceURL = application.updateConfiguration.feedURL else {
       return nil
     }
     return nativeAppStoreURL(from: sourceURL)

@@ -1,24 +1,5 @@
 import Foundation
 
-struct UpdateProgress: Hashable, Sendable {
-  var fractionCompleted: Double?
-  var status: String
-
-  static func indeterminate(_ status: String) -> UpdateProgress {
-    UpdateProgress(fractionCompleted: nil, status: status)
-  }
-
-  var percentText: String? {
-    guard let fractionCompleted else { return nil }
-    return "\(Int((min(max(fractionCompleted, 0), 1) * 100).rounded()))%"
-  }
-
-  static func clamp(_ value: Double) -> Double {
-    let normalized = value > 1.0001 ? value / 100 : value
-    return min(max(normalized, 0), 1)
-  }
-}
-
 protocol UpdateCoordinating: Sendable {
   func enrich(_ applications: [AppRecord]) async -> [AppRecord]
   func enrich(
@@ -60,7 +41,7 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
   private let electronBuilder = ElectronBuilderUpdateProvider()
   private let tauri = TauriUpdateProvider()
   private let vscode = VSCodeUpdateProvider()
-  private let releaseJSON = ReleaseJSONUpdateProvider()
+  private let customAPIUpdate = CustomAPIUpdateProvider()
   private let githubReleases = GitHubReleasesUpdateProvider()
   private let process: ApplicationProcessClient
 
@@ -83,17 +64,17 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
   }
 
   func check(_ application: AppRecord) async -> AppRecord {
-    if application.source == .homebrew,
+    if application.updateConfiguration.mechanism == .homebrew,
       let alternate = application.alternateUpdateCheckRecord
     {
       let checked: AppRecord
-      switch alternate.source {
+      switch alternate.updateConfiguration.mechanism {
       case .sparkle:
         checked = await sparkle.check(alternate, fallbackNotes: application)
       case .tauri:
         checked = await tauri.check(alternate, fallbackNotes: application)
       default:
-        checked = await checkDirectSource(alternate)
+        checked = await checkUsingMechanism(alternate)
       }
       return HomebrewUpdateProvider.mergeAlternateCheckResult(
         checked,
@@ -101,14 +82,14 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
       )
     }
 
-    return await checkDirectSource(application)
+    return await checkUsingMechanism(application)
   }
 
-  private func checkDirectSource(_ application: AppRecord) async -> AppRecord {
-    switch application.source {
+  private func checkUsingMechanism(_ application: AppRecord) async -> AppRecord {
+    switch application.updateConfiguration.mechanism {
     case .appStore:
       return await appStore.check(application)
-    case .sparkle where application.sourceURL != nil:
+    case .sparkle where application.updateConfiguration.feedURL != nil:
       return await sparkle.check(application)
     case .electronBuilder:
       return await electronBuilder.check(application)
@@ -116,8 +97,8 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
       return await tauri.check(application)
     case .vscodeUpdater:
       return await vscode.check(application)
-    case .releaseJSON:
-      return await releaseJSON.check(application)
+    case .customAPI:
+      return await customAPIUpdate.check(application)
     case .githubReleases:
       return await githubReleases.check(application)
     case .homebrew, .selfManaged, .sparkle:
@@ -134,7 +115,7 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
       process: process,
       progress: progress
     ) {
-      switch application.source {
+      switch application.updateConfiguration.mechanism {
       case .homebrew:
         try await homebrew.upgrade(application, progress: progress)
       case .appStore:
@@ -147,8 +128,8 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
         try await tauri.upgrade(application, progress: progress)
       case .vscodeUpdater:
         try await vscode.upgrade(application, progress: progress)
-      case .releaseJSON:
-        try await releaseJSON.upgrade(application, progress: progress)
+      case .customAPI:
+        try await customAPIUpdate.upgrade(application, progress: progress)
       case .githubReleases:
         try await githubReleases.upgrade(application, progress: progress)
       case .selfManaged:

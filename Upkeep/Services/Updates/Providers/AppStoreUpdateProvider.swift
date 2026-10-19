@@ -47,9 +47,9 @@ struct AppStoreUpdateProvider: Sendable {
             application.latestVersion = release.version
             application.releaseNotes = release.releaseNotes?.nonBlankValue
             application.releaseDate = release.releaseDate
-            application.sourceURL = productPageURL
-            application.homepageURL = productPageURL
-            application.sourceIdentifier = String(adamID)
+            application.updateConfiguration.feedURL = productPageURL
+            application.updateConfiguration.homepageURL = productPageURL
+            application.updateConfiguration.identifier = String(adamID)
             application.canAutomaticallyUpdate =
               !application.requiresAppStoreUpdatePageHandoff
               && MacAppStoreUpdateProvider.isAvailable
@@ -74,7 +74,7 @@ struct AppStoreUpdateProvider: Sendable {
         var countryMatches: [AppStoreLookupResult] = []
 
         for candidate in Self.lookupCandidates(
-          storeIdentifier: application.sourceIdentifier,
+          storeIdentifier: application.updateConfiguration.identifier,
           platform: platform
         ) {
           guard
@@ -135,9 +135,9 @@ struct AppStoreUpdateProvider: Sendable {
       application.latestVersion = result.version
       application.releaseNotes = result.releaseNotes?.nonBlankValue
       application.releaseDate = result.releaseDate.flatMap(ISO8601Parsing.date(from:))
-      application.sourceURL = result.trackViewURL.flatMap(URL.init(string:))
-      application.homepageURL = application.sourceURL
-      application.sourceIdentifier = result.trackID.map(String.init)
+      application.updateConfiguration.feedURL = result.trackViewURL.flatMap(URL.init(string:))
+      application.updateConfiguration.homepageURL = application.updateConfiguration.feedURL
+      application.updateConfiguration.identifier = result.trackID.map(String.init)
       application.packageByteCount = result.packageByteCount
       application.canAutomaticallyUpdate =
         !application.requiresAppStoreUpdatePageHandoff
@@ -302,9 +302,11 @@ struct AppStoreProductPageRelease: Equatable, Sendable {
   }
 
   private static func version(in value: String) -> String? {
-    guard let expression = try? NSRegularExpression(
-      pattern: #"\d+(?:[._-]\d+)+(?:[A-Za-z0-9._-]*)?"#
-    ) else {
+    guard
+      let expression = try? NSRegularExpression(
+        pattern: #"\d+(?:[._-]\d+)+(?:[A-Za-z0-9._-]*)?"#
+      )
+    else {
       return nil
     }
     let range = NSRange(value.startIndex..., in: value)
@@ -421,10 +423,11 @@ struct AppStoreLookupResponse: Decodable, Sendable {
     platform: AppStorePlatform,
     includesPlatformEntity: Bool = true
   ) -> AppStoreLookupResult? {
-    AppStoreUpdateProvider.newestResult(in: results.filter {
-      $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
-        && $0.supports(platform, includesPlatformEntity: includesPlatformEntity)
-    })
+    AppStoreUpdateProvider.newestResult(
+      in: results.filter {
+        $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+          && $0.supports(platform, includesPlatformEntity: includesPlatformEntity)
+      })
   }
 }
 

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import Upkeep
 
 final class ApplicationResidueScanTests: XCTestCase, @unchecked Sendable {
@@ -24,8 +25,9 @@ final class ApplicationResidueScanTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(items.count, 1)
     XCTAssertFalse(files.directories.isEmpty)
     for directory in files.directories {
-      XCTAssertTrue(directory.path.hasPrefix(appPath + "/")
-        || directory.path.hasPrefix(fixture.root.appendingPathComponent("Library").path + "/"))
+      XCTAssertTrue(
+        directory.path.hasPrefix(appPath + "/")
+          || directory.path.hasPrefix(fixture.root.appendingPathComponent("Library").path + "/"))
       XCTAssertFalse(directory.path.contains("/Resources/"))
     }
   }
@@ -39,7 +41,8 @@ final class ApplicationResidueScanTests: XCTestCase, @unchecked Sendable {
       at: fixture.application.applicationURL.appendingPathComponent("Contents/Helpers"),
       withDestinationURL: outside)
     let files = RecordingResidueFileManager()
-    _ = ApplicationResidueTarget.read(at: fixture.application.applicationURL,
+    _ = ApplicationResidueTarget.read(
+      at: fixture.application.applicationURL,
       fileManager: files, applicationGroups: { _ in [] })
     XCTAssertFalse(files.directories.contains { $0.path.hasPrefix(outside.path) })
   }
@@ -116,8 +119,13 @@ private struct ResidueScanFixture {
   let root = FileManager.default.temporaryDirectory
     .appendingPathComponent("UpkeepScan-\(UUID().uuidString)")
   var application: AppRecord {
-    AppRecord(name: "Example", bundleIdentifier: "com.example.app",
-      applicationURL: root.appendingPathComponent("Example.app"), currentVersion: "1")
+    AppRecord(
+      name: "Example",
+      bundleIdentifier: "com.example.app",
+      applicationURL: root.appendingPathComponent("Example.app"),
+      currentVersion: "1",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
+    )
   }
   var scanner: ApplicationResidueScanner {
     ApplicationResidueScanner(

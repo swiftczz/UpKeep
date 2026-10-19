@@ -34,13 +34,25 @@ private final class TestSnapshotBox: @unchecked Sendable {
 @MainActor
 final class AppLibraryRefreshTests: XCTestCase {
   func testDuplicateRecordsDoNotCrashEitherMergeAndKeepDistinctInstallations() {
-    let original = AppRecord(name: "Example", bundleIdentifier: "com.example.app",
-      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"), currentVersion: "1",
-      source: .sparkle, status: .upToDate, latestVersion: "1", releaseNotes: "Existing notes")
+    let original = AppRecord(
+      name: "Example",
+      bundleIdentifier: "com.example.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
+      currentVersion: "1",
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
+      status: .upToDate,
+      latestVersion: "1",
+      releaseNotes: "Existing notes"
+    )
     var duplicate = original
     duplicate.releaseNotes = nil
-    let copy = AppRecord(name: "Example Copy", bundleIdentifier: "com.example.app",
-      applicationURL: URL(fileURLWithPath: "/Applications/Example Copy.app"), currentVersion: "1")
+    let copy = AppRecord(
+      name: "Example Copy",
+      bundleIdentifier: "com.example.app",
+      applicationURL: URL(fileURLWithPath: "/Applications/Example Copy.app"),
+      currentVersion: "1",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
+    )
     let previous = [original, duplicate, copy]
     for merged in [
       AppLibrary.mergeKeepingCheckResults([original, duplicate, copy], previous: previous),
@@ -55,8 +67,13 @@ final class AppLibraryRefreshTests: XCTestCase {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: url) }
-    let app = AppRecord(name: "Example", bundleIdentifier: "com.example.app",
-      applicationURL: url, currentVersion: "1")
+    let app = AppRecord(
+      name: "Example",
+      bundleIdentifier: "com.example.app",
+      applicationURL: url,
+      currentVersion: "1",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
+    )
     let snapshot = ApplicationLibrarySnapshot(lastCheckedAt: nil, applications: [app, app])
     let store = ApplicationLibraryStore(load: { snapshot }, save: { _ in })
     let library = AppLibrary(libraryStore: store)
@@ -80,10 +97,10 @@ final class AppLibraryRefreshTests: XCTestCase {
       bundleIdentifier: "com.example.cached",
       applicationURL: applicationURL,
       currentVersion: "1.0",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
       status: .updateAvailable,
-      latestVersion: "2.0",
-      sourceURL: URL(string: "https://example.com/appcast.xml")
+      latestVersion: "2.0"
     )
     store.save(
       ApplicationLibrarySnapshot(
@@ -115,7 +132,7 @@ final class AppLibraryRefreshTests: XCTestCase {
       bundleIdentifier: "com.example.listed",
       applicationURL: URL(fileURLWithPath: "/Applications/Listed.app"),
       currentVersion: "1.0",
-      source: .selfManaged,
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged),
       status: .selfManaged
     )
     let scanned = AppRecord(
@@ -123,9 +140,9 @@ final class AppLibraryRefreshTests: XCTestCase {
       bundleIdentifier: "com.example.listed",
       applicationURL: URL(fileURLWithPath: "/Applications/Listed.app"),
       currentVersion: "1.0",
-      source: .sparkle,
-      status: .checking,
-      sourceURL: URL(string: "https://example.com/appcast.xml")
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
+      status: .checking
     )
     let gate = AsyncGate()
     let library = AppLibrary(
@@ -153,7 +170,7 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertTrue(sawQuickList)
     await gate.open()
     await load.value
-    XCTAssertEqual(library.applications.map(\.source), [.sparkle])
+    XCTAssertEqual(library.applications.map(\.updateConfiguration.mechanism), [.sparkle])
     XCTAssertEqual(library.phase, .idle)
   }
 
@@ -167,7 +184,7 @@ final class AppLibraryRefreshTests: XCTestCase {
       bundleIdentifier: "com.example.seed",
       applicationURL: URL(fileURLWithPath: "/Applications/Seed.app"),
       currentVersion: "1.0",
-      source: .selfManaged,
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged),
       status: .selfManaged
     )
     let stale = AppRecord(
@@ -175,7 +192,7 @@ final class AppLibraryRefreshTests: XCTestCase {
       bundleIdentifier: "com.example.stale",
       applicationURL: URL(fileURLWithPath: "/Applications/Stale.app"),
       currentVersion: "1.0",
-      source: .selfManaged,
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged),
       status: .selfManaged
     )
     let fresh = AppRecord(
@@ -183,7 +200,7 @@ final class AppLibraryRefreshTests: XCTestCase {
       bundleIdentifier: "com.example.fresh",
       applicationURL: URL(fileURLWithPath: "/Applications/Fresh.app"),
       currentVersion: "1.0",
-      source: .selfManaged,
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged),
       status: .selfManaged
     )
     let firstScanGate = AsyncGate()
@@ -304,19 +321,19 @@ final class AppLibraryRefreshTests: XCTestCase {
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     var sparkle = makeApplication(name: "Sparkle", status: .checking)
-    sparkle.source = .sparkle
-    sparkle.sourceURL = URL(string: "https://example.com/appcast.xml")
+    sparkle.updateConfiguration.mechanism = .sparkle
+    sparkle.updateConfiguration.feedURL = URL(string: "https://example.com/appcast.xml")
     var appStore = makeApplication(name: "Store", status: .checking)
-    appStore.source = .appStore
+    appStore.updateConfiguration.mechanism = .appStore
     appStore.appStorePlatform = .mac
     var homebrew = makeApplication(name: "Brew", status: .upToDate)
-    homebrew.source = .homebrew
-    homebrew.sourceIdentifier = "brew"
+    homebrew.updateConfiguration.mechanism = .homebrew
+    homebrew.updateConfiguration.identifier = "brew"
     var selfManaged = makeApplication(name: "Manual", status: .selfManaged)
-    selfManaged.source = .selfManaged
+    selfManaged.updateConfiguration.mechanism = .selfManaged
     var sparkleWithoutFeed = makeApplication(name: "Sparkle No Feed", status: .selfManaged)
-    sparkleWithoutFeed.source = .sparkle
-    sparkleWithoutFeed.sourceURL = nil
+    sparkleWithoutFeed.updateConfiguration.mechanism = .sparkle
+    sparkleWithoutFeed.updateConfiguration.feedURL = nil
 
     let recorder = CheckedApplicationRecorder()
     let library = AppLibrary(
@@ -589,8 +606,8 @@ final class AppLibraryRefreshTests: XCTestCase {
     )
     var installed = makeApplication(name: "Example", status: .selfManaged)
     installed.currentVersion = "2.0"
-    installed.source = .selfManaged
-    installed.sourceURL = nil
+    installed.updateConfiguration.mechanism = .selfManaged
+    installed.updateConfiguration.feedURL = nil
     installed.latestVersion = nil
     let scanner = InstalledOnlyCountingScanner(installedApplications: [installed])
     let recorder = CheckedApplicationRecorder()
@@ -613,7 +630,7 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertEqual(library.lastCheckedAt, lastCheckedAt)
     XCTAssertEqual(library.applications.first?.currentVersion, "2.0")
     XCTAssertEqual(library.applications.first?.latestVersion, "2.0")
-    XCTAssertEqual(library.applications.first?.source, .sparkle)
+    XCTAssertEqual(library.applications.first?.updateConfiguration.mechanism, .sparkle)
     XCTAssertEqual(library.applications.first?.status, .upToDate)
     XCTAssertNotNil(library.applications.first?.lastInstalledAt)
     XCTAssertTrue(library.availableUpdates.isEmpty)
@@ -633,8 +650,8 @@ final class AppLibraryRefreshTests: XCTestCase {
     )
     var installed = makeApplication(name: "Example", status: .selfManaged)
     installed.currentVersion = "2.0"
-    installed.source = .selfManaged
-    installed.sourceURL = nil
+    installed.updateConfiguration.mechanism = .selfManaged
+    installed.updateConfiguration.feedURL = nil
     installed.latestVersion = nil
     let scanner = InstalledOnlyCountingScanner(installedApplications: [installed])
     let recorder = CheckedApplicationRecorder()
@@ -661,19 +678,19 @@ final class AppLibraryRefreshTests: XCTestCase {
 
   func testVSCodeUpdateComparisonUsesCommitIdentityInsteadOfOrderingHashes() {
     var cached = makeApplication(name: "Code", status: .updateAvailable, latestVersion: "1.139.0")
-    cached.source = .vscodeUpdater
+    cached.updateConfiguration.mechanism = .vscodeUpdater
     cached.currentVersion = "1.139.0"
     cached.latestBuildVersion = "2242ebb"
     var installed = cached
     installed.buildVersion = "1.139.0"
-    installed.sourceIdentifier = "stable/2242ebbb54efeeb0129e08e919e7e8d43033cd83"
+    installed.updateConfiguration.identifier = "stable/2242ebbb54efeeb0129e08e919e7e8d43033cd83"
     XCTAssertFalse(cached.hasNewerRelease(than: installed))
     cached.buildVersion = installed.buildVersion
-    cached.sourceIdentifier = "stable/7debcd0e2acdea1c52de81bf9ee1620444407dda"
+    cached.updateConfiguration.identifier = "stable/7debcd0e2acdea1c52de81bf9ee1620444407dda"
     let merged = AppLibrary.mergeInstalledApplicationChanges([installed], previous: [cached])
     XCTAssertEqual(merged.first?.status, .upToDate)
     XCTAssertFalse(merged.first?.canAutomaticallyUpdate ?? true)
-    installed.sourceIdentifier = "stable/ffffffffffffffffffffffffffffffffffffffff"
+    installed.updateConfiguration.identifier = "stable/ffffffffffffffffffffffffffffffffffffffff"
     XCTAssertTrue(cached.hasNewerRelease(than: installed))
     installed.currentVersion = "1.140.0"
     XCTAssertFalse(cached.hasNewerRelease(than: installed))
@@ -685,21 +702,21 @@ final class AppLibraryRefreshTests: XCTestCase {
       status: .updateAvailable,
       latestVersion: "1.136.1"
     )
-    previous.source = .vscodeUpdater
+    previous.updateConfiguration.mechanism = .vscodeUpdater
     previous.currentVersion = "1.136.0"
     previous.buildVersion = "520fb30"
     previous.latestBuildVersion = "a44adf7"
-    previous.sourceIdentifier = "stable/520fb30b2d3d324b4cb2342f6e88e2cd93751de1"
+    previous.updateConfiguration.identifier = "stable/520fb30b2d3d324b4cb2342f6e88e2cd93751de1"
 
     var installed = previous
     installed.currentVersion = "1.136.1"
     installed.buildVersion = "a44adf7"
-    installed.sourceIdentifier = "stable/a44adf7f53e00964ab890f9f8758a334f1fc15bc"
+    installed.updateConfiguration.identifier = "stable/a44adf7f53e00964ab890f9f8758a334f1fc15bc"
 
     let merged = AppLibrary.mergeInstalledApplicationChanges([installed], previous: [previous])
 
     XCTAssertEqual(
-      merged.first?.sourceIdentifier,
+      merged.first?.updateConfiguration.identifier,
       "stable/a44adf7f53e00964ab890f9f8758a334f1fc15bc"
     )
     XCTAssertEqual(merged.first?.status, .upToDate)
@@ -707,13 +724,13 @@ final class AppLibraryRefreshTests: XCTestCase {
 
   func testInstalledApplicationMergeAcceptsNewlyDetectedAppStoreSource() {
     var previous = makeApplication(name: "TestFlight", status: .selfManaged)
-    previous.source = .selfManaged
-    previous.sourceURL = nil
+    previous.updateConfiguration.mechanism = .selfManaged
+    previous.updateConfiguration.feedURL = nil
 
     var detected = previous
-    detected.source = .appStore
+    detected.updateConfiguration.mechanism = .appStore
     detected.appStorePlatform = .mac
-    detected.sourceIdentifier = "899247664"
+    detected.updateConfiguration.identifier = "899247664"
     detected.status = .upToDate
 
     let merged = AppLibrary.mergeInstalledApplicationChanges(
@@ -721,9 +738,9 @@ final class AppLibraryRefreshTests: XCTestCase {
       previous: [previous]
     )
 
-    XCTAssertEqual(merged.first?.source, .appStore)
+    XCTAssertEqual(merged.first?.updateConfiguration.mechanism, .appStore)
     XCTAssertEqual(merged.first?.appStorePlatform, .mac)
-    XCTAssertEqual(merged.first?.sourceIdentifier, "899247664")
+    XCTAssertEqual(merged.first?.updateConfiguration.identifier, "899247664")
     XCTAssertEqual(merged.first?.status, .upToDate)
   }
 
@@ -746,7 +763,7 @@ final class AppLibraryRefreshTests: XCTestCase {
       applicationURL: applicationURL,
       currentVersion: "3baff3a06",
       buildVersion: "17574",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .updateAvailable,
       latestVersion: "17574,3baff3a069cb64a9d3739c2ff25423524b3b80ee"
     )
@@ -756,9 +773,9 @@ final class AppLibraryRefreshTests: XCTestCase {
       applicationURL: applicationURL,
       currentVersion: "3baff3a06",
       buildVersion: "17574",
-      source: .sparkle,
-      status: .checking,
-      sourceURL: URL(string: "https://tip.files.ghostty.org/appcast.xml")
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://tip.files.ghostty.org/appcast.xml")),
+      status: .checking
     )
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
@@ -775,7 +792,7 @@ final class AppLibraryRefreshTests: XCTestCase {
       applicationURL: URL(fileURLWithPath: "/Applications/Ghostty.app"),
       currentVersion: "5252b193c",
       buildVersion: "17764",
-      source: .homebrew,
+      updateConfiguration: UpdateConfiguration(mechanism: .homebrew),
       status: .updateAvailable,
       latestVersion: "17761,e2e53f861482e080bf45054ba49ef471f9849937",
       canAutomaticallyUpdate: false
@@ -793,7 +810,7 @@ final class AppLibraryRefreshTests: XCTestCase {
     XCTAssertFalse(merged.canAutomaticallyUpdate)
 
     var scanned = current
-    scanned.source = .selfManaged
+    scanned.updateConfiguration.mechanism = .selfManaged
     scanned.status = .selfManaged
     scanned.latestVersion = nil
     let rescanned = try XCTUnwrap(
@@ -808,18 +825,18 @@ final class AppLibraryRefreshTests: XCTestCase {
       status: .updateAvailable,
       latestVersion: "5.80.7.66659"
     )
-    previous.source = .homebrew
-    previous.sourceURL = URL(string: "https://www.xunlei.com/")
+    previous.updateConfiguration.mechanism = .homebrew
+    previous.updateConfiguration.feedURL = URL(string: "https://www.xunlei.com/")
     previous.canAutomaticallyUpdate = true
 
     var scanned = makeApplication(name: "Thunder", status: .selfManaged)
-    scanned.source = .sparkle
-    scanned.sourceURL = nil
+    scanned.updateConfiguration.mechanism = .sparkle
+    scanned.updateConfiguration.feedURL = nil
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
 
-    XCTAssertNil(merged.first?.sourceURL)
-    XCTAssertEqual(merged.first?.source, .sparkle)
+    XCTAssertNil(merged.first?.updateConfiguration.feedURL)
+    XCTAssertEqual(merged.first?.updateConfiguration.mechanism, .sparkle)
     XCTAssertEqual(merged.first?.status, .updateAvailable)
     XCTAssertEqual(merged.first?.latestVersion, "5.80.7.66659")
     XCTAssertEqual(merged.availableUpdates(ignoredIDs: []).map(\.name), ["Thunder"])
@@ -828,11 +845,11 @@ final class AppLibraryRefreshTests: XCTestCase {
 
   func testMergeKeepsHomebrewTokenForNonAppStoreApplication() {
     var previous = makeApplication(name: "Screendrop", status: .upToDate)
-    previous.source = .sparkle
+    previous.updateConfiguration.mechanism = .sparkle
     previous.homebrewCaskToken = "screendrop"
 
     var scanned = makeApplication(name: "Screendrop", status: .checking)
-    scanned.source = .sparkle
+    scanned.updateConfiguration.mechanism = .sparkle
     scanned.homebrewCaskToken = nil
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
@@ -842,11 +859,11 @@ final class AppLibraryRefreshTests: XCTestCase {
 
   func testMergeDoesNotCarryHomebrewTokenOntoAppStoreApplication() {
     var previous = makeApplication(name: "Example", status: .upToDate)
-    previous.source = .sparkle
+    previous.updateConfiguration.mechanism = .sparkle
     previous.homebrewCaskToken = "example"
 
     var scanned = makeApplication(name: "Example", status: .checking)
-    scanned.source = .appStore
+    scanned.updateConfiguration.mechanism = .appStore
     scanned.appStorePlatform = .mac
     scanned.homebrewCaskToken = nil
 
@@ -859,37 +876,37 @@ final class AppLibraryRefreshTests: XCTestCase {
     let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
     var previous = makeApplication(name: "Example", status: .upToDate)
     previous.lastInstalledAt = installedAt
-    previous.installedSource = .homebrew
+    previous.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
     let scanned = makeApplication(name: "Example", status: .checking)
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
 
     XCTAssertEqual(merged.first?.lastInstalledAt, installedAt)
-    XCTAssertEqual(merged.first?.installedSource, .homebrew)
+    XCTAssertEqual(merged.first?.installedUpdateConfiguration?.mechanism, .homebrew)
   }
 
   func testExternalVersionChangeDoesNotKeepPreviousVersionsUpdateChannel() {
     var previous = makeApplication(name: "Example", status: .upToDate)
-    previous.installedSource = .homebrew
+    previous.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
     var scanned = previous
     scanned.currentVersion = "3.0"
-    scanned.installedSource = nil
+    scanned.installedUpdateConfiguration = nil
 
     let refreshed = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
     let installed = AppLibrary.mergeInstalledApplicationChanges([scanned], previous: [previous])
 
-    XCTAssertNil(refreshed.first?.installedSource)
-    XCTAssertNil(installed.first?.installedSource)
+    XCTAssertNil(refreshed.first?.installedUpdateConfiguration?.mechanism)
+    XCTAssertNil(installed.first?.installedUpdateConfiguration?.mechanism)
   }
 
   func testMergeKeepsLastInstalledAtForHomebrewUpdate() {
     let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
     var previous = makeApplication(name: "Cask", status: .upToDate)
-    previous.source = .homebrew
+    previous.updateConfiguration.mechanism = .homebrew
     previous.lastInstalledAt = installedAt
 
     var scanned = makeApplication(name: "Cask", status: .updateAvailable, latestVersion: "2.0")
-    scanned.source = .homebrew
+    scanned.updateConfiguration.mechanism = .homebrew
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
 
@@ -899,15 +916,15 @@ final class AppLibraryRefreshTests: XCTestCase {
 
   func testMergeDoesNotCopyStatusAcrossSources() {
     var previous = makeApplication(name: "Cursor", status: .selfManaged)
-    previous.source = .homebrew
+    previous.updateConfiguration.mechanism = .homebrew
 
     var scanned = makeApplication(name: "Cursor", status: .checking)
-    scanned.source = .vscodeUpdater
-    scanned.sourceURL = URL(string: "https://api2.cursor.sh/updates")
+    scanned.updateConfiguration.mechanism = .vscodeUpdater
+    scanned.updateConfiguration.feedURL = URL(string: "https://api2.cursor.sh/updates")
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
 
-    XCTAssertEqual(merged.first?.source, .vscodeUpdater)
+    XCTAssertEqual(merged.first?.updateConfiguration.mechanism, .vscodeUpdater)
     XCTAssertEqual(merged.first?.status, .checking)
   }
 
@@ -917,16 +934,16 @@ final class AppLibraryRefreshTests: XCTestCase {
       status: .updateAvailable,
       latestVersion: "1.19.30"
     )
-    previous.source = .githubReleases
-    previous.sourceIdentifier = "MetaCubeX/mihomo"
+    previous.updateConfiguration.mechanism = .githubReleases
+    previous.updateConfiguration.identifier = "MetaCubeX/mihomo"
 
     var scanned = makeApplication(name: "FlClash", status: .selfManaged)
-    scanned.source = .selfManaged
-    scanned.sourceURL = nil
+    scanned.updateConfiguration.mechanism = .selfManaged
+    scanned.updateConfiguration.feedURL = nil
 
     let merged = AppLibrary.mergeKeepingCheckResults([scanned], previous: [previous])
 
-    XCTAssertEqual(merged.first?.source, .selfManaged)
+    XCTAssertEqual(merged.first?.updateConfiguration.mechanism, .selfManaged)
     XCTAssertEqual(merged.first?.status, .selfManaged)
     XCTAssertNil(merged.first?.latestVersion)
     XCTAssertTrue(merged.availableUpdates(ignoredIDs: []).isEmpty)
@@ -934,17 +951,17 @@ final class AppLibraryRefreshTests: XCTestCase {
 
   func testMergeCopiesReleaseNotesOntoHomebrewUpdate() {
     var previous = makeApplication(name: "Notes", status: .updateAvailable, latestVersion: "2.0")
-    previous.source = .sparkle
+    previous.updateConfiguration.mechanism = .sparkle
     previous.releaseNotes = "Sparkle notes"
     previous.releaseNotesURL = URL(string: "https://example.com/notes")
 
     var current = makeApplication(name: "Notes", status: .updateAvailable, latestVersion: "2.0")
-    current.source = .homebrew
+    current.updateConfiguration.mechanism = .homebrew
     current.releaseNotes = nil
 
     let merged = AppLibrary.mergeKeepingCheckResults([current], previous: [previous])
 
-    XCTAssertEqual(merged.first?.source, .homebrew)
+    XCTAssertEqual(merged.first?.updateConfiguration.mechanism, .homebrew)
     XCTAssertEqual(merged.first?.releaseNotes, "Sparkle notes")
     XCTAssertEqual(merged.first?.releaseNotesURL?.absoluteString, "https://example.com/notes")
   }
@@ -953,14 +970,14 @@ final class AppLibraryRefreshTests: XCTestCase {
     let installedAt = Date(timeIntervalSince1970: 1_777_000_000)
     var existing = makeApplication(name: "Example", status: .upToDate)
     existing.lastInstalledAt = installedAt
-    existing.installedSource = .homebrew
+    existing.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
     var incoming = makeApplication(name: "Example", status: .upToDate)
     incoming.lastInstalledAt = nil
 
     let coalesced = AppLibrary.coalesceCheckResult(incoming, over: existing)
 
     XCTAssertEqual(coalesced.lastInstalledAt, installedAt)
-    XCTAssertEqual(coalesced.installedSource, .homebrew)
+    XCTAssertEqual(coalesced.installedUpdateConfiguration?.mechanism, .homebrew)
   }
 
   func testFailedRecheckDoesNotDropKnownUpdate() {
@@ -1071,8 +1088,8 @@ final class AppLibraryRefreshTests: XCTestCase {
       status: .updateAvailable,
       latestVersion: "0.5.95"
     )
-    dbx.source = .tauri
-    dbx.sourceURL = URL(
+    dbx.updateConfiguration.mechanism = .tauri
+    dbx.updateConfiguration.feedURL = URL(
       string: "https://example.com/releases/latest/latest.json"
     )
     let other = makeApplication(
@@ -1113,9 +1130,9 @@ final class AppLibraryRefreshTests: XCTestCase {
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     var reasonix = makeApplication(name: "Reasonix Studio", status: .upToDate)
-    reasonix.source = .tauri
+    reasonix.updateConfiguration.mechanism = .tauri
     reasonix.latestVersion = reasonix.currentVersion
-    reasonix.sourceURL = URL(string: "https://example.com/studio/versions.json")
+    reasonix.updateConfiguration.feedURL = URL(string: "https://example.com/studio/versions.json")
     reasonix.releaseNotesURL = URL(
       string: "https://github.com/example/reasonix/releases/tag/studio-v2.7.0"
     )
@@ -1252,10 +1269,10 @@ final class AppLibraryRefreshTests: XCTestCase {
       bundleIdentifier: "com.example.\(name.lowercased())",
       applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
       status: status,
-      latestVersion: latestVersion,
-      sourceURL: URL(string: "https://example.com/appcast.xml")
+      latestVersion: latestVersion
     )
   }
 }

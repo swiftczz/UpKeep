@@ -146,11 +146,12 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     _ = try fixture.install(name: "Companion", identifier: "org.example.Companion")
     _ = try fixture.install(
       name: "Extension", identifier: "org.example.Companion.extension",
-      at: fixture.application.applicationURL.appendingPathComponent("Contents/PlugIns/Extension.appex")
+      at: fixture.application.applicationURL.appendingPathComponent(
+        "Contents/PlugIns/Extension.appex")
     )
     let group = try fixture.item("Group Containers/TEAM.shared-storage")
     let items = fixture.scanner(groups: [
-      "org.example.Companion.extension": ["TEAM.shared-storage"],
+      "org.example.Companion.extension": ["TEAM.shared-storage"]
     ]).items(for: fixture.application)
     XCTAssertEqual(try fixture.find(group, in: items).matchReason, .unverifiedGroupContainer)
     XCTAssertFalse(try fixture.find(group, in: items).isSelectedByDefault)
@@ -168,7 +169,7 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     )
     let group = try fixture.item("Group Containers/TEAM.shared-storage")
     let items = fixture.scanner(groups: [
-      "org.example.Companion.helper": ["TEAM.shared-storage"],
+      "org.example.Companion.helper": ["TEAM.shared-storage"]
     ]).items(for: fixture.application)
     XCTAssertEqual(try fixture.find(group, in: items).matchReason, .unverifiedGroupContainer)
     XCTAssertFalse(try fixture.find(group, in: items).isSelectedByDefault)
@@ -204,8 +205,10 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     let data = try fixture.item("Caches/org.sparkle-project.Updater")
     let scanner = fixture.scanner()
     XCTAssertFalse(scanner.items(for: fixture.application).contains { $0.id == data.path })
-    _ = try fixture.install(name: "Updater", identifier: "org.sparkle-project.Updater",
-      at: fixture.application.applicationURL.appendingPathComponent("Contents/XPCServices/Updater.xpc"))
+    _ = try fixture.install(
+      name: "Updater", identifier: "org.sparkle-project.Updater",
+      at: fixture.application.applicationURL.appendingPathComponent(
+        "Contents/XPCServices/Updater.xpc"))
     let items = scanner.items(for: fixture.application)
     XCTAssertEqual(try fixture.find(data, in: items).matchReason, .embeddedBundle)
     XCTAssertFalse(try fixture.find(data, in: items).isSelectedByDefault)
@@ -215,14 +218,21 @@ final class ApplicationResidueOwnershipTests: XCTestCase {
     let fixture = try ResidueOwnershipFixture()
     defer { fixture.remove() }
     let wrapper = fixture.applicationsDirectory.appendingPathComponent("Mobile.app")
-    let wrapped = try fixture.install(name: "Mobile", identifier: "com.example.mobile",
+    let wrapped = try fixture.install(
+      name: "Mobile", identifier: "com.example.mobile",
       at: wrapper.appendingPathComponent("Wrapper/Mobile.app"))
-    try FileManager.default.createSymbolicLink(at: wrapper.appendingPathComponent("WrappedBundle"),
+    try FileManager.default.createSymbolicLink(
+      at: wrapper.appendingPathComponent("WrappedBundle"),
       withDestinationURL: wrapped)
     let group = try fixture.item("Group Containers/TEAM.mobile")
     let scanner = fixture.scanner(groups: ["com.example.mobile": ["TEAM.mobile"]])
-    let app = AppRecord(name: "Mobile", bundleIdentifier: "com.example.mobile",
-      applicationURL: wrapper, currentVersion: "1")
+    let app = AppRecord(
+      name: "Mobile",
+      bundleIdentifier: "com.example.mobile",
+      applicationURL: wrapper,
+      currentVersion: "1",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
+    )
     let items = scanner.items(for: app)
     XCTAssertEqual(try fixture.find(group, in: items).matchReason, .unverifiedGroupContainer)
     XCTAssertTrue(try fixture.find(wrapper, in: items).isSelectedByDefault)
@@ -235,9 +245,11 @@ private struct ResidueOwnershipFixture: Sendable {
   var library: URL { root.appendingPathComponent("Library") }
   var application: AppRecord {
     AppRecord(
-      name: "Editor", bundleIdentifier: "com.example.Editor",
+      name: "Editor",
+      bundleIdentifier: "com.example.Editor",
       applicationURL: applicationsDirectory.appendingPathComponent("Editor.app"),
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
   }
 
@@ -293,8 +305,13 @@ private struct ResidueOwnershipFixture: Sendable {
       knownApplications: ((try? FileManager.default.contentsOfDirectory(
         at: applicationsDirectory, includingPropertiesForKeys: nil)) ?? []).compactMap { url in
           guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier else { return nil }
-          return AppRecord(name: url.deletingPathExtension().lastPathComponent,
-            bundleIdentifier: id, applicationURL: url, currentVersion: "1")
+          return AppRecord(
+            name: url.deletingPathExtension().lastPathComponent,
+            bundleIdentifier: id,
+            applicationURL: url,
+            currentVersion: "1",
+            updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
+          )
         }
     )
   }

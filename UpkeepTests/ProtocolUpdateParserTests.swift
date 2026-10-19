@@ -358,13 +358,15 @@ final class ProtocolUpdateParserTests: XCTestCase {
   }
 
   func testPrefersSpecificCatalogOverRepositoryWideLatestPointer() throws {
-    let generic = "https://github.com/example/shared-repository/releases/latest/download/latest.json"
+    let generic =
+      "https://github.com/example/shared-repository/releases/latest/download/latest.json"
     let catalog = "https://dl.example.com/studio/versions.json"
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: file) }
     for urls in [[generic, catalog], [catalog, generic], [generic]] {
       try Data(urls.joined(separator: "\n").utf8).write(to: file)
-      XCTAssertEqual(TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
+      XCTAssertEqual(
+        TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
         urls.count == 1 ? generic : catalog)
     }
   }
@@ -372,11 +374,14 @@ final class ProtocolUpdateParserTests: XCTestCase {
   func testContinuesScanningAfterRepositoryPointerToFindLaterCatalog() throws {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: file) }
-    var bytes = Data("tauri_plugin_updater https://github.com/example/repo/releases/latest/download/latest.json\n".utf8)
+    var bytes = Data(
+      "tauri_plugin_updater https://github.com/example/repo/releases/latest/download/latest.json\n"
+        .utf8)
     bytes.append(Data(repeating: 0, count: 1024 * 1024 + 512))
     bytes.append(Data("https://dl.example.com/studio/versions.json\n".utf8))
     try bytes.write(to: file)
-    XCTAssertEqual(TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
+    XCTAssertEqual(
+      TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
       "https://dl.example.com/studio/versions.json")
   }
 
@@ -627,9 +632,9 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
   }
 
-  func testReconstructsStableReleaseJSONURLSplitByBinaryBytes() throws {
+  func testReconstructsStableCustomAPIUpdateURLSplitByBinaryBytes() throws {
     let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "Upkeep-release-json-\(UUID().uuidString)"
+      "Upkeep-website-update-\(UUID().uuidString)"
     )
     defer { try? FileManager.default.removeItem(at: fileURL) }
 
@@ -639,7 +644,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
     try data.write(to: fileURL)
 
     XCTAssertEqual(
-      ReleaseJSONDetector.endpoint(inFile: fileURL)?.absoluteString,
+      CustomAPIUpdateDetector.endpoint(inFile: fileURL)?.absoluteString,
       "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
     )
   }
@@ -649,11 +654,11 @@ final class ProtocolUpdateParserTests: XCTestCase {
       URL(string: "https://assets.lbkrs.com/github/release/longbridge-desktop/latest.json")
     )
     XCTAssertEqual(
-      ReleaseJSONDetector.stableChannelURL(from: url)?.absoluteString,
+      CustomAPIUpdateDetector.stableChannelURL(from: url)?.absoluteString,
       "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
     )
     XCTAssertNil(
-      ReleaseJSONDetector.stableChannelURL(
+      CustomAPIUpdateDetector.stableChannelURL(
         from: try XCTUnwrap(
           URL(
             string:
@@ -664,17 +669,17 @@ final class ProtocolUpdateParserTests: XCTestCase {
     )
   }
 
-  func testIgnoresPrereleaseReleaseJSONChannel() throws {
+  func testIgnoresPrereleaseCustomAPIUpdateChannel() throws {
     let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "Upkeep-release-json-beta-\(UUID().uuidString)"
+      "Upkeep-website-update-beta-\(UUID().uuidString)"
     )
     defer { try? FileManager.default.removeItem(at: fileURL) }
 
     try Data("https://example.com/updates/beta/latest.json".utf8).write(to: fileURL)
-    XCTAssertNil(ReleaseJSONDetector.endpoint(inFile: fileURL))
+    XCTAssertNil(CustomAPIUpdateDetector.endpoint(inFile: fileURL))
   }
 
-  func testParsesReleaseJSONAssetsAndPrefersAppleSiliconDMG() throws {
+  func testParsesCustomAPIUpdateAssetsAndPrefersAppleSiliconDMG() throws {
     let data = Data(
       """
       {
@@ -711,7 +716,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
       """.utf8
     )
 
-    let manifest = try XCTUnwrap(ReleaseJSONManifest.parse(data, languageCode: "zh-Hans"))
+    let manifest = try XCTUnwrap(CustomAPIUpdateManifest.parse(data, languageCode: "zh-Hans"))
     XCTAssertEqual(manifest.version, "0.19.1")
     XCTAssertEqual(manifest.notes, "### 优化")
     XCTAssertEqual(manifest.publicationDate, ISO8601Parsing.date(from: "2026-08-20T07:46:53Z"))
@@ -724,7 +729,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
     let intelPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .x64))
     XCTAssertEqual(intelPackage.url.lastPathComponent, "app-v0.19.1-macos-x86_64.dmg")
 
-    XCTAssertNil(ReleaseJSONManifest.parse(Data(#"{"version":"1.0","platforms":{}}"#.utf8)))
+    XCTAssertNil(CustomAPIUpdateManifest.parse(Data(#"{"version":"1.0","platforms":{}}"#.utf8)))
   }
 
   func testBuildsVSCodeUpdaterCheckURL() throws {

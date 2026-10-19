@@ -7,12 +7,16 @@ import XCTest
 final class AppLibraryUpdateTests: XCTestCase {
   func testInformationalSparkleUpdateOpensWebsiteWithoutInstallingOrQuitting() async throws {
     let application = AppRecord(
-      name: "Resomark", bundleIdentifier: "com.resomark",
+      name: "Resomark",
+      bundleIdentifier: "com.resomark",
       applicationURL: URL(fileURLWithPath: "/Applications/Resomark.app"),
-      currentVersion: "0.6.9", buildVersion: "1502",
-      source: .sparkle, status: .updateAvailable,
-      latestVersion: "0.6.10", latestBuildVersion: "1503",
-      sourceURL: URL(string: "https://update.resomark.com/appcast.xml"),
+      currentVersion: "0.6.9",
+      buildVersion: "1502",
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .sparkle, feedURL: URL(string: "https://update.resomark.com/appcast.xml")),
+      status: .updateAvailable,
+      latestVersion: "0.6.10",
+      latestBuildVersion: "1503",
       updatePageURL: URL(string: "https://resomark.com/private-beta?ref=updater&from=0.6.9")
     )
     let restored = try JSONDecoder().decode(AppRecord.self, from: JSONEncoder().encode(application))
@@ -46,7 +50,8 @@ final class AppLibraryUpdateTests: XCTestCase {
   }
 
   func testRequiresRelaunchConfirmationWhenUpdatableApplicationIsRunning() async throws {
-    let application = makeUpdateApplication(name: "Running", bundleIdentifier: "com.example.running")
+    let application = makeUpdateApplication(
+      name: "Running", bundleIdentifier: "com.example.running")
     let library = try makeLibrary(
       applications: [application],
       runningBundleIdentifiers: ["com.example.running"]
@@ -77,7 +82,7 @@ final class AppLibraryUpdateTests: XCTestCase {
       bundleIdentifier: "com.example.open",
       applicationURL: URL(fileURLWithPath: "/Applications/Open.app"),
       currentVersion: "1.0",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .upToDate
     )
     let library = try makeLibrary(
@@ -109,11 +114,12 @@ final class AppLibraryUpdateTests: XCTestCase {
       bundleIdentifier: "com.openminis.app",
       applicationURL: URL(fileURLWithPath: "/Applications/Minis.app"),
       currentVersion: "1.12",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .appStore,
+        feedURL: URL(string: "https://apps.apple.com/cn/app/minis/id123456789")),
       appStorePlatform: .iPhone,
       status: .updateAvailable,
       latestVersion: "1.13",
-      sourceURL: URL(string: "https://apps.apple.com/cn/app/minis/id123456789"),
       canAutomaticallyUpdate: false
     )
     let library = try makeLibrary(
@@ -134,13 +140,14 @@ final class AppLibraryUpdateTests: XCTestCase {
       bundleIdentifier: "com.hako.network",
       applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
       currentVersion: "1.0.6",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .appStore,
+        feedURL: URL(string: "https://apps.apple.com/us/app/clash/id6794257189")),
       appStorePlatform: .mac,
       appStoreCountryCode: "us",
       appStoreAccountCountryCode: "cn",
       status: .updateAvailable,
       latestVersion: "1.0.7",
-      sourceURL: URL(string: "https://apps.apple.com/us/app/clash/id6794257189"),
       canAutomaticallyUpdate: false
     )
     let library = try makeLibrary(
@@ -161,13 +168,14 @@ final class AppLibraryUpdateTests: XCTestCase {
       bundleIdentifier: "com.sequel-ace.sequel-ace",
       applicationURL: URL(fileURLWithPath: "/Applications/Sequel Ace.app"),
       currentVersion: "5.3.1",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .appStore,
+        feedURL: URL(string: "https://apps.apple.com/us/app/sequel-ace/id1518036000")),
       appStorePlatform: .mac,
       appStoreCountryCode: "us",
       appStoreAccountCountryCode: "USA",
       status: .updateAvailable,
       latestVersion: "5.4.0",
-      sourceURL: URL(string: "https://apps.apple.com/us/app/sequel-ace/id1518036000"),
       canAutomaticallyUpdate: false
     )
     let library = try makeLibrary(
@@ -188,7 +196,7 @@ final class AppLibraryUpdateTests: XCTestCase {
       name: "欧路词典",
       bundleIdentifier: "com.eusoft.eudic"
     )
-    eudic.installedSource = .homebrew
+    eudic.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
     let tencent = makeUpdateApplication(
       name: "腾讯视频",
       bundleIdentifier: "com.tencent.tenvideo"
@@ -210,7 +218,7 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.selectedApplicationID, eudic.id)
     XCTAssertEqual(library.selectedApplication?.name, "欧路词典")
     XCTAssertEqual(library.alertMessage, "模拟更新失败")
-    XCTAssertEqual(library.selectedApplication?.installedSource, .homebrew)
+    XCTAssertEqual(library.selectedApplication?.installedUpdateConfiguration?.mechanism, .homebrew)
   }
 
   func testSuccessfulUpdateDoesNotSettleBeforeInstalledVersionAppears() async throws {
@@ -238,7 +246,7 @@ final class AppLibraryUpdateTests: XCTestCase {
     XCTAssertEqual(library.applications.first?.status, .updateAvailable)
     XCTAssertTrue(library.applications.first?.canAutomaticallyUpdate ?? false)
     XCTAssertNil(library.applications.first?.lastInstalledAt)
-    XCTAssertNil(library.applications.first?.installedSource)
+    XCTAssertNil(library.applications.first?.installedUpdateConfiguration?.mechanism)
     XCTAssertEqual(scanCount, 0)
   }
 
@@ -254,7 +262,7 @@ final class AppLibraryUpdateTests: XCTestCase {
       applicationURL: applicationURL,
       currentVersion: "1.0",
       buildVersion: "1",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .updateAvailable,
       latestVersion: "2.0",
       latestBuildVersion: "2",
@@ -288,9 +296,10 @@ final class AppLibraryUpdateTests: XCTestCase {
   }
 
   func testSuccessfulUpdateRecordsActualChannelForEverySource() async throws {
-    for source in UpdateSource.allCases where source != .selfManaged {
+    for mechanism in UpdateMechanism.allCases where mechanism != .selfManaged {
       let applicationURL = try makeApplicationBundle(
-        name: "Channel-\(source.rawValue)", bundleIdentifier: "com.example.channel", version: "1.0"
+        name: "Channel-\(mechanism.rawValue)", bundleIdentifier: "com.example.channel",
+        version: "1.0"
       )
       // The installed app advertises Sparkle, even when another channel installs it.
       try FileManager.default.createDirectory(
@@ -298,10 +307,17 @@ final class AppLibraryUpdateTests: XCTestCase {
         withIntermediateDirectories: true
       )
       let application = AppRecord(
-        name: "Channel", bundleIdentifier: "com.example.channel", applicationURL: applicationURL,
-        currentVersion: "1.0", buildVersion: "1", source: source,
-        status: .updateAvailable, latestVersion: "2.0", latestBuildVersion: "2",
-        canAutomaticallyUpdate: true, installedSource: .githubReleases
+        name: "Channel",
+        bundleIdentifier: "com.example.channel",
+        applicationURL: applicationURL,
+        currentVersion: "1.0",
+        buildVersion: "1",
+        updateConfiguration: UpdateConfiguration(mechanism: mechanism),
+        status: .updateAvailable,
+        latestVersion: "2.0",
+        latestBuildVersion: "2",
+        canAutomaticallyUpdate: true,
+        installedUpdateConfiguration: UpdateConfiguration(mechanism: .githubReleases)
       )
       let library = try makeLibrary(
         applications: [application],
@@ -314,20 +330,27 @@ final class AppLibraryUpdateTests: XCTestCase {
       _ = await library.performPrimaryAction(for: application.id)
 
       let installed = try XCTUnwrap(library.applications.first)
-      XCTAssertEqual(installed.currentVersion, "2.0", source.rawValue)
-      XCTAssertEqual(installed.installedSource, source, source.rawValue)
-      XCTAssertEqual(installed.sourceTitle, source.title, source.rawValue)
-      XCTAssertEqual(installed.sourceSystemImage, source.systemImage, source.rawValue)
+      XCTAssertEqual(installed.currentVersion, "2.0", mechanism.rawValue)
+      XCTAssertEqual(
+        installed.installedUpdateConfiguration?.mechanism, mechanism, mechanism.rawValue)
+      XCTAssertEqual(
+        installed.channelTitle, installed.updateConfiguration.channel.title, mechanism.rawValue)
+      XCTAssertEqual(
+        installed.channelSystemImage, installed.updateConfiguration.channel.systemImage,
+        mechanism.rawValue)
       let restored = try JSONDecoder().decode(AppRecord.self, from: JSONEncoder().encode(installed))
-      XCTAssertEqual(restored.installedSource, source, source.rawValue)
+      XCTAssertEqual(
+        restored.installedUpdateConfiguration?.mechanism, mechanism, mechanism.rawValue)
 
       let scanned = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-      XCTAssertEqual(scanned.source, .sparkle)
+      XCTAssertEqual(scanned.updateConfiguration.mechanism, .sparkle)
       let refreshed = try XCTUnwrap(
         AppLibrary.mergeKeepingCheckResults([scanned], previous: [restored]).first
       )
-      XCTAssertEqual(refreshed.installedSource, source, source.rawValue)
-      XCTAssertEqual(refreshed.sourceTitle, source.title, source.rawValue)
+      XCTAssertEqual(
+        refreshed.installedUpdateConfiguration?.mechanism, mechanism, mechanism.rawValue)
+      XCTAssertEqual(
+        refreshed.channelTitle, refreshed.updateConfiguration.channel.title, mechanism.rawValue)
     }
   }
 
@@ -365,7 +388,7 @@ final class AppLibraryUpdateTests: XCTestCase {
       bundleIdentifier: bundleIdentifier,
       applicationURL: URL(fileURLWithPath: "/Applications/\(name).app"),
       currentVersion: "1.0",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .updateAvailable,
       latestVersion: "2.0",
       canAutomaticallyUpdate: true

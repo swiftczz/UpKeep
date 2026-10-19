@@ -1,6 +1,6 @@
 import Foundation
 
-struct ReleaseJSONManifest: Equatable, Sendable {
+struct CustomAPIUpdateManifest: Equatable, Sendable {
   struct Asset: Equatable, Sendable {
     let name: String
     let url: URL
@@ -29,7 +29,10 @@ struct ReleaseJSONManifest: Equatable, Sendable {
       let platformScore = macPlatformScore(of: fileName)
       let tokens = fileName.lowercased().split { !$0.isLetter && !$0.isNumber }
       guard architectureScore > 0, platformScore > 0,
-        !tokens.contains(where: { ["cli", "server", "web", "chrome", "firefox", "extension", "android", "ios"].contains($0) }) else { return nil }
+        !tokens.contains(where: {
+          ["cli", "server", "web", "chrome", "firefox", "extension", "android", "ios"].contains($0)
+        })
+      else { return nil }
       return (platformScore * 1_000 + architectureScore * 10 + kindScore, asset)
     }
 
@@ -40,7 +43,7 @@ struct ReleaseJSONManifest: Equatable, Sendable {
     _ data: Data,
     languageCode: String = Locale.current.language.languageCode?.identifier ?? "en",
     sourceURL: URL? = nil
-  ) -> ReleaseJSONManifest? {
+  ) -> CustomAPIUpdateManifest? {
     guard
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let version = normalizedVersion(json["version"] as? String)
@@ -62,25 +65,32 @@ struct ReleaseJSONManifest: Equatable, Sendable {
     }
     let assets = rawAssets.compactMap { raw -> Asset? in
       let name = (raw["name"] as? String)?.nonBlankValue
-      guard let rawURL = (raw["url"] as? String)?.nonBlankValue
-        ?? (raw["download_url"] as? String)?.nonBlankValue ?? name else { return nil }
+      guard
+        let rawURL = (raw["url"] as? String)?.nonBlankValue
+          ?? (raw["download_url"] as? String)?.nonBlankValue ?? name
+      else { return nil }
       var url: URL?
       if rawURL.hasPrefix("/"), !rawURL.hasPrefix("//"), let sourceURL,
         let relative = URL(string: rawURL, relativeTo: sourceURL),
         relative.absoluteURL.host == sourceURL.host,
-        var resolved = URLComponents(url: relative.absoluteURL,
-          resolvingAgainstBaseURL: false) {
+        var resolved = URLComponents(
+          url: relative.absoluteURL,
+          resolvingAgainstBaseURL: false)
+      {
         // Pin a relative download route to this release when the API supplies a tag.
         if resolved.path.hasPrefix("/api/download/"), let tag = json["tag"] as? String,
-          !(resolved.queryItems ?? []).contains(where: { $0.name == "tag" }) {
-          resolved.queryItems = (resolved.queryItems ?? []) + [URLQueryItem(name: "tag", value: tag)]
+          !(resolved.queryItems ?? []).contains(where: { $0.name == "tag" })
+        {
+          resolved.queryItems =
+            (resolved.queryItems ?? []) + [URLQueryItem(name: "tag", value: tag)]
         }
         url = resolved.url.flatMap(SecureUpdateURL.https)
       } else {
         url = SecureUpdateURL.https(string: rawURL)
       }
       guard let url, url.user == nil, url.password == nil else { return nil }
-      return Asset(name: name ?? url.lastPathComponent, url: url,
+      return Asset(
+        name: name ?? url.lastPathComponent, url: url,
         sha256: (raw["sha256"] as? String)?.nonBlankValue,
         sha512: (raw["sha512"] as? String)?.nonBlankValue,
         size: JSONByteCount.parse(raw["size"]))
@@ -90,7 +100,7 @@ struct ReleaseJSONManifest: Equatable, Sendable {
       return nil
     }
 
-    return ReleaseJSONManifest(
+    return CustomAPIUpdateManifest(
       version: version,
       notes: localizedNotes(json, languageCode: languageCode),
       publicationDate: date(from: json["published_at"]) ?? date(from: json["created_at"])
@@ -149,14 +159,16 @@ struct ReleaseJSONManifest: Equatable, Sendable {
     if name.contains("macos") || name.contains("darwin") || name.contains("osx") {
       return 50
     }
-    if name.contains("windows") || name.contains("win32") || name.contains("win64") || name.contains("linux") {
+    if name.contains("windows") || name.contains("win32") || name.contains("win64")
+      || name.contains("linux")
+    {
       return 0
     }
     return 10
   }
 }
 
-struct ReleaseJSONUpdateProvider: Sendable {
+struct CustomAPIUpdateProvider: Sendable {
   var fetchResponse: @Sendable (URL) async throws -> (statusCode: Int, data: Data)? = {
     try await UpdateHTTP.response(from: $0)
   }
@@ -173,7 +185,8 @@ struct ReleaseJSONUpdateProvider: Sendable {
       case .upToDate:
         application.applyInstalledRelease()
       case .update(let manifest):
-        application.homepageURL = application.homepageURL ?? manifest.releaseURL
+        application.updateConfiguration.homepageURL =
+          application.updateConfiguration.homepageURL ?? manifest.releaseURL
           ?? URL(string: "/", relativeTo: requestURL)?.absoluteURL
         let package = manifest.selectedPackage()
         application.applyRemoteRelease(
@@ -185,14 +198,14 @@ struct ReleaseJSONUpdateProvider: Sendable {
           canInstall: package != nil
         )
       case .notThisProtocol:
-        application.source = .selfManaged
+        application.updateConfiguration.mechanism = .selfManaged
         application.status = .selfManaged
         application.canAutomaticallyUpdate = false
       }
     } catch is CancellationError {
       return application
     } catch {
-      application.status = .unavailable("JSON release 更新源暂时无法访问。")
+      application.status = .unavailable("官网更新接口暂时无法访问。")
     }
 
     return application
@@ -203,7 +216,7 @@ struct ReleaseJSONUpdateProvider: Sendable {
     progress: @escaping @Sendable (UpdateProgress) -> Void
   ) async throws {
     guard let requestURL = Self.feedURL(for: application) else {
-      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的 JSON release 更新源。")
+      throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的官网更新接口。")
     }
 
     progress(.indeterminate("正在检查更新…"))
@@ -220,26 +233,27 @@ struct ReleaseJSONUpdateProvider: Sendable {
       expectedSHA512: package.sha512,
       expectedSHA256: package.sha256,
       requiresValidSignature: requestURL.path.hasPrefix("/api/"),
-      requiresTeamIdentifier: ApplicationCodeSigning.teamIdentifier(at: application.applicationURL) != nil,
+      requiresTeamIdentifier: ApplicationCodeSigning.teamIdentifier(at: application.applicationURL)
+        != nil,
       progress: progress
     )
   }
 
   private enum FetchResult {
     case upToDate
-    case update(ReleaseJSONManifest)
+    case update(CustomAPIUpdateManifest)
     case notThisProtocol
   }
 
   private static func feedURL(for application: AppRecord) -> URL? {
-    application.sourceURL.flatMap(SecureUpdateURL.https)
+    application.updateConfiguration.feedURL.flatMap(SecureUpdateURL.https)
   }
 
   private func fetchManifest(from url: URL) async throws -> FetchResult {
     var sawNotFound = false
     var sawOtherFailure = false
     var candidates = [url]
-    if let stableURL = ReleaseJSONDetector.stableChannelURL(from: url) {
+    if let stableURL = CustomAPIUpdateDetector.stableChannelURL(from: url) {
       candidates.append(stableURL)
     }
 
@@ -251,7 +265,8 @@ struct ReleaseJSONUpdateProvider: Sendable {
 
       if response.statusCode == 200 {
         guard response.data.count <= 5_000_000,
-          var manifest = ReleaseJSONManifest.parse(response.data, sourceURL: candidate) else {
+          var manifest = CustomAPIUpdateManifest.parse(response.data, sourceURL: candidate)
+        else {
           sawOtherFailure = true
           continue
         }
@@ -275,23 +290,27 @@ struct ReleaseJSONUpdateProvider: Sendable {
     if sawNotFound && !sawOtherFailure {
       return .notThisProtocol
     }
-    throw ProcessRunnerError.failed(status: 1, message: "无法读取 JSON release 更新清单。")
+    throw ProcessRunnerError.failed(status: 1, message: "无法读取官网更新清单。")
   }
 
-  private func supplementNotes(in manifest: inout ReleaseJSONManifest, from url: URL) async {
+  private func supplementNotes(in manifest: inout CustomAPIUpdateManifest, from url: URL) async {
     guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
     let channel = components.queryItems?.first(where: { $0.name == "channel" })?.value ?? "stable"
     components.path = "/api/changelog"
-    components.queryItems = [URLQueryItem(name: "per_page", value: "20"),
-      URLQueryItem(name: "channel", value: channel)]
+    components.queryItems = [
+      URLQueryItem(name: "per_page", value: "20"),
+      URLQueryItem(name: "channel", value: channel),
+    ]
     guard let notesURL = components.url,
       let response = try? await fetchResponse(notesURL), response.statusCode == 200,
       response.data.count <= 2_000_000,
       let json = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any],
       let releases = json["releases"] as? [[String: Any]],
       let release = releases.first(where: {
-        ($0["version"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: "vV")) == manifest.version
-      }), let body = (release["body"] as? String)?.nonBlankValue else { return }
+        ($0["version"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+          == manifest.version
+      }), let body = (release["body"] as? String)?.nonBlankValue
+    else { return }
     manifest.notes = body
     components.path = "/changelog"
     components.queryItems = nil

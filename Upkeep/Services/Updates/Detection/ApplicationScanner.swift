@@ -185,15 +185,17 @@ struct ApplicationScanner: ApplicationScanning {
     let sparkleURL = contentsURL.appendingPathComponent(
       "Frameworks/Sparkle.framework", isDirectory: true)
     let feedURL = (info["SUFeedURL"] as? String).flatMap(SecureUpdateURL.https(string:))
-    let hasSparkleSource = feedURL != nil
+    let hasSparkleSource =
+      feedURL != nil
       || FileManager.default.fileExists(atPath: sparkleURL.path)
     let knownGitHubSource = KnownGitHubReleaseSources.metadata(for: bundleIdentifier)
 
     // Retry unknown sources in full scans so new detector rules can recover them.
     // The installed-only monitor still reuses unchanged records without reading binaries.
-    if let previous, previous.source != .vscodeUpdater,
-      previous.source != .sparkle || previous.sourceURL == feedURL,
-      !(previous.source == .selfManaged
+    if let previous, previous.updateConfiguration.mechanism != .vscodeUpdater,
+      previous.updateConfiguration.mechanism != .sparkle
+        || previous.updateConfiguration.feedURL == feedURL,
+      !(previous.updateConfiguration.mechanism == .selfManaged
         && (sourceDetection == .full
           || hasSparkleSource
           || knownGitHubSource != nil
@@ -219,10 +221,10 @@ struct ApplicationScanner: ApplicationScanning {
           currentVersion: currentVersion,
           buildVersion: buildVersion,
           applicationModificationDate: applicationModificationDate,
-          source: .appStore,
+          updateConfiguration: UpdateConfiguration(
+            mechanism: .appStore, identifier: appStoreAdamIdentifier(at: applicationURL)),
           appStorePlatform: .mac,
-          status: .upToDate,
-          sourceIdentifier: appStoreAdamIdentifier(at: applicationURL)
+          status: .upToDate
         )
       }
       if let iOSAppStoreMetadata {
@@ -233,41 +235,53 @@ struct ApplicationScanner: ApplicationScanning {
           currentVersion: currentVersion,
           buildVersion: buildVersion,
           applicationModificationDate: applicationModificationDate,
-          source: .appStore,
+          updateConfiguration: UpdateConfiguration(
+            mechanism: .appStore, identifier: iOSAppStoreMetadata.storeIdentifier),
           appStorePlatform: iOSAppStoreMetadata.platform,
           appStoreCountryCode: iOSAppStoreMetadata.countryCode,
-          status: .upToDate,
-          sourceIdentifier: iOSAppStoreMetadata.storeIdentifier
+          status: .upToDate
         )
       }
       if hasSparkleSource {
         return AppRecord(
-          name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
-          currentVersion: currentVersion, buildVersion: buildVersion,
+          name: name,
+          bundleIdentifier: bundleIdentifier,
+          applicationURL: applicationURL,
+          currentVersion: currentVersion,
+          buildVersion: buildVersion,
           applicationModificationDate: applicationModificationDate,
-          source: .sparkle, status: feedURL == nil ? .selfManaged : .checking,
-          sourceURL: feedURL
+          updateConfiguration: UpdateConfiguration(mechanism: .sparkle, feedURL: feedURL),
+          status: feedURL == nil ? .selfManaged : .checking
         )
       }
       if let metadata = VSCodeUpdaterDetector.detect(in: bundle.bundleURL) {
         return AppRecord(
-          name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
+          name: name,
+          bundleIdentifier: bundleIdentifier,
+          applicationURL: applicationURL,
           currentVersion: currentVersion,
           buildVersion: String(metadata.commit.prefix(7)),
           applicationModificationDate: applicationModificationDate,
-          source: .vscodeUpdater, status: .checking,
-          sourceURL: metadata.updateURL, homepageURL: metadata.homepageURL,
-          sourceIdentifier: VSCodeUpdaterDetector.sourceIdentifier(
-            quality: metadata.quality, commit: metadata.commit))
+          updateConfiguration: UpdateConfiguration(
+            mechanism: .vscodeUpdater, feedURL: metadata.updateURL,
+            homepageURL: metadata.homepageURL,
+            identifier: VSCodeUpdaterDetector.updateIdentifier(
+              quality: metadata.quality, commit: metadata.commit)),
+          status: .checking
+        )
       }
       if let metadata = knownGitHubSource {
         return AppRecord(
-          name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
-          currentVersion: currentVersion, buildVersion: buildVersion,
+          name: name,
+          bundleIdentifier: bundleIdentifier,
+          applicationURL: applicationURL,
+          currentVersion: currentVersion,
+          buildVersion: buildVersion,
           applicationModificationDate: applicationModificationDate,
-          source: .githubReleases, status: .checking,
-          sourceURL: metadata.apiURL, homepageURL: metadata.homepageURL,
-          sourceIdentifier: metadata.identifier
+          updateConfiguration: UpdateConfiguration(
+            mechanism: .githubReleases, feedURL: metadata.apiURL, homepageURL: metadata.homepageURL,
+            identifier: metadata.identifier),
+          status: .checking
         )
       }
       return AppRecord(
@@ -277,39 +291,39 @@ struct ApplicationScanner: ApplicationScanning {
         currentVersion: currentVersion,
         buildVersion: buildVersion,
         applicationModificationDate: applicationModificationDate,
-        source: .selfManaged,
+        updateConfiguration: UpdateConfiguration(mechanism: .selfManaged),
         status: .selfManaged
       )
     }
 
-    let source: UpdateSource
+    let mechanism: UpdateMechanism
     let appStorePlatform: AppStorePlatform?
     let status: UpdateStatus
     var electronMetadata: ElectronBuilderMetadata? = nil
     var tauriEndpoint: URL? = nil
     var vscodeMetadata: VSCodeUpdaterMetadata? = nil
-    var releaseJSONEndpoint: URL? = nil
+    var customAPIUpdateEndpoint: URL? = nil
     var githubReleasesMetadata: GitHubReleasesMetadata? = nil
 
     if hasAppStoreReceipt {
-      source = .appStore
+      mechanism = .appStore
       appStorePlatform = .mac
       status = .checking
     } else if let iOSAppStoreMetadata {
-      source = .appStore
+      mechanism = .appStore
       appStorePlatform = iOSAppStoreMetadata.platform
       status = .checking
     } else if hasSparkleSource {
-      source = .sparkle
+      mechanism = .sparkle
       appStorePlatform = nil
       status = feedURL == nil ? .selfManaged : .checking
     } else if let detectedElectron = ElectronBuilderDetector.detect(in: bundle.bundleURL) {
-      source = .electronBuilder
+      mechanism = .electronBuilder
       appStorePlatform = nil
       status = .checking
       electronMetadata = detectedElectron
     } else if let detectedVSCode = VSCodeUpdaterDetector.detect(in: bundle.bundleURL) {
-      source = .vscodeUpdater
+      mechanism = .vscodeUpdater
       appStorePlatform = nil
       status = .checking
       vscodeMetadata = detectedVSCode
@@ -319,18 +333,19 @@ struct ApplicationScanner: ApplicationScanning {
     } else {
       let detection = ExecutableUpdaterDetector.detect(bundleURL: bundle.bundleURL)
       if let detectedTauri = detection.tauriEndpoint {
-        source = .tauri
+        mechanism = .tauri
         appStorePlatform = nil
         status = .checking
         tauriEndpoint = detectedTauri
-      } else if let detectedReleaseJSON = detection.releaseJSONEndpoint {
-        source = .releaseJSON
+      } else if let detectedCustomAPIUpdate = detection.customAPIUpdateEndpoint {
+        mechanism = .customAPI
         appStorePlatform = nil
         status = .checking
-        releaseJSONEndpoint = detectedReleaseJSON
+        customAPIUpdateEndpoint = detectedCustomAPIUpdate
       } else if let detectedGitHub = detection.githubReleases.first(where: {
-        $0.tagPrefix != nil && GitHubReleasesDetector.matchesApplication(
-          $0, name: name, bundleIdentifier: bundleIdentifier)
+        $0.tagPrefix != nil
+          && GitHubReleasesDetector.matchesApplication(
+            $0, name: name, bundleIdentifier: bundleIdentifier)
       }) ?? detection.githubReleases.first(where: {
         GitHubReleasesDetector.matchesApplication(
           $0,
@@ -338,12 +353,12 @@ struct ApplicationScanner: ApplicationScanning {
           bundleIdentifier: bundleIdentifier
         )
       }) ?? knownGitHubSource {
-        source = .githubReleases
+        mechanism = .githubReleases
         appStorePlatform = nil
         status = .checking
         githubReleasesMetadata = detectedGitHub
       } else {
-        source = .selfManaged
+        mechanism = .selfManaged
         appStorePlatform = nil
         status = .selfManaged
       }
@@ -356,44 +371,44 @@ struct ApplicationScanner: ApplicationScanning {
       currentVersion: currentVersion,
       buildVersion: buildVersion,
       applicationModificationDate: applicationModificationDate,
-      source: source,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: mechanism,
+        feedURL: {
+          switch mechanism {
+          case .sparkle: feedURL
+          case .electronBuilder: electronMetadata?.feedURL
+          case .tauri: tauriEndpoint
+          case .vscodeUpdater: vscodeMetadata?.updateURL
+          case .customAPI: customAPIUpdateEndpoint
+          case .githubReleases: githubReleasesMetadata?.apiURL
+          default: nil
+          }
+        }(),
+        homepageURL: electronMetadata?.homepageURL ?? vscodeMetadata?.homepageURL
+          ?? githubReleasesMetadata?.homepageURL,
+        identifier: {
+          switch mechanism {
+          case .appStore:
+            iOSAppStoreMetadata?.storeIdentifier ?? appStoreAdamIdentifier(at: applicationURL)
+          case .electronBuilder:
+            electronMetadata?.identifier
+          case .tauri:
+            tauriEndpoint?.absoluteString
+          case .vscodeUpdater:
+            vscodeMetadata.map {
+              VSCodeUpdaterDetector.updateIdentifier(quality: $0.quality, commit: $0.commit)
+            }
+          case .customAPI:
+            customAPIUpdateEndpoint?.absoluteString
+          case .githubReleases:
+            githubReleasesMetadata?.identifier
+          default:
+            nil
+          }
+        }(), githubReleaseTagPrefix: githubReleasesMetadata?.tagPrefix),
       appStorePlatform: appStorePlatform,
       appStoreCountryCode: iOSAppStoreMetadata?.countryCode,
-      status: status,
-      sourceURL: {
-        switch source {
-        case .sparkle: feedURL
-        case .electronBuilder: electronMetadata?.feedURL
-        case .tauri: tauriEndpoint
-        case .vscodeUpdater: vscodeMetadata?.updateURL
-        case .releaseJSON: releaseJSONEndpoint
-        case .githubReleases: githubReleasesMetadata?.apiURL
-        default: nil
-        }
-      }(),
-      homepageURL: electronMetadata?.homepageURL ?? vscodeMetadata?.homepageURL
-        ?? githubReleasesMetadata?.homepageURL,
-      sourceIdentifier: {
-        switch source {
-        case .appStore:
-          iOSAppStoreMetadata?.storeIdentifier ?? appStoreAdamIdentifier(at: applicationURL)
-        case .electronBuilder:
-          electronMetadata?.identifier
-        case .tauri:
-          tauriEndpoint?.absoluteString
-        case .vscodeUpdater:
-          vscodeMetadata.map {
-            VSCodeUpdaterDetector.sourceIdentifier(quality: $0.quality, commit: $0.commit)
-          }
-        case .releaseJSON:
-          releaseJSONEndpoint?.absoluteString
-        case .githubReleases:
-          githubReleasesMetadata?.identifier
-        default:
-          nil
-        }
-      }(),
-      githubReleaseTagPrefix: githubReleasesMetadata?.tagPrefix
+      status: status
     )
   }
 
@@ -431,8 +446,10 @@ struct ApplicationScanner: ApplicationScanning {
     hasAppStoreReceipt: Bool,
     iOSAppStoreMetadata: IOSAppStoreMetadata?
   ) -> Bool {
-    if previous.source == .tauri, case .unavailable = previous.status,
-      previous.sourceURL.map(TauriUpdaterDetector.isRepositoryLatestManifestURL) == true {
+    if previous.updateConfiguration.mechanism == .tauri, case .unavailable = previous.status,
+      previous.updateConfiguration.feedURL.map(TauriUpdaterDetector.isRepositoryLatestManifestURL)
+        == true
+    {
       // A failed inferred repository pointer may have hidden a specific endpoint.
       // Rescan unchanged apps so old snapshots can recover after detector fixes.
       return false
@@ -450,13 +467,14 @@ struct ApplicationScanner: ApplicationScanning {
     }
 
     if hasAppStoreReceipt {
-      return previous.source == .appStore && previous.appStorePlatform == .mac
+      return previous.updateConfiguration.mechanism == .appStore
+        && previous.appStorePlatform == .mac
     }
     if let iOSAppStoreMetadata {
-      return previous.source == .appStore
+      return previous.updateConfiguration.mechanism == .appStore
         && previous.appStorePlatform == iOSAppStoreMetadata.platform
     }
-    return previous.source != .appStore
+    return previous.updateConfiguration.mechanism != .appStore
   }
 
   private static func resolvedName(

@@ -9,8 +9,10 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var buildVersion: String?
   let applicationModificationDate: Date?
 
-  /// The channel used to check for and install the next update.
-  var source: UpdateSource
+  var updateConfiguration: UpdateConfiguration
+  var alternateUpdateConfiguration: UpdateConfiguration?
+  /// The full route confirmed by an installation or a matching local receipt.
+  var installedUpdateConfiguration: UpdateConfiguration?
   var appStorePlatform: AppStorePlatform?
   var appStoreCountryCode: String?
   var appStoreAccountCountryCode: String?
@@ -19,22 +21,12 @@ struct AppRecord: Identifiable, Hashable, Sendable {
   var latestBuildVersion: String?
   var releaseNotes: String?
   var releaseDate: Date?
-  var sourceURL: URL?
-  var homepageURL: URL?
   var releaseNotesURL: URL?
   var updatePageURL: URL?
-  var sourceIdentifier: String?
-  var githubReleaseTagPrefix: String?
-  var alternateUpdateSource: UpdateSource?
-  var alternateSourceURL: URL?
-  var alternateSourceIdentifier: String?
-  var alternateHomepageURL: URL?
   var homebrewCaskToken: String?
   var packageByteCount: Int64?
   var canAutomaticallyUpdate: Bool
   var lastInstalledAt: Date?
-  /// The channel confirmed by an Upkeep update or a matching local installation receipt.
-  var installedSource: UpdateSource?
 
   init(
     name: String,
@@ -43,7 +35,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     currentVersion: String,
     buildVersion: String? = nil,
     applicationModificationDate: Date? = nil,
-    source: UpdateSource = .selfManaged,
+    updateConfiguration: UpdateConfiguration = UpdateConfiguration(mechanism: .selfManaged),
     appStorePlatform: AppStorePlatform? = nil,
     appStoreCountryCode: String? = nil,
     appStoreAccountCountryCode: String? = nil,
@@ -52,21 +44,14 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     latestBuildVersion: String? = nil,
     releaseNotes: String? = nil,
     releaseDate: Date? = nil,
-    sourceURL: URL? = nil,
-    homepageURL: URL? = nil,
     releaseNotesURL: URL? = nil,
     updatePageURL: URL? = nil,
-    sourceIdentifier: String? = nil,
-    githubReleaseTagPrefix: String? = nil,
-    alternateUpdateSource: UpdateSource? = nil,
-    alternateSourceURL: URL? = nil,
-    alternateSourceIdentifier: String? = nil,
-    alternateHomepageURL: URL? = nil,
+    alternateUpdateConfiguration: UpdateConfiguration? = nil,
     homebrewCaskToken: String? = nil,
     packageByteCount: Int64? = nil,
     canAutomaticallyUpdate: Bool = false,
     lastInstalledAt: Date? = nil,
-    installedSource: UpdateSource? = nil
+    installedUpdateConfiguration: UpdateConfiguration? = nil
   ) {
     self.id = applicationURL.standardizedFileURL.path
     self.name = name
@@ -75,7 +60,7 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.currentVersion = currentVersion
     self.buildVersion = buildVersion
     self.applicationModificationDate = applicationModificationDate
-    self.source = source
+    self.updateConfiguration = updateConfiguration
     self.appStorePlatform = appStorePlatform
     self.appStoreCountryCode = appStoreCountryCode
     self.appStoreAccountCountryCode = appStoreAccountCountryCode
@@ -84,149 +69,39 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     self.latestBuildVersion = latestBuildVersion
     self.releaseNotes = releaseNotes
     self.releaseDate = releaseDate
-    self.sourceURL = sourceURL
-    self.homepageURL = homepageURL
     self.releaseNotesURL = releaseNotesURL
     self.updatePageURL = updatePageURL
-    self.sourceIdentifier = sourceIdentifier
-    self.githubReleaseTagPrefix = githubReleaseTagPrefix
-    self.alternateUpdateSource = alternateUpdateSource
-    self.alternateSourceURL = alternateSourceURL
-    self.alternateSourceIdentifier = alternateSourceIdentifier
-    self.alternateHomepageURL = alternateHomepageURL
+    self.alternateUpdateConfiguration = alternateUpdateConfiguration
     self.homebrewCaskToken = homebrewCaskToken
     self.packageByteCount = packageByteCount
     self.canAutomaticallyUpdate = canAutomaticallyUpdate
     self.lastInstalledAt = lastInstalledAt
-    self.installedSource = installedSource
-  }
-}
-
-extension AppRecord: Codable {
-  private enum CodingKeys: String, CodingKey {
-    case name
-    case bundleIdentifier
-    case applicationURL
-    case currentVersion
-    case buildVersion
-    case applicationModificationDate
-    case source
-    case appStorePlatform
-    case appStoreCountryCode
-    case appStoreAccountCountryCode
-    case status
-    case latestVersion
-    case latestBuildVersion
-    case releaseNotes
-    case releaseDate
-    case sourceURL
-    case homepageURL
-    case releaseNotesURL
-    case updatePageURL
-    case sourceIdentifier
-    case githubReleaseTagPrefix
-    case alternateUpdateSource
-    case alternateSourceURL
-    case alternateSourceIdentifier
-    case alternateHomepageURL
-    case homebrewCaskToken
-    case packageByteCount
-    case canAutomaticallyUpdate
-    case lastInstalledAt
-    case installedSource
-  }
-
-  init(from decoder: Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    self.init(
-      name: try container.decode(String.self, forKey: .name),
-      bundleIdentifier: try container.decode(String.self, forKey: .bundleIdentifier),
-      applicationURL: try container.decode(URL.self, forKey: .applicationURL),
-      currentVersion: try container.decode(String.self, forKey: .currentVersion),
-      buildVersion: try container.decodeIfPresent(String.self, forKey: .buildVersion),
-      applicationModificationDate: try container.decodeIfPresent(
-        Date.self,
-        forKey: .applicationModificationDate
-      ),
-      source: try container.decode(UpdateSource.self, forKey: .source),
-      appStorePlatform: try container.decodeIfPresent(AppStorePlatform.self, forKey: .appStorePlatform),
-      appStoreCountryCode: try container.decodeIfPresent(String.self, forKey: .appStoreCountryCode),
-      appStoreAccountCountryCode: try container.decodeIfPresent(
-        String.self,
-        forKey: .appStoreAccountCountryCode
-      ),
-      status: try container.decode(UpdateStatus.self, forKey: .status),
-      latestVersion: try container.decodeIfPresent(String.self, forKey: .latestVersion),
-      latestBuildVersion: try container.decodeIfPresent(String.self, forKey: .latestBuildVersion),
-      releaseNotes: try container.decodeIfPresent(String.self, forKey: .releaseNotes),
-      releaseDate: try container.decodeIfPresent(Date.self, forKey: .releaseDate),
-      sourceURL: try container.decodeIfPresent(URL.self, forKey: .sourceURL),
-      homepageURL: try container.decodeIfPresent(URL.self, forKey: .homepageURL),
-      releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
-      updatePageURL: try container.decodeIfPresent(URL.self, forKey: .updatePageURL),
-      sourceIdentifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
-      githubReleaseTagPrefix: try container.decodeIfPresent(String.self, forKey: .githubReleaseTagPrefix),
-      alternateUpdateSource: try container.decodeIfPresent(
-        UpdateSource.self,
-        forKey: .alternateUpdateSource
-      ),
-      alternateSourceURL: try container.decodeIfPresent(URL.self, forKey: .alternateSourceURL),
-      alternateSourceIdentifier: try container.decodeIfPresent(
-        String.self,
-        forKey: .alternateSourceIdentifier
-      ),
-      alternateHomepageURL: try container.decodeIfPresent(URL.self, forKey: .alternateHomepageURL),
-      homebrewCaskToken: try container.decodeIfPresent(String.self, forKey: .homebrewCaskToken),
-      packageByteCount: try container.decodeIfPresent(Int64.self, forKey: .packageByteCount),
-      canAutomaticallyUpdate: try container.decodeIfPresent(
-        Bool.self,
-        forKey: .canAutomaticallyUpdate
-      ) ?? false,
-      lastInstalledAt: try container.decodeIfPresent(Date.self, forKey: .lastInstalledAt),
-      installedSource: try container.decodeIfPresent(UpdateSource.self, forKey: .installedSource)
-    )
+    self.installedUpdateConfiguration = installedUpdateConfiguration
   }
 }
 
 extension AppRecord {
   var isCheckable: Bool {
-    switch source {
-    case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
-      return true
-    case .sparkle:
-      return sourceURL != nil
-    case .homebrew:
-      return alternateUpdateCheckRecord != nil
-    case .selfManaged:
-      return false
-    }
+    if updateConfiguration.mechanism == .homebrew { return alternateUpdateCheckRecord != nil }
+    return updateConfiguration.isCheckable
   }
 
   var homebrewManagedCaskToken: String? {
-    homebrewCaskToken ?? (source == .homebrew ? sourceIdentifier : nil)
+    homebrewCaskToken
+      ?? (updateConfiguration.mechanism == .homebrew ? updateConfiguration.identifier : nil)
   }
 
   var alternateUpdateCheckRecord: AppRecord? {
-    guard let alternateUpdateSource,
-      alternateUpdateSource != .homebrew,
-      alternateUpdateSource != .selfManaged,
-      alternateUpdateSource != .appStore
-    else {
-      return nil
-    }
-
-    switch alternateUpdateSource {
-    case .sparkle where alternateSourceURL == nil:
-      return nil
-    default:
-      break
-    }
+    guard let alternateUpdateConfiguration,
+      alternateUpdateConfiguration.mechanism.canBeAlternateUpdateMechanism,
+      alternateUpdateConfiguration.isCheckable
+    else { return nil }
 
     var application = self
-    application.source = alternateUpdateSource
-    application.sourceURL = alternateSourceURL
-    application.sourceIdentifier = alternateSourceIdentifier
-    application.homepageURL = alternateHomepageURL ?? homepageURL
+    application.updateConfiguration = alternateUpdateConfiguration
+    application.updateConfiguration.homepageURL =
+      alternateUpdateConfiguration.homepageURL
+      ?? updateConfiguration.homepageURL
     application.status = .checking
     application.latestVersion = nil
     application.latestBuildVersion = nil
@@ -239,15 +114,9 @@ extension AppRecord {
     return application
   }
 
-  mutating func rememberAlternateUpdateSource(from application: AppRecord) {
-    guard application.source.canBeAlternateUpdateSource else { return }
-    if application.source == .githubReleases {
-      githubReleaseTagPrefix = application.githubReleaseTagPrefix
-    }
-    alternateUpdateSource = application.source
-    alternateSourceURL = application.sourceURL
-    alternateSourceIdentifier = application.sourceIdentifier
-    alternateHomepageURL = application.homepageURL
+  mutating func rememberAlternateUpdateConfiguration(from application: AppRecord) {
+    guard application.updateConfiguration.mechanism.canBeAlternateUpdateMechanism else { return }
+    alternateUpdateConfiguration = application.updateConfiguration
   }
 
   var needsUpdate: Bool {
@@ -262,7 +131,7 @@ extension AppRecord {
   }
 
   var requiresAppStoreUpdatePageHandoff: Bool {
-    guard source == .appStore else { return false }
+    guard updateConfiguration.mechanism == .appStore else { return false }
     if appStorePlatform != .mac { return true }
     guard
       let applicationCountryCode = AppStoreCountryCode.normalized(appStoreCountryCode),
@@ -274,71 +143,10 @@ extension AppRecord {
   }
 
   var manualUpdateURL: URL? {
-    guard source == .sparkle, needsUpdate, !canAutomaticallyUpdate,
+    guard updateConfiguration.mechanism == .sparkle, needsUpdate, !canAutomaticallyUpdate,
       let updatePageURL
     else { return nil }
     return SecureUpdateURL.https(updatePageURL)
-  }
-
-  var displayedSource: UpdateSource {
-    // An available update belongs to its current check/install channel, not the
-    // channel that installed the version already on disk.
-    needsUpdate ? source : (installedSource ?? source)
-  }
-
-  var sourceTitle: String {
-    guard displayedSource == .appStore else {
-      return displayedSource.title
-    }
-    return appStorePlatform?.title ?? "App Store"
-  }
-
-  var sourceSystemImage: String {
-    displayedSource.systemImage
-  }
-
-  var sourcePlatformSystemImage: String? {
-    guard displayedSource == .appStore else {
-      return nil
-    }
-    return appStorePlatform?.systemImage
-  }
-
-  struct SearchQuery: Sendable {
-    let text: String
-    let isSourceQuery: Bool
-
-    init(_ searchText: String) {
-      text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-      isSourceQuery = !text.isEmpty && UpdateSource.isSourceSearchQuery(text)
-    }
-  }
-
-  func matchesSearch(_ searchText: String) -> Bool {
-    matchesSearch(SearchQuery(searchText))
-  }
-
-  func matchesSearch(_ query: SearchQuery) -> Bool {
-    guard !query.text.isEmpty else { return true }
-
-    if query.isSourceQuery {
-      return matchesSourceSearch(query.text)
-    }
-
-    return name.localizedCaseInsensitiveContains(query.text)
-      || bundleIdentifier.localizedCaseInsensitiveContains(query.text)
-      || sourceTitle.localizedCaseInsensitiveContains(query.text)
-  }
-
-  private func matchesSourceSearch(_ query: String) -> Bool {
-    let primaryTerms: [String]
-    if source == .appStore {
-      primaryTerms = [source.title, sourceTitle]
-    } else {
-      primaryTerms = source.searchTerms
-    }
-    let terms = primaryTerms + displayedSource.searchTerms + (alternateUpdateSource?.searchTerms ?? [])
-    return terms.contains { UpdateSource.searchTerm($0, matches: query) }
   }
 
   var versionSummary: String {
@@ -390,12 +198,15 @@ extension AppRecord {
       let parts = (app.latestVersion ?? app.currentVersion).split(separator: ",", maxSplits: 1)
       var version = parts.first.map(String.init)?.lowercased() ?? ""
       if version.hasPrefix("v") { version.removeFirst() }
-      let build = app.latestBuildVersion
+      let build =
+        app.latestBuildVersion
         ?? (parts.count > 1 ? String(parts[1]) : nil)
-        ?? (app.latestVersion == nil || app.latestVersion == app.currentVersion ? app.buildVersion : nil)
+        ?? (app.latestVersion == nil || app.latestVersion == app.currentVersion
+          ? app.buildVersion : nil)
       return (version, build)
     }
-    let lhs = identity(self), rhs = identity(other)
+    let lhs = identity(self)
+    let rhs = identity(other)
     guard !lhs.0.isEmpty, lhs.0 == rhs.0 else { return false }
     if let leftBuild = lhs.1, let rightBuild = rhs.1 { return leftBuild == rightBuild }
     return true
@@ -414,7 +225,7 @@ extension AppRecord {
     clearReleaseMetadata()
     updatePageURL = nil
     canAutomaticallyUpdate = false
-    status = source == .selfManaged ? .selfManaged : .checking
+    status = updateConfiguration.mechanism == .selfManaged ? .selfManaged : .checking
   }
 
   mutating func applyInstalledRelease() {
@@ -446,13 +257,16 @@ extension AppRecord {
   }
 
   func hasNewerRelease(than installed: AppRecord) -> Bool {
-    if source == .vscodeUpdater {
+    if updateConfiguration.mechanism == .vscodeUpdater {
       guard let latestVersion else { return false }
-      let commit = installed.source == .vscodeUpdater
-        ? installed.sourceIdentifier.flatMap(VSCodeUpdaterDetector.parseSourceIdentifier)?.commit
+      let commit =
+        installed.updateConfiguration.mechanism == .vscodeUpdater
+        ? installed.updateConfiguration.identifier.flatMap(
+          VSCodeUpdaterDetector.parseSourceIdentifier)?.commit
         : nil
       return VSCodeUpdatePayload(productVersion: latestVersion, commit: latestBuildVersion)
-        .shouldOfferUpdate(against: installed.currentVersion, currentCommit: commit,
+        .shouldOfferUpdate(
+          against: installed.currentVersion, currentCommit: commit,
           currentBuildVersion: installed.buildVersion)
     }
 
@@ -557,110 +371,6 @@ enum AppStoreCountryCode {
   }
 }
 
-enum UpdateSource: String, Hashable, Sendable, Codable, CaseIterable {
-  case appStore
-  case homebrew
-  case sparkle
-  case electronBuilder
-  case tauri
-  case vscodeUpdater
-  case releaseJSON
-  case githubReleases
-  case selfManaged
-
-  var title: String {
-    switch self {
-    case .appStore: "App Store"
-    case .homebrew: "Homebrew"
-    case .sparkle: "Sparkle"
-    case .electronBuilder: "electron-updater"
-    case .tauri: "Tauri updater"
-    case .vscodeUpdater: "VS Code updater"
-    case .releaseJSON: "JSON release"
-    case .githubReleases: "GitHub Releases"
-    case .selfManaged: "未知"
-    }
-  }
-
-  var systemImage: String {
-    switch self {
-    case .appStore: "apple.logo"
-    case .homebrew: "mug.fill"
-    case .sparkle: "sparkles"
-    case .electronBuilder: "atom"
-    case .tauri: "drop.fill"
-    case .vscodeUpdater: "chevron.left.forwardslash.chevron.right"
-    case .releaseJSON: "doc.text"
-    case .githubReleases: "shippingbox"
-    case .selfManaged: "app.dashed"
-    }
-  }
-
-  var searchTerms: [String] {
-    switch self {
-    case .appStore:
-      ["App Store", "Mac App Store", "iPhone App Store", "iPad App Store"]
-    case .homebrew:
-      ["Homebrew"]
-    case .sparkle:
-      ["Sparkle"]
-    case .electronBuilder:
-      ["electron", "electron-updater"]
-    case .tauri:
-      ["Tauri", "Tauri updater"]
-    case .vscodeUpdater:
-      ["VS Code", "VS Code updater", "VSCode"]
-    case .releaseJSON:
-      ["Release JSON", "JSON release"]
-    case .githubReleases:
-      ["GitHub", "GitHub Releases"]
-    case .selfManaged:
-      ["未知", "Unknown"]
-    }
-  }
-
-  var canBeAlternateUpdateSource: Bool {
-    switch self {
-    case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .releaseJSON, .githubReleases:
-      return true
-    case .appStore, .homebrew, .selfManaged:
-      return false
-    }
-  }
-
-  static func isSourceSearchQuery(_ query: String) -> Bool {
-    allCases.lazy.flatMap(\.searchTerms).contains {
-      searchTerm($0, matches: query)
-    }
-  }
-
-  static func searchTerm(_ term: String, matches query: String) -> Bool {
-    if term.localizedCaseInsensitiveCompare(query) == .orderedSame {
-      return true
-    }
-    guard query.count >= 4 else { return false }
-    return term.range(of: query, options: [.anchored, .caseInsensitive]) != nil
-  }
-}
-
-enum UpdateStatus: Hashable, Sendable, Codable {
-  case checking
-  case upToDate
-  case updateAvailable
-  case selfManaged
-  case unavailable(String)
-
-  var title: String {
-    switch self {
-    case .checking: "正在检查"
-    case .upToDate: "已是最新"
-    case .updateAvailable: "可用更新"
-    case .selfManaged: "自行更新"
-    case .unavailable: "无法检查"
-    }
-  }
-}
-
 extension Array where Element == AppRecord {
   func availableUpdates(ignoredIDs: Set<AppRecord.ID>) -> [AppRecord] {
     filter { $0.needsUpdate && !ignoredIDs.contains($0.id) }
@@ -737,13 +447,13 @@ extension AppRecord {
       applicationURL: URL(fileURLWithPath: "/Applications/Pixelmator Pro.app"),
       currentVersion: "3.7.1",
       buildVersion: "30701000",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .appStore, feedURL: URL(string: "https://apps.apple.com/")),
       appStorePlatform: .mac,
       status: .updateAvailable,
       latestVersion: "3.7.2",
       releaseNotes: "提升了大型文稿的编辑性能，并修复了若干稳定性问题。",
       releaseDate: .now.addingTimeInterval(-86_400),
-      sourceURL: URL(string: "https://apps.apple.com/"),
       canAutomaticallyUpdate: false
     ),
     AppRecord(
@@ -751,11 +461,11 @@ extension AppRecord {
       bundleIdentifier: "com.microsoft.VSCode",
       applicationURL: URL(fileURLWithPath: "/Applications/Visual Studio Code.app"),
       currentVersion: "1.103.1",
-      source: .homebrew,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .homebrew, homepageURL: URL(string: "https://code.visualstudio.com/"),
+        identifier: "visual-studio-code"),
       status: .updateAvailable,
       latestVersion: "1.104.0",
-      homepageURL: URL(string: "https://code.visualstudio.com/"),
-      sourceIdentifier: "visual-studio-code",
       canAutomaticallyUpdate: true
     ),
     AppRecord(
@@ -763,7 +473,7 @@ extension AppRecord {
       bundleIdentifier: "com.coteditor.CotEditor",
       applicationURL: URL(fileURLWithPath: "/Applications/CotEditor.app"),
       currentVersion: "5.1.7",
-      source: .sparkle,
+      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
       status: .upToDate,
       latestVersion: "5.1.7",
       releaseNotes: "当前已安装最新版本。"
@@ -773,7 +483,7 @@ extension AppRecord {
       bundleIdentifier: "com.example.mac",
       applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
       currentVersion: "2.4",
-      source: .selfManaged,
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged),
       status: .selfManaged
     ),
     AppRecord(
@@ -781,10 +491,11 @@ extension AppRecord {
       bundleIdentifier: "app.chatwise",
       applicationURL: URL(fileURLWithPath: "/Applications/ChatWise.app"),
       currentVersion: "26.8.0",
-      source: .electronBuilder,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .electronBuilder,
+        feedURL: URL(string: "https://releases.chatwise.app/latest-mac.yml")),
       status: .updateAvailable,
       latestVersion: "26.8.1",
-      sourceURL: URL(string: "https://releases.chatwise.app/latest-mac.yml"),
       canAutomaticallyUpdate: true
     ),
     AppRecord(
@@ -792,12 +503,14 @@ extension AppRecord {
       bundleIdentifier: "com.example.grok",
       applicationURL: URL(fileURLWithPath: "/Applications/Grok.app"),
       currentVersion: "0.2.20",
-      source: .tauri,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .tauri,
+        feedURL: URL(
+          string:
+            "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
+        )),
       status: .updateAvailable,
       latestVersion: "0.2.24",
-      sourceURL: URL(
-        string: "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
-      ),
       canAutomaticallyUpdate: true
     ),
   ]

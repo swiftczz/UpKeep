@@ -10,8 +10,8 @@ final class SparkleDetectionTests: XCTestCase, @unchecked Sendable {
     let applicationURL = try makeApplication()
     defer { try? FileManager.default.removeItem(at: applicationURL.deletingLastPathComponent()) }
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    cached.source = .selfManaged
-    cached.sourceURL = nil
+    cached.updateConfiguration.mechanism = .selfManaged
+    cached.updateConfiguration.feedURL = nil
     cached.status = .selfManaged
 
     let recovered = try XCTUnwrap(
@@ -19,8 +19,8 @@ final class SparkleDetectionTests: XCTestCase, @unchecked Sendable {
     )
 
     XCTAssertEqual(recovered.applicationModificationDate, cached.applicationModificationDate)
-    XCTAssertEqual(recovered.source, .sparkle)
-    XCTAssertEqual(recovered.sourceURL, feedURL)
+    XCTAssertEqual(recovered.updateConfiguration.mechanism, .sparkle)
+    XCTAssertEqual(recovered.updateConfiguration.feedURL, feedURL)
     XCTAssertEqual(recovered.status, .checking)
   }
 
@@ -32,8 +32,8 @@ final class SparkleDetectionTests: XCTestCase, @unchecked Sendable {
       ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
     )
 
-    XCTAssertEqual(application.source, .sparkle)
-    XCTAssertEqual(application.sourceURL, feedURL)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .sparkle)
+    XCTAssertEqual(application.updateConfiguration.feedURL, feedURL)
     XCTAssertEqual(application.status, .checking)
   }
 
@@ -43,8 +43,8 @@ final class SparkleDetectionTests: XCTestCase, @unchecked Sendable {
 
     let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
-    XCTAssertEqual(application.source, .sparkle)
-    XCTAssertEqual(application.sourceURL, feedURL)
+    XCTAssertEqual(application.updateConfiguration.mechanism, .sparkle)
+    XCTAssertEqual(application.updateConfiguration.feedURL, feedURL)
   }
 
   func testValidSparkleCacheKeepsCheckedMetadata() throws {
@@ -68,8 +68,8 @@ final class SparkleDetectionTests: XCTestCase, @unchecked Sendable {
     let applicationURL = try makeApplication()
     defer { try? FileManager.default.removeItem(at: applicationURL.deletingLastPathComponent()) }
     var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-    cached.source = .selfManaged
-    cached.sourceURL = nil
+    cached.updateConfiguration.mechanism = .selfManaged
+    cached.updateConfiguration.feedURL = nil
     cached.status = .selfManaged
     let recovered = try XCTUnwrap(
       ApplicationScanner.makeRecord(from: applicationURL, reusing: cached)

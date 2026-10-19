@@ -152,11 +152,10 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.rainbow.quill",
       applicationURL: URL(fileURLWithPath: "/Applications/Arc PDF.app"),
       currentVersion: "2.0.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "6670330650"),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
-      status: .checking,
-      sourceIdentifier: "6670330650"
+      status: .checking
     )
 
     let checked = await provider.check(application)
@@ -195,11 +194,10 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.tencent.QQMusicMac",
       applicationURL: URL(fileURLWithPath: "/Applications/QQMusic.app"),
       currentVersion: "11.9.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "595615424"),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
-      status: .checking,
-      sourceIdentifier: "595615424"
+      status: .checking
     )
 
     let checked = await provider.check(application)
@@ -238,11 +236,10 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.example.mac",
       applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
       currentVersion: "1.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "123456"),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
-      status: .checking,
-      sourceIdentifier: "123456"
+      status: .checking
     )
 
     let checked = await provider.check(application)
@@ -274,7 +271,7 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.example.mac",
       applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
       currentVersion: "1.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
       status: .checking
@@ -284,7 +281,7 @@ final class AppStoreLookupTests: XCTestCase {
     let requestedURLs = await requests.urls()
 
     XCTAssertEqual(checked.latestVersion, "2.0")
-    XCTAssertEqual(checked.sourceIdentifier, "123456")
+    XCTAssertEqual(checked.updateConfiguration.identifier, "123456")
     XCTAssertEqual(checked.status, .updateAvailable)
     XCTAssertEqual(requestedURLs.count, 2)
     XCTAssertTrue(requestedURLs.allSatisfy { $0.host == "itunes.apple.com" })
@@ -311,11 +308,10 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.baidu.netdisk",
       applicationURL: URL(fileURLWithPath: "/Applications/BaiduNetdisk.app"),
       currentVersion: "8.7.9",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "547166701"),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
-      status: .checking,
-      sourceIdentifier: "547166701"
+      status: .checking
     )
 
     let checked = await provider.check(application)
@@ -344,11 +340,10 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.example.mobile",
       applicationURL: URL(fileURLWithPath: "/Applications/Mobile App.app"),
       currentVersion: "1.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "123456"),
       appStorePlatform: .iPhone,
       appStoreCountryCode: "us",
-      status: .checking,
-      sourceIdentifier: "123456"
+      status: .checking
     )
 
     let checked = await provider.check(application)
@@ -380,7 +375,7 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.example.mac",
       applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
       currentVersion: "2.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
       status: .checking
@@ -414,11 +409,10 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.rainbow.quill",
       applicationURL: URL(fileURLWithPath: "/Applications/Arc PDF.app"),
       currentVersion: "2.0.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "6670330650"),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
-      status: .checking,
-      sourceIdentifier: "6670330650"
+      status: .checking
     )
 
     let checked = await provider.check(application)
@@ -433,7 +427,7 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.example.missing",
       applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
       currentVersion: "1.0",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore),
       appStorePlatform: .mac,
       appStoreCountryCode: "cn",
       status: .checking
@@ -653,11 +647,12 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.sequel-ace.sequel-ace",
       applicationURL: URL(fileURLWithPath: "/Applications/Sequel Ace.app"),
       currentVersion: "5.3.1",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(
+        mechanism: .appStore,
+        feedURL: URL(string: "https://apps.apple.com/cn/app/sequel-ace/id1518036000")),
       appStorePlatform: .mac,
       status: .updateAvailable,
-      latestVersion: "5.4.0",
-      sourceURL: URL(string: "https://apps.apple.com/cn/app/sequel-ace/id1518036000")
+      latestVersion: "5.4.0"
     )
 
     XCTAssertEqual(MacAppStoreUpdateProvider.adamIdentifier(for: application), 1_518_036_000)
@@ -669,7 +664,7 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.hako.network",
       applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
       currentVersion: "1.0.4",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore),
       appStorePlatform: .mac,
       appStoreCountryCode: "US",
       status: .checking
@@ -689,7 +684,7 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.hako.network",
       applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
       currentVersion: "1.0.4",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore),
       appStorePlatform: .mac,
       appStoreCountryCode: "us",
       status: .checking
@@ -709,7 +704,7 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.hako.network",
       applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
       currentVersion: "1.0.4",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore),
       appStorePlatform: .mac,
       appStoreCountryCode: "en_US",
       status: .checking
@@ -724,13 +719,12 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.hako.network",
       applicationURL: URL(fileURLWithPath: "/Applications/Clash.app"),
       currentVersion: "1.0.6",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "6794257189"),
       appStorePlatform: .mac,
       appStoreCountryCode: "us",
       appStoreAccountCountryCode: "CHN",
       status: .updateAvailable,
-      latestVersion: "1.0.7",
-      sourceIdentifier: "6794257189"
+      latestVersion: "1.0.7"
     )
 
     XCTAssertTrue(application.requiresAppStoreUpdatePageHandoff)
@@ -742,13 +736,12 @@ final class AppStoreLookupTests: XCTestCase {
       bundleIdentifier: "com.sequel-ace.sequel-ace",
       applicationURL: URL(fileURLWithPath: "/Applications/Sequel Ace.app"),
       currentVersion: "5.3.1",
-      source: .appStore,
+      updateConfiguration: UpdateConfiguration(mechanism: .appStore, identifier: "1518036000"),
       appStorePlatform: .mac,
       appStoreCountryCode: "us",
       appStoreAccountCountryCode: "USA",
       status: .updateAvailable,
-      latestVersion: "5.4.0",
-      sourceIdentifier: "1518036000"
+      latestVersion: "5.4.0"
     )
 
     XCTAssertFalse(application.requiresAppStoreUpdatePageHandoff)

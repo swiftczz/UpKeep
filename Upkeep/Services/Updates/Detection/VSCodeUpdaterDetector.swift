@@ -59,7 +59,7 @@ enum VSCodeUpdaterDetector {
     )
   }
 
-  static func sourceIdentifier(quality: String, commit: String) -> String {
+  static func updateIdentifier(quality: String, commit: String) -> String {
     "\(quality)/\(commit)"
   }
 

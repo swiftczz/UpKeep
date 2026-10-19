@@ -48,8 +48,8 @@ struct AppRowView: View {
           }
 
           AppRowAccessoryView(
-            sourceSystemImage: application.sourceSystemImage,
-            sourceTitle: application.sourceTitle,
+            channelSystemImage: application.channelSystemImage,
+            channelTitle: "更新来源：\(application.channelTitle)；更新机制：\(application.mechanismTitle)",
             isChecking: isChecking || application.status == .checking,
             updateState: updateState
           )
@@ -97,8 +97,8 @@ extension AppRowView: Equatable {
 
 private struct AppRowAccessoryView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  let sourceSystemImage: String
-  let sourceTitle: String
+  let channelSystemImage: String
+  let channelTitle: String
   let isChecking: Bool
   let updateState: ApplicationUpdateState?
 
@@ -134,11 +134,11 @@ private struct AppRowAccessoryView: View {
         .accessibilityLabel("正在检查更新")
         .transition(.opacity)
     } else {
-      Image(systemName: sourceSystemImage)
+      Image(systemName: channelSystemImage)
         .font(.caption)
         .foregroundStyle(.secondary)
-        .help(sourceTitle)
-        .accessibilityLabel(sourceTitle)
+        .help(channelTitle)
+        .accessibilityLabel(channelTitle)
         .transition(.opacity)
     }
   }

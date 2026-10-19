@@ -8,7 +8,7 @@ final class UpdateRelaunchTests: XCTestCase {
   func testDoesNotRelaunchWhenApplicationWasNotRunning() async throws {
     let recorder = ProcessRecorder(isRunning: false)
     try await UpdateRelaunch.perform(
-      makeApplication(source: .tauri),
+      makeApplication(mechanism: .tauri),
       process: recorder.client,
       progress: { _ in },
       operation: {}
@@ -20,7 +20,7 @@ final class UpdateRelaunchTests: XCTestCase {
 
   func testRelaunchesWhenApplicationWasRunning() async throws {
     let recorder = ProcessRecorder(isRunning: true)
-    let application = makeApplication(source: .tauri)
+    let application = makeApplication(mechanism: .tauri)
     try await UpdateRelaunch.perform(
       application,
       process: recorder.client,
@@ -33,7 +33,7 @@ final class UpdateRelaunchTests: XCTestCase {
   }
 
   func testDoesNotTreatMissingApplicationBundleAsRunning() async {
-    let application = makeApplication(source: .sparkle)
+    let application = makeApplication(mechanism: .sparkle)
     XCTAssertTrue(ApplicationProcess.processIDs(inside: application.applicationURL).isEmpty)
     let isRunning = await ApplicationProcess.isRunning(application)
     XCTAssertFalse(isRunning)
@@ -91,7 +91,8 @@ final class UpdateRelaunchTests: XCTestCase {
       name: "Demo",
       bundleIdentifier: "com.example.demo",
       applicationURL: applicationURL,
-      currentVersion: "1.0"
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
     )
     let isRunning = await ApplicationProcess.isRunning(application)
     XCTAssertFalse(isRunning, "An orphaned helper must not cause the main app to relaunch")
@@ -110,11 +111,14 @@ final class UpdateRelaunchTests: XCTestCase {
       .appendingPathComponent("UpkeepMainProcess-\(UUID().uuidString)")
     let applicationURL = root.appendingPathComponent("Renamed.app")
     let executable = applicationURL.appendingPathComponent("Contents/MacOS/ActualExecutable")
-    try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(),
+    try FileManager.default.createDirectory(
+      at: executable.deletingLastPathComponent(),
       withIntermediateDirectories: true)
     try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: executable)
-    let info: [String: Any] = ["CFBundleIdentifier": "com.example.main",
-      "CFBundleExecutable": "ActualExecutable", "CFBundlePackageType": "APPL"]
+    let info: [String: Any] = [
+      "CFBundleIdentifier": "com.example.main",
+      "CFBundleExecutable": "ActualExecutable", "CFBundlePackageType": "APPL",
+    ]
     try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
       .write(to: applicationURL.appendingPathComponent("Contents/Info.plist"))
     let process = Process()
@@ -125,8 +129,13 @@ final class UpdateRelaunchTests: XCTestCase {
       if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
       try? FileManager.default.removeItem(at: root)
     }
-    let application = AppRecord(name: "Display Name", bundleIdentifier: "com.example.main",
-      applicationURL: applicationURL, currentVersion: "1.0")
+    let application = AppRecord(
+      name: "Display Name",
+      bundleIdentifier: "com.example.main",
+      applicationURL: applicationURL,
+      currentVersion: "1.0",
+      updateConfiguration: UpdateConfiguration(mechanism: .selfManaged)
+    )
     var running = false
     for _ in 0..<20 {
       running = await ApplicationProcess.isRunning(application)
@@ -141,7 +150,7 @@ final class UpdateRelaunchTests: XCTestCase {
 
   func testQuitsHomebrewApplicationBeforeUpdatingThenRelaunches() async throws {
     let recorder = ProcessRecorder(isRunning: true)
-    let application = makeApplication(source: .homebrew)
+    let application = makeApplication(mechanism: .homebrew)
     try await UpdateRelaunch.perform(
       application,
       process: recorder.client,
@@ -161,7 +170,7 @@ final class UpdateRelaunchTests: XCTestCase {
 
   func testRelaunchesRunningApplicationWhenUpdateFails() async throws {
     let recorder = ProcessRecorder(isRunning: true)
-    let application = makeApplication(source: .electronBuilder)
+    let application = makeApplication(mechanism: .electronBuilder)
 
     do {
       try await UpdateRelaunch.perform(
@@ -183,18 +192,19 @@ final class UpdateRelaunchTests: XCTestCase {
     let recorder = ProcessRecorder(isRunning: false)
     var process = recorder.client
     process.hasRunningProcesses = { _ in true }
-    let application = makeApplication(source: .homebrew)
-    try await UpdateRelaunch.perform(application, process: process, progress: { _ in }, operation: {})
+    let application = makeApplication(mechanism: .homebrew)
+    try await UpdateRelaunch.perform(
+      application, process: process, progress: { _ in }, operation: {})
     XCTAssertEqual(recorder.events(), [.quit(application.bundleIdentifier)])
   }
 
-  private func makeApplication(source: UpdateSource) -> AppRecord {
+  private func makeApplication(mechanism: UpdateMechanism) -> AppRecord {
     AppRecord(
       name: "Example",
       bundleIdentifier: "com.example.app",
       applicationURL: URL(fileURLWithPath: "/Applications/Example.app"),
       currentVersion: "1.0",
-      source: source
+      updateConfiguration: UpdateConfiguration(mechanism: mechanism)
     )
   }
 }

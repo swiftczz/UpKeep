@@ -1,12 +1,13 @@
 import Foundation
 
 struct MacAppStoreUpdateProvider: Sendable {
-  typealias StartUpdate = @Sendable (
-    _ adamID: UInt64,
-    _ applicationURL: URL,
-    _ progress: (@Sendable (UpdateProgress) -> Void)?,
-    _ completion: @escaping @Sendable (String?, NSError?) -> Void
-  ) -> Void
+  typealias StartUpdate =
+    @Sendable (
+      _ adamID: UInt64,
+      _ applicationURL: URL,
+      _ progress: (@Sendable (UpdateProgress) -> Void)?,
+      _ completion: @escaping @Sendable (String?, NSError?) -> Void
+    ) -> Void
 
   private let availability: @Sendable () -> Bool
   private let startUpdate: StartUpdate
@@ -46,7 +47,8 @@ struct MacAppStoreUpdateProvider: Sendable {
     }
 
     progress(.indeterminate("正在准备更新…"))
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, any Error>) in
       startUpdate(
         adamID,
         application.applicationURL,
@@ -66,13 +68,13 @@ struct MacAppStoreUpdateProvider: Sendable {
   }
 
   static func adamIdentifier(for application: AppRecord) -> UInt64? {
-    if let sourceIdentifier = application.sourceIdentifier,
+    if let sourceIdentifier = application.updateConfiguration.identifier,
       let identifier = UInt64(sourceIdentifier)
     {
       return identifier
     }
 
-    guard let sourceURL = application.sourceURL else {
+    guard let sourceURL = application.updateConfiguration.feedURL else {
       return nil
     }
     return sourceURL.pathComponents.reversed().lazy.compactMap { component in
