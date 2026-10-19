@@ -13,22 +13,33 @@ enum ElectronBuilderDetector {
       resourcesURL.appendingPathComponent("app-update.yml"),
       resourcesURL.appendingPathComponent("app-update.yaml"),
     ]
-    var hasEmptyGenericFeed = false
+    var hasPlaceholderGenericFeed = false
 
     for configurationURL in candidateURLs {
-      guard let configuration = try? String(contentsOf: configurationURL, encoding: .utf8) else {
+      guard let configuration = try? String(contentsOf: configurationURL, encoding: .utf8)
+      else {
         continue
       }
       if let metadata = metadata(from: configuration) { return metadata }
       if let values = ElectronBuilderYAML.flatValues(in: configuration),
         values["provider"]?.lowercased() == "generic",
-        values["url"]?.nonBlankYAMLValue == nil, !isTruthy(values["private"])
+        isPlaceholderFeed(values["url"]?.nonBlankYAMLValue), !isTruthy(values["private"])
       {
-        hasEmptyGenericFeed = true
+        hasPlaceholderGenericFeed = true
       }
     }
 
-    return hasEmptyGenericFeed ? ElectronFeedMapDetector.detect(in: bundleURL) : nil
+    guard hasPlaceholderGenericFeed else { return nil }
+    return ElectronFeedMapDetector.detect(in: bundleURL)
+      ?? ElectronServiceManifestDetector.detect(in: bundleURL)
+  }
+
+  private static func isPlaceholderFeed(_ value: String?) -> Bool {
+    guard let value else { return true }
+    guard let url = URL(string: value), url.scheme?.lowercased() == "http",
+      let host = url.host?.lowercased(), url.user == nil, url.password == nil
+    else { return false }
+    return ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host)
   }
 
   static func metadata(from configuration: String) -> ElectronBuilderMetadata? {
@@ -39,7 +50,8 @@ enum ElectronBuilderDetector {
       return nil
     }
 
-    let provider = values["provider"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let provider = values["provider"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
     switch provider {
     case "github":
       return githubMetadata(from: values)
@@ -61,7 +73,8 @@ enum ElectronBuilderDetector {
     let fileName = macYMLFileName(channel: values["channel"]?.nonBlankYAMLValue)
     guard
       let feedURL = SecureUpdateURL.https(
-        string: "https://github.com/\(owner)/\(repository)/releases/latest/download/\(fileName)"
+        string:
+          "https://github.com/\(owner)/\(repository)/releases/latest/download/\(fileName)"
       )
     else {
       return nil
@@ -370,7 +383,8 @@ struct ElectronBuilderManifest: Equatable, Sendable {
         return nil
       }
       let score =
-        ApplicationPackageInstaller.architectureScore(of: fileName, architecture: architecture)
+        ApplicationPackageInstaller.architectureScore(
+          of: fileName, architecture: architecture)
         * 10 + kindScore
       guard let url = resolvedURL(candidate.url, relativeTo: feedURL) else {
         return nil
@@ -402,8 +416,14 @@ struct ElectronBuilderManifest: Equatable, Sendable {
 
 extension String {
   fileprivate var yamlScalar: String {
-    trimmingCharacters(in: .whitespacesAndNewlines)
-      .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+    let value = trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.hasPrefix("\""), value.hasSuffix("\""),
+      let decoded = try? JSONSerialization.jsonObject(
+        with: Data(value.utf8), options: .fragmentsAllowed) as? String
+    {
+      return decoded
+    }
+    return value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
   }
 
   var nonBlankYAMLValue: String? {

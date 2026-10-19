@@ -78,11 +78,78 @@ struct ElectronApplicationArchive {
     return nil
   }
 
+  /// Resolve a literal used by the entry point, including named ESM imports.
+  /// Follow only that binding's import/export chain, never evaluate JavaScript.
+  func mainStringLiteral(named name: String, in package: [String: Any]) -> String? {
+    guard let main = package["main"] as? String else { return nil }
+    let entry = main.hasPrefix("./") ? String(main.dropFirst(2)) : main
+    let identifier = #"[A-Za-z_$][A-Za-z0-9_$]*"#
+    var visited = Set<String>()
+    var remainingBytes = 16 * 1024 * 1024
+
+    func matches(_ pattern: String, in source: String) -> [[String]] {
+      guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+      return regex.matches(in: source, range: NSRange(source.startIndex..., in: source)).map {
+        match in
+        (0..<match.numberOfRanges).map {
+          Range(match.range(at: $0), in: source).map { String(source[$0]) } ?? ""
+        }
+      }
+    }
+
+    func binding(_ name: String, in list: String) -> [String] {
+      list.split(separator: ",").compactMap { item in
+        let parts = matches(
+          #"\A\s*("# + identifier + #")(?:\s+as\s+("# + identifier + #"))?\s*\z"#,
+          in: String(item))
+        guard let pair = parts.first else { return nil }
+        return (pair[2].isEmpty ? pair[1] : pair[2]) == name ? pair[1] : nil
+      }
+    }
+
+    func resolve(_ name: String, at path: String, exported: Bool, depth: Int) -> String? {
+      guard depth <= 4, visited.count < 16,
+        visited.insert(path + ":" + name).inserted,
+        let data = data(for: path, maximumBytes: min(8 * 1024 * 1024, remainingBytes)),
+        let source = String(data: data, encoding: .utf8)
+      else { return nil }
+      remainingBytes -= data.count
+      var local = name
+      if exported {
+        let bindings = matches(#"\bexport\s*\{([^{}]{1,65536})\}"#, in: source)
+          .flatMap { binding(name, in: $0[1]) }
+        guard bindings.count == 1 else { return nil }
+        local = bindings[0]
+      }
+      let literals = matches(
+        #"(?:\b(?:var|let|const)\s+|,)\s*"# + NSRegularExpression.escapedPattern(for: local)
+          + #"\s*=\s*(["'])([^\r\n"'\\]{1,2048})\1(?=\s*[,;})\r\n])"#,
+        in: source)
+      if literals.count == 1 { return literals[0][2] }
+      guard literals.isEmpty else { return nil }
+      let imports = matches(
+        #"\bimport\s*\{([^{}]{1,65536})\}\s*from\s*["']\./([A-Za-z0-9_./-]+\.(?:js|mjs|cjs))["']"#,
+        in: source
+      )
+      .flatMap { module in
+        binding(local, in: module[1]).map { ($0, module[2]) }
+      }
+      guard imports.count == 1 else { return nil }
+      let directory = (path as NSString).deletingLastPathComponent
+      let dependency = directory.isEmpty ? imports[0].1 : directory + "/" + imports[0].1
+      return resolve(imports[0].0, at: dependency, exported: true, depth: depth + 1)
+    }
+    guard name.range(of: #"\A"# + identifier + #"\z"#, options: .regularExpression) != nil
+    else { return nil }
+    return resolve(name, at: entry, exported: false, depth: 0)
+  }
+
   private static func updaterImports(in code: String) -> [String] {
     guard
       let pattern = try? NSRegularExpression(
         pattern:
-          #"\brequire\(\s*["']\./([A-Za-z0-9_-]*update[A-Za-z0-9_.-]*\.(?:js|cjs|mjs))["']\s*\)"#)
+          #"\brequire\(\s*["']\./([A-Za-z0-9_-]*update[A-Za-z0-9_.-]*\.(?:js|cjs|mjs))["']\s*\)"#
+      )
     else { return [] }
     return pattern.matches(in: code, range: NSRange(code.startIndex..., in: code)).compactMap {
       match in
@@ -116,7 +183,9 @@ struct ElectronApplicationArchive {
         let handle = try? FileHandle(forReadingFrom: file)
       else { return nil }
       defer { try? handle.close() }
-      guard let data = try? handle.read(upToCount: size), data.count == size else { return nil }
+      guard let data = try? handle.read(upToCount: size), data.count == size else {
+        return nil
+      }
       return data
     }
     guard let rawOffset = entry["offset"] as? String, let offset = UInt64(rawOffset),

@@ -46,6 +46,8 @@ Electron 应用除了标准更新配置，也支持从 `app.asar` 中按需读�
 
 对于 GigaMoney 等将常规 Electron 更新地址留空的应用，可静态读取内置的品牌与发布通道 JSON 模块。只有品牌 Bundle ID 与当前应用一致、明确使用正式版通道且地址为公开 HTTPS 时，才接入既有 Electron Updater；不执行 JavaScript，不使用其他品牌或测试通道，也不内置下载域名。
 
+对于 ZCode 等使用本地地址占位、运行时改用官网清单的 Electron 应用，可沿入口引用的模块读取正式接口与平台、渠道映射，继续复用 Electron Updater 的版本、说明、下载及校验流程。只读取公开配置，不发送设备标识或登录信息。
+
 Craft 套件通过通用命名规则接入 GitHub Releases：完整 Bundle ID `ai.storyteller.<名称>craft` 对应 `storytold/<名称>craft` 仓库，不依赖应用显示名称。遵循此规则的新增应用会自动识别，无需逐个添加名单。应用已有的更新协议优先使用。
 
 Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 Mac 桌面安装包，排除 CLI、网页及服务器附件；安装时仍校验 Bundle ID 和代码签名。检查结果沿用本地应用缓存；候选源返回 404 时缓存一小时，避免自动检查反复请求，手动刷新会重新验证。无需 ArtCraft Launcher 或其他应用清单接口。
