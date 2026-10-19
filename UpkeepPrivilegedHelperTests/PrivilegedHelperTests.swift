@@ -78,6 +78,11 @@ final class PrivilegedHelperTests: XCTestCase {
 
         let error = fixture.install { launchPath, arguments in
             commands.append((launchPath, arguments))
+            if launchPath == "/usr/sbin/installer" {
+                XCTAssertNotEqual(arguments[2], fixture.packageURL.path)
+                XCTAssertEqual(
+                    try? Data(contentsOf: URL(fileURLWithPath: arguments[2])), Data("package".utf8))
+            }
             return nil
         }
 
@@ -86,8 +91,9 @@ final class PrivilegedHelperTests: XCTestCase {
         XCTAssertEqual(commands[0].0, "/usr/sbin/installer")
         XCTAssertEqual(
             commands[0].1,
-            ["-dumplog", "-pkg", fixture.packageURL.path, "-target", "/"]
+            ["-dumplog", "-pkg", commands[0].1[2], "-target", "/"]
         )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: commands[0].1[2]))
         XCTAssertEqual(commands[1].0, "/usr/bin/mdimport")
         XCTAssertEqual(commands[1].1, [fixture.applicationURL.path])
 

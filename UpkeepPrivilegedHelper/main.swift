@@ -55,6 +55,24 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
         reply()
     }
 
+    func installDeveloperPackage(
+        packagePath: String, applicationPath: String, bundleIdentifier: String,
+        version: String?, buildVersion: String?, withReply reply: @escaping (String?) -> Void
+    ) {
+        guard geteuid() == 0, let connection = NSXPCConnection.current(),
+            PrivilegedTrashPolicy.isAdministrator(connection.effectiveUserIdentifier)
+        else {
+            reply("当前账户没有安装系统更新所需的管理员权限。")
+            return
+        }
+        reply(
+            PrivilegedPackageOperation.install(
+                packageURL: URL(fileURLWithPath: packagePath), receiptURL: nil,
+                applicationURL: URL(fileURLWithPath: applicationPath),
+                bundleIdentifier: bundleIdentifier,
+                version: version, buildVersion: buildVersion, isRoot: true, runCommand: Self.run))
+    }
+
     func canTrashApplications(withReply reply: @escaping (Bool) -> Void) {
         guard let connection = NSXPCConnection.current() else {
             reply(false)
@@ -174,57 +192,11 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
         isRoot: Bool,
         runCommand: (_ launchPath: String, _ arguments: [String]) -> String?
     ) -> String? {
-        guard isRoot else {
-            return "安装助手没有管理员权限。"
-        }
-
-        let packageURL = URL(fileURLWithPath: packagePath).standardizedFileURL
-        let receiptURL = URL(fileURLWithPath: receiptPath).standardizedFileURL
-        let applicationURL = URL(fileURLWithPath: applicationPath).standardizedFileURL
-
-        guard packageURL.pathExtension.lowercased() == "pkg" else {
-            return "App Store 下载包格式不正确。"
-        }
-        guard FileManager.default.fileExists(atPath: packageURL.path) else {
-            return "找不到 App Store 下载包。"
-        }
-        guard receiptURL.lastPathComponent == "receipt",
-            FileManager.default.fileExists(atPath: receiptURL.path)
-        else {
-            return "找不到 App Store 收据文件。"
-        }
-        guard applicationURL.pathExtension == "app" else {
-            return "应用路径不正确。"
-        }
-
-        let installError = runCommand(
-            "/usr/sbin/installer",
-            ["-dumplog", "-pkg", packageURL.path, "-target", "/"]
-        )
-        if let installError {
-            return installError
-        }
-
-        let receiptDirectoryURL = applicationURL.appendingPathComponent(
-            "Contents/_MASReceipt",
-            isDirectory: true
-        )
-        let destinationReceiptURL = receiptDirectoryURL.appendingPathComponent("receipt")
-
-        do {
-            try FileManager.default.createDirectory(
-                at: receiptDirectoryURL,
-                withIntermediateDirectories: true
-            )
-            try? FileManager.default.removeItem(at: destinationReceiptURL)
-            try FileManager.default.copyItem(at: receiptURL, to: destinationReceiptURL)
-            chmod(destinationReceiptURL.path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
-            chown(destinationReceiptURL.path, 0, 0)
-        } catch {
-            return "无法写入 App Store 收据：\(error.localizedDescription)"
-        }
-
-        return runCommand("/usr/bin/mdimport", [applicationURL.path])
+        PrivilegedPackageOperation.install(
+            packageURL: URL(fileURLWithPath: packagePath),
+            receiptURL: URL(fileURLWithPath: receiptPath),
+            applicationURL: URL(fileURLWithPath: applicationPath),
+            isRoot: isRoot, runCommand: runCommand)
     }
 
     static func run(_ launchPath: String, arguments: [String]) -> String? {

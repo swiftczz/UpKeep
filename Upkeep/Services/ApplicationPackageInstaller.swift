@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import UpkeepPrivilegedHelperProtocol
 
 enum ApplicationPackageInstallerError: LocalizedError {
     case insecureDownload
@@ -11,6 +12,7 @@ enum ApplicationPackageInstallerError: LocalizedError {
     case bundleIdentifierMismatch
     case invalidSignature
     case teamIdentifierMismatch
+    case packageInstallerUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -30,10 +32,17 @@ enum ApplicationPackageInstallerError: LocalizedError {
             return "更新包中的应用与当前安装的应用不一致。"
         case .invalidSignature:
             return "更新包的代码签名无效。"
+        case .packageInstallerUnavailable:
+            return "安装助手暂不可用，请在系统设置中允许 Upkeep 后重试。"
         case .teamIdentifierMismatch:
             return "更新包的开发者签名与当前应用不一致。"
         }
     }
+}
+
+enum ApplicationPackageKind {
+    case application
+    case installerPackage
 }
 
 enum ApplicationPackageInstaller {
@@ -47,6 +56,9 @@ enum ApplicationPackageInstaller {
         allowsSparkleKeyRotation: Bool = false,
         requiresValidSignature: Bool = false,
         requiresTeamIdentifier: Bool = false,
+        kind: ApplicationPackageKind = .application,
+        expectedVersion: String? = nil,
+        expectedBuildVersion: String? = nil,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) async throws {
         guard SecureUpdateURL.https(packageURL) != nil else {
@@ -63,6 +75,7 @@ enum ApplicationPackageInstaller {
         let downloadedURL = try await download(
             from: packageURL,
             into: workingDirectory,
+            allowsInstallerPackage: kind == .installerPackage,
             progress: progress
         )
 
@@ -75,6 +88,28 @@ enum ApplicationPackageInstaller {
                 expectedSHA512: expectedSHA512,
                 expectedSHA256: expectedSHA256
             )
+        }
+        if kind == .installerPackage {
+            let package = try extractAndVerifyInstallerPackage(
+                from: downloadedURL,
+                into: workingDirectory.appendingPathComponent("extracted", isDirectory: true),
+                signature: expectedEd25519Signature, publicKey: ed25519PublicKey)
+            progress(.indeterminate("正在验证安装包…"))
+            _ = try DeveloperPackageValidation.validate(
+                packageURL: package, applicationURL: application.applicationURL,
+                bundleIdentifier: application.bundleIdentifier,
+                version: expectedVersion, buildVersion: expectedBuildVersion)
+            try Task.checkCancellation()
+            try await ApplicationProcess.quit(application)
+            switch PrivilegedPackageInstaller.installDownloadedPackage(
+                packageURL: package, applicationURL: application.applicationURL,
+                bundleIdentifier: application.bundleIdentifier,
+                version: expectedVersion, buildVersion: expectedBuildVersion, progress: progress)
+            {
+            case .installed: return
+            case .failed(let error): throw error
+            case .unavailable: throw ApplicationPackageInstallerError.packageInstallerUnavailable
+            }
         }
         progress(.indeterminate("正在解压…"))
         let extractedApplicationURL = try extractAndVerifyApplication(
@@ -335,6 +370,7 @@ enum ApplicationPackageInstaller {
     private static func download(
         from url: URL,
         into directory: URL,
+        allowsInstallerPackage: Bool = false,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) async throws -> URL {
         let downloader = FileDownloadTask(progress: progress)
@@ -348,7 +384,8 @@ enum ApplicationPackageInstaller {
                 guard
                     let fileName = supportedPackageFileName(
                         suggestedFilename: download.suggestedFilename,
-                        sourceURL: url
+                        sourceURL: url,
+                        allowsInstallerPackage: allowsInstallerPackage
                     )
                 else {
                     try? FileManager.default.removeItem(at: download.url)
@@ -380,13 +417,15 @@ enum ApplicationPackageInstaller {
 
     static func supportedPackageFileName(
         suggestedFilename: String?,
-        sourceURL: URL
+        sourceURL: URL,
+        allowsInstallerPackage: Bool = false
     ) -> String? {
         for candidate in [suggestedFilename, sourceURL.lastPathComponent] {
             guard let candidate else { continue }
             let fileName = (candidate as NSString).lastPathComponent
             guard fileName != ".", fileName != "..",
                 packageKindScore(of: fileName) > 0
+                    || (allowsInstallerPackage && fileName.lowercased().hasSuffix(".pkg"))
             else {
                 continue
             }
@@ -420,30 +459,75 @@ enum ApplicationPackageInstaller {
         _ diskImageURL: URL,
         stagingDirectory: URL
     ) throws -> URL {
+        try withDiskImage(diskImageURL, stagingDirectory: stagingDirectory) { mountPoint in
+            guard let application = findApplication(in: mountPoint) else {
+                throw ApplicationPackageInstallerError.missingApplication
+            }
+            let staged = stagingDirectory.appendingPathComponent(application.lastPathComponent)
+            try run("/usr/bin/ditto", [application.path, staged.path])
+            return staged
+        }
+    }
+
+    static func extractAndVerifyInstallerPackage(
+        from archive: URL, into directory: URL, signature: String?, publicKey: String?
+    ) throws -> URL {
+        // Package installers cannot use Sparkle's app-bundle key rotation fallback.
+        guard let signature, let publicKey else {
+            throw ApplicationPackageInstallerError.invalidUpdateSignature
+        }
+        try verifyEd25519Signature(of: archive, signature: signature, publicKey: publicKey)
+        return try extractInstallerPackage(from: archive, into: directory)
+    }
+
+    static func extractInstallerPackage(from archive: URL, into directory: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if archive.pathExtension.lowercased() == "pkg" { return archive }
+        if archive.pathExtension.lowercased() == "dmg" {
+            return try withDiskImage(archive, stagingDirectory: directory) { mountPoint in
+                let package = try installerPackage(in: mountPoint)
+                let staged = directory.appendingPathComponent("update.pkg")
+                try FileManager.default.copyItem(at: package, to: staged)
+                return staged
+            }
+        }
+        if archive.pathExtension.lowercased() == "zip" {
+            try run("/usr/bin/ditto", ["-xk", archive.path, directory.path])
+        } else if isTarArchive(archive.lastPathComponent.lowercased()) {
+            try run("/usr/bin/tar", ["-xf", archive.path, "-C", directory.path])
+        } else {
+            throw ApplicationPackageInstallerError.unsupportedPackage
+        }
+        return try installerPackage(in: directory)
+    }
+
+    private static func installerPackage(in directory: URL) throws -> URL {
+        let packages = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ).filter { $0.pathExtension.lowercased() == "pkg" }
+        guard packages.count == 1, let package = packages.first,
+            let values = try? package.resourceValues(forKeys: [
+                .isRegularFileKey, .isSymbolicLinkKey,
+            ]),
+            values.isRegularFile == true, values.isSymbolicLink != true
+        else { throw ApplicationPackageInstallerError.unsupportedPackage }
+        return package
+    }
+
+    private static func withDiskImage(
+        _ image: URL, stagingDirectory: URL, operation: (URL) throws -> URL
+    ) throws -> URL {
         let mountPoint = stagingDirectory.appendingPathComponent("volume", isDirectory: true)
         try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
-
         try run(
             "/usr/bin/hdiutil",
             [
-                "attach", diskImageURL.path, "-nobrowse", "-readonly", "-noverify",
-                "-mountpoint", mountPoint.path,
-            ]
-        )
-        defer {
-            try? run("/usr/bin/hdiutil", ["detach", mountPoint.path, "-quiet", "-force"])
-        }
-
-        guard let mountedApplicationURL = findApplication(in: mountPoint) else {
-            throw ApplicationPackageInstallerError.missingApplication
-        }
-
-        let stagedURL = stagingDirectory.appendingPathComponent(
-            mountedApplicationURL.lastPathComponent,
-            isDirectory: true
-        )
-        try run("/usr/bin/ditto", [mountedApplicationURL.path, stagedURL.path])
-        return stagedURL
+                "attach", image.path, "-nobrowse", "-readonly", "-noverify", "-mountpoint",
+                mountPoint.path,
+            ])
+        defer { try? run("/usr/bin/hdiutil", ["detach", mountPoint.path, "-quiet", "-force"]) }
+        return try operation(mountPoint)
     }
 
     private static func findApplication(in directory: URL) -> URL? {

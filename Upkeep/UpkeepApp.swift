@@ -13,7 +13,7 @@ struct UpkeepApp: App {
                 .environment(githubAccount)
                 .task {
                     await Task.detached(priority: .utility) {
-                        AppStorePrivilegedInstaller.prepareIfBundled()
+                        PrivilegedPackageInstaller.prepareIfBundled()
                     }.value
                 }
         }

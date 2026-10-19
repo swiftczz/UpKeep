@@ -118,6 +118,9 @@ struct SparkleUpdateProvider: Sendable {
                 : .upToDate
             application.canAutomaticallyUpdate =
                 updateIsAvailable && candidate.supportedPackageURL(relativeTo: feedURL) != nil
+                && (candidate.installationKind != .installerPackage
+                    || ApplicationCodeSigning.sparklePublicEDKey(at: application.applicationURL)
+                        != nil)
         } catch is CancellationError {
             return application
         } catch {
@@ -178,6 +181,9 @@ struct SparkleUpdateProvider: Sendable {
             ),
             allowsSparkleKeyRotation: true,
             requiresTeamIdentifier: true,
+            kind: candidate.installationKind ?? .application,
+            expectedVersion: candidate.shortVersion,
+            expectedBuildVersion: candidate.buildVersion,
             progress: progress
         )
     }
@@ -425,16 +431,32 @@ struct SparkleCandidate: Hashable, Sendable {
         return SecureUpdateURL.https(resolvedURL)
     }
 
-    func supportedPackageURL(relativeTo feedURL: URL) -> URL? {
+    var installationKind: ApplicationPackageKind? {
         let type = installationType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // An installer package inside a DMG/ZIP is not a replaceable app bundle.
-        guard type == nil || type == "application",
-            let url = resolvedDownloadURL(relativeTo: feedURL),
-            ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
-        else {
+        switch type {
+        case "package": return .installerPackage
+        case nil:
+            return downloadURL?.pathExtension.lowercased() == "pkg"
+                ? .installerPackage : .application
+        case "application": return .application
+        default: return nil
+        }
+    }
+
+    func supportedPackageURL(relativeTo feedURL: URL) -> URL? {
+        guard let kind = installationKind, let url = resolvedDownloadURL(relativeTo: feedURL) else {
             return nil
         }
-        return url
+        if kind == .installerPackage {
+            guard edSignature?.nonBlankValue != nil,
+                shortVersion?.nonBlankValue != nil || buildVersion?.nonBlankValue != nil
+            else { return nil }
+            return url.pathExtension.lowercased() == "pkg"
+                || ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
+                ? url : nil
+        }
+        return ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
+            ? url : nil
     }
 
     private func resolvedDownloadURL(relativeTo feedURL: URL) -> URL? {

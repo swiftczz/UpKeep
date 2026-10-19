@@ -54,7 +54,7 @@ Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 M
 
 能否直接安装取决于更新源是否提供兼容的安装包。仅提供更新页面的条目会显示“查看更新”，没有可安装更新的条目可以直接打开应用。
 
-通用安装器支持 ZIP、DMG、`.tar.gz`、`.tgz` 和 `.tar.xz` 应用包。Sparkle 公钥轮换需验证新旧应用的 Developer ID 与原应用的签名要求，再用新公钥验证更新包；应用要求解压前验证时，不走解压后的轮换流程。
+通用安装器支持 ZIP、DMG、`.tar.gz`、`.tgz` 和 `.tar.xz` 应用包。Sparkle 的 PKG 更新（包括 DMG 或归档内的 PKG）复用公共安装助手；解包前验证 Ed25519 签名，安装前验证安装包的 Developer ID、系统信任及目标应用版本，安装后再次核对应用身份和版本。PKG 不使用公钥轮换回退。App Store 同样复用该助手，并额外处理商店收据。Sparkle 公钥轮换需验证新旧应用的 Developer ID 与原应用的签名要求，再用新公钥验证更新包；应用要求解压前验证时，不走解压后的轮换流程。
 
 通过 GitHub 发布页链接读取更新说明时，统一优先读取 API 正文，必要时回退到发布网页的正文区域，过滤仓库导航、Star、标签选择和附件列表。
 
@@ -149,8 +149,8 @@ Upkeep/
       UpdateCoordinator.swift       按机制调度主配置与备用配置
   Store/                            应用列表状态与本地缓存
   Views/                            侧栏、详情与卸载界面
-UpkeepPrivilegedHelper/             App Store pkg 安装与受保护应用卸载助手
-UpkeepPrivilegedHelperProtocol/     主程序与助手共用的 XPC 协议
+UpkeepPrivilegedHelper/             公共 PKG 安装与受保护应用卸载助手
+UpkeepPrivilegedHelperProtocol/     共用的 XPC 协议与安装包校验
 UpkeepTests/                        主程序测试
 UpkeepPrivilegedHelperTests/        后台助手测试
 ```

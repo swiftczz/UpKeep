@@ -4,8 +4,9 @@ import OSLog
 import ServiceManagement
 import UpkeepPrivilegedHelperProtocol
 
-enum AppStorePrivilegedInstaller {
+enum PrivilegedPackageInstaller {
     private static let registeredHelperFingerprintKey =
+        // Preserve the previous registration cache across the shared-service rename.
         "AppStorePrivilegedInstaller.registeredHelperFingerprint"
     // Registration changes must never terminate an installation or trash operation in progress.
     private static let operationLock = NSLock()
@@ -34,8 +35,11 @@ enum AppStorePrivilegedInstaller {
 
     static func installDownloadedPackage(
         packageURL: URL,
-        receiptURL: URL,
+        receiptURL: URL? = nil,
         applicationURL: URL,
+        bundleIdentifier: String? = nil,
+        version: String? = nil,
+        buildVersion: String? = nil,
         progress: @escaping @Sendable (UpdateProgress) -> Void = { _ in }
     ) -> PrivilegedInstallResult {
         operationLock.lock()
@@ -53,6 +57,7 @@ enum AppStorePrivilegedInstaller {
             packageURL: packageURL,
             receiptURL: receiptURL,
             applicationURL: applicationURL,
+            bundleIdentifier: bundleIdentifier, version: version, buildVersion: buildVersion,
             progress: progress
         )
     }
@@ -270,8 +275,9 @@ enum AppStorePrivilegedInstaller {
 
     private static func invokeHelper(
         packageURL: URL,
-        receiptURL: URL,
+        receiptURL: URL?,
         applicationURL: URL,
+        bundleIdentifier: String?, version: String?, buildVersion: String?,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) -> PrivilegedInstallResult {
         let connection = NSXPCConnection(
@@ -305,11 +311,7 @@ enum AppStorePrivilegedInstaller {
                         reply(.failed(helperUnavailableError))
                         return
                     }
-                    proxy.installAppStorePackage(
-                        packagePath: packageURL.path,
-                        receiptPath: receiptURL.path,
-                        applicationPath: applicationURL.path
-                    ) { errorMessage in
+                    let completion: (String?) -> Void = { errorMessage in
                         if let errorMessage, !errorMessage.isEmpty {
                             reply(
                                 .failed(
@@ -321,8 +323,23 @@ enum AppStorePrivilegedInstaller {
                             reply(.installed)
                         }
                     }
+                    if let receiptURL {
+                        proxy.installAppStorePackage(
+                            packagePath: packageURL.path,
+                            receiptPath: receiptURL.path, applicationPath: applicationURL.path,
+                            withReply: completion)
+                    } else if let bundleIdentifier {
+                        proxy.installDeveloperPackage(
+                            packagePath: packageURL.path,
+                            applicationPath: applicationURL.path,
+                            bundleIdentifier: bundleIdentifier,
+                            version: version, buildVersion: buildVersion, withReply: completion)
+                    } else {
+                        completion("缺少目标应用标识。")
+                    }
                 }
-            )
+            ),
+            installationTimeout: receiptURL == nil ? 1500 : 300
         )
     }
 

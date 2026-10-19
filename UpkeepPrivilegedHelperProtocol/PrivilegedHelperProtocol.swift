@@ -23,4 +23,13 @@ public protocol UpkeepPrivilegedHelperProtocol: NSObjectProtocol {
         applicationPath: String,
         withReply reply: @escaping (String?) -> Void
     )
+
+    func installDeveloperPackage(
+        packagePath: String,
+        applicationPath: String,
+        bundleIdentifier: String,
+        version: String?,
+        buildVersion: String?,
+        withReply reply: @escaping (String?) -> Void
+    )
 }

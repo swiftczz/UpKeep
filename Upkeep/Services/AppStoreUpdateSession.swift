@@ -447,7 +447,7 @@ final class AppStoreUpdateSession: NSObject, @unchecked Sendable {
         applicationURL: URL,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) -> NSError? {
-        switch AppStorePrivilegedInstaller.installDownloadedPackage(
+        switch PrivilegedPackageInstaller.installDownloadedPackage(
             packageURL: packageURL,
             receiptURL: receiptURL,
             applicationURL: applicationURL,

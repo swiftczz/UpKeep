@@ -3,18 +3,18 @@ import XCTest
 
 @testable import Upkeep
 
-final class AppStorePrivilegedInstallerTests: XCTestCase {
+final class PrivilegedPackageInstallerTests: XCTestCase {
     func testRegistrationFingerprintIncludesLaunchConfigurationAndApplicationLocation() {
         let helper = Data("signed helper".utf8)
-        let original = AppStorePrivilegedInstaller.registrationFingerprint(
+        let original = PrivilegedPackageInstaller.registrationFingerprint(
             helperData: helper, launchDaemonData: Data("old plist".utf8),
             applicationPath: "/Applications/Upkeep.app"
         )
-        let changedPlist = AppStorePrivilegedInstaller.registrationFingerprint(
+        let changedPlist = PrivilegedPackageInstaller.registrationFingerprint(
             helperData: helper, launchDaemonData: Data("new plist".utf8),
             applicationPath: "/Applications/Upkeep.app"
         )
-        let movedApp = AppStorePrivilegedInstaller.registrationFingerprint(
+        let movedApp = PrivilegedPackageInstaller.registrationFingerprint(
             helperData: helper, launchDaemonData: Data("old plist".utf8),
             applicationPath: "/Users/example/Applications/Upkeep.app"
         )
@@ -25,7 +25,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
     func testRegistrationIsUnavailableWithoutBundledHelper() {
         let state = RegistrationState(status: .disabled)
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies(helperExists: false)
         )
 
@@ -38,7 +38,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
     func testRegistersBundledHelperAndPersistsFingerprint() {
         let state = RegistrationState(status: .disabled)
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies()
         )
 
@@ -56,7 +56,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
             registeredFingerprint: "new-fingerprint"
         )
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies()
         )
 
@@ -73,7 +73,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
             registeredFingerprint: "old-fingerprint"
         )
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies()
         )
 
@@ -88,7 +88,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
     func testReportsSystemApprovalRequirement() {
         let state = RegistrationState(status: .requiresApproval)
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies()
         )
 
@@ -111,7 +111,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
             unregisterError: expected
         )
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies()
         )
 
@@ -128,7 +128,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
             shouldReplyToUnregister: false
         )
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies(),
             unregisterTimeout: 0
         )
@@ -147,7 +147,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
         )
         let state = RegistrationState(status: .disabled, registerError: expected)
 
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(
+        let result = PrivilegedPackageInstaller.registerBundledHelper(
             using: state.dependencies()
         )
 
@@ -159,7 +159,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
         let state = RegistrationState(
             status: .enabled, registeredFingerprint: "new-fingerprint", reachability: [false, true]
         )
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+        let result = PrivilegedPackageInstaller.registerBundledHelper(using: state.dependencies())
         guard case .enabled = result else { return XCTFail("Expected repaired registration") }
         XCTAssertEqual(state.unregisterCallCount, 1)
         XCTAssertEqual(state.registerCallCount, 1)
@@ -170,7 +170,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
         let state = RegistrationState(
             status: .enabled, registeredFingerprint: "new-fingerprint", reachability: [false]
         )
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+        let result = PrivilegedPackageInstaller.registerBundledHelper(using: state.dependencies())
         XCTAssertEqual(result.error?.code, 7)
         XCTAssertEqual(state.unregisterCallCount, 1)
         XCTAssertEqual(state.registerCallCount, 1)
@@ -181,7 +181,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
         let state = RegistrationState(
             status: .enabled, registeredFingerprint: "old-fingerprint", reachability: [false]
         )
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+        let result = PrivilegedPackageInstaller.registerBundledHelper(using: state.dependencies())
         XCTAssertEqual(result.error?.code, 7)
         XCTAssertEqual(state.registeredFingerprint, "old-fingerprint")
         XCTAssertEqual(state.probeCallCount, 1)
@@ -189,14 +189,14 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
 
     func testFreshRegistrationMustAnswerBeforeItIsMarkedReady() {
         let state = RegistrationState(status: .disabled, reachability: [false])
-        let result = AppStorePrivilegedInstaller.registerBundledHelper(using: state.dependencies())
+        let result = PrivilegedPackageInstaller.registerBundledHelper(using: state.dependencies())
         XCTAssertEqual(result.error?.code, 7)
         XCTAssertNil(state.registeredFingerprint)
     }
 
     func testUnresponsiveConnectionDoesNotSubmitAnInstallation() {
         var installed = false
-        let result = AppStorePrivilegedInstaller.sendInstallRequest(
+        let result = PrivilegedPackageInstaller.sendInstallRequest(
             using: PrivilegedHelperConnectionDependencies(
                 ping: { _ in }, install: { _ in installed = true }
             ),
@@ -210,7 +210,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
     }
 
     func testRejectedConnectionDoesNotSubmitAnInstallation() {
-        let result = AppStorePrivilegedInstaller.sendInstallRequest(
+        let result = PrivilegedPackageInstaller.sendInstallRequest(
             using: PrivilegedHelperConnectionDependencies(
                 ping: { $0(false) }, install: { _ in XCTFail("Must not install") }
             )
@@ -223,7 +223,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
 
     func testConnectedHelperInstallsExactlyOnce() {
         var installs = 0
-        let result = AppStorePrivilegedInstaller.sendInstallRequest(
+        let result = PrivilegedPackageInstaller.sendInstallRequest(
             using: PrivilegedHelperConnectionDependencies(
                 ping: { $0(true) },
                 install: { reply in
@@ -238,7 +238,7 @@ final class AppStorePrivilegedInstallerTests: XCTestCase {
 
     func testInstallationTimeoutReportsUncertainOutcomeWithoutRetrying() {
         var installs = 0
-        let result = AppStorePrivilegedInstaller.sendInstallRequest(
+        let result = PrivilegedPackageInstaller.sendInstallRequest(
             using: PrivilegedHelperConnectionDependencies(
                 ping: { $0(true) }, install: { _ in installs += 1 }
             ),

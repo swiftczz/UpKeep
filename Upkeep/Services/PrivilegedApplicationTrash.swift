@@ -32,7 +32,7 @@ enum PrivilegedApplicationTrash {
     private static func prepareHelper() async throws -> Bool {
         try await Task.detached(priority: .userInitiated) {
             guard PrivilegedTrashPolicy.isAdministrator(geteuid()) else { return false }
-            return try AppStorePrivilegedInstaller.withRegisteredHelper {
+            return try PrivilegedPackageInstaller.withRegisteredHelper {
                 try request { proxy, reply in
                     proxy.canTrashApplications { reply(.success($0)) }
                 }
@@ -71,7 +71,7 @@ enum PrivilegedApplicationTrash {
     private static func moveUsingHelper(_ urls: [URL]) async throws {
         try await Task.detached(priority: .userInitiated) {
             try prepareTrashDirectory()
-            let moved = try AppStorePrivilegedInstaller.withRegisteredHelper {
+            let moved = try PrivilegedPackageInstaller.withRegisteredHelper {
                 try request { proxy, reply in
                     proxy.trashApplications(paths: urls.map(\.path)) { message in
                         if let message {
