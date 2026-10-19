@@ -4,386 +4,386 @@ import XCTest
 @testable import Upkeep
 
 final class SparkleAppcastParserTests: XCTestCase {
-  func testInstallerDMGIsNotTreatedAsReplaceableApplication() async throws {
-    let feed = URL(string: "https://example.com/appcast.xml")!
-    let xml = """
-      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
-        <item><title>Version 2.20</title><sparkle:version>2626</sparkle:version>
-          <description>AdGuard update notes</description>
-          <enclosure url="https://example.com/AdGuard.dmg" sparkle:installationType="package" />
-        </item>
-      </channel></rss>
-      """
-    let candidate = try XCTUnwrap(SparkleAppcastParser(data: Data(xml.utf8)).parse().first)
-    XCTAssertEqual(candidate.installationType, "package")
-    XCTAssertTrue(candidate.hasSecureDownload(relativeTo: feed))
-    XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
-    let provider = SparkleUpdateProvider(fetchData: { _ in Data(xml.utf8) })
-    let result = await provider.check(
-      AppRecord(
-        name: "AdGuard",
-        bundleIdentifier: "com.adguard.mac.adguard",
-        applicationURL: URL(fileURLWithPath: "/Applications/AdGuard.app"),
-        currentVersion: "2.19",
-        updateConfiguration: UpdateConfiguration(mechanism: .sparkle, feedURL: feed),
-        status: .updateAvailable,
-        latestVersion: "2.20",
-        canAutomaticallyUpdate: true
-      ))
-    XCTAssertEqual(result.status, .updateAvailable)
-    XCTAssertEqual(result.latestVersion, "2.20")
-    XCTAssertEqual(result.releaseNotes, "AdGuard update notes")
-    XCTAssertFalse(result.canAutomaticallyUpdate)
-  }
-
-  func testApplicationDMGRemainsInstallableAndOtherInstallerTypesAreRejected() {
-    let feed = URL(string: "https://example.com/appcast.xml")!
-    for type in [nil, "application", " APPLICATION "] as [String?] {
-      let candidate = SparkleCandidate(
-        downloadURL: URL(string: "https://example.com/App.dmg"),
-        installationType: type)
-      XCTAssertNotNil(candidate.supportedPackageURL(relativeTo: feed))
+    func testInstallerDMGIsNotTreatedAsReplaceableApplication() async throws {
+        let feed = URL(string: "https://example.com/appcast.xml")!
+        let xml = """
+            <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
+              <item><title>Version 2.20</title><sparkle:version>2626</sparkle:version>
+                <description>AdGuard update notes</description>
+                <enclosure url="https://example.com/AdGuard.dmg" sparkle:installationType="package" />
+              </item>
+            </channel></rss>
+            """
+        let candidate = try XCTUnwrap(SparkleAppcastParser(data: Data(xml.utf8)).parse().first)
+        XCTAssertEqual(candidate.installationType, "package")
+        XCTAssertTrue(candidate.hasSecureDownload(relativeTo: feed))
+        XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
+        let provider = SparkleUpdateProvider(fetchData: { _ in Data(xml.utf8) })
+        let result = await provider.check(
+            AppRecord(
+                name: "AdGuard",
+                bundleIdentifier: "com.adguard.mac.adguard",
+                applicationURL: URL(fileURLWithPath: "/Applications/AdGuard.app"),
+                currentVersion: "2.19",
+                updateConfiguration: UpdateConfiguration(mechanism: .sparkle, feedURL: feed),
+                status: .updateAvailable,
+                latestVersion: "2.20",
+                canAutomaticallyUpdate: true
+            ))
+        XCTAssertEqual(result.status, .updateAvailable)
+        XCTAssertEqual(result.latestVersion, "2.20")
+        XCTAssertEqual(result.releaseNotes, "AdGuard update notes")
+        XCTAssertFalse(result.canAutomaticallyUpdate)
     }
-    for type in ["package", "guided-package", "unknown"] {
-      let candidate = SparkleCandidate(
-        downloadURL: URL(string: "https://example.com/App.zip"),
-        installationType: type)
-      XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
+
+    func testApplicationDMGRemainsInstallableAndOtherInstallerTypesAreRejected() {
+        let feed = URL(string: "https://example.com/appcast.xml")!
+        for type in [nil, "application", " APPLICATION "] as [String?] {
+            let candidate = SparkleCandidate(
+                downloadURL: URL(string: "https://example.com/App.dmg"),
+                installationType: type)
+            XCTAssertNotNil(candidate.supportedPackageURL(relativeTo: feed))
+        }
+        for type in ["package", "guided-package", "unknown"] {
+            let candidate = SparkleCandidate(
+                downloadURL: URL(string: "https://example.com/App.zip"),
+                installationType: type)
+            XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
+        }
     }
-  }
 
-  func testResomarkInformationalUpdateKeepsItsWebsiteLink() throws {
-    let xml = """
-      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-        <channel>
-          <link>https://update.resomark.com/appcast.xml</link>
-          <item>
-            <title>Resomark 1.0 Private Beta</title>
-            <sparkle:version>1503</sparkle:version>
-            <sparkle:shortVersionString>0.6.10</sparkle:shortVersionString>
-            <link>https://resomark.com/private-beta?ref=updater&amp;from=0.6.9</link>
-          </item>
-          <item>
-            <sparkle:version>1502</sparkle:version>
-            <sparkle:shortVersionString>0.6.9</sparkle:shortVersionString>
-            <enclosure url="https://update.resomark.com/Resomark_v0.6.9.dmg" />
-          </item>
-        </channel>
-      </rss>
-      """
-    let parser = SparkleAppcastParser(data: Data(xml.utf8))
-    let candidate = try XCTUnwrap(SparkleUpdateProvider.bestCandidate(from: parser.parse()))
-    let feedURL = try XCTUnwrap(URL(string: "https://update.resomark.com/appcast.xml"))
-    XCTAssertEqual(candidate.displayVersion, "0.6.10")
-    XCTAssertEqual(candidate.buildVersion, "1503")
-    XCTAssertNil(candidate.supportedPackageURL(relativeTo: feedURL))
-    XCTAssertEqual(
-      candidate.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
-      "https://resomark.com/private-beta?ref=updater&from=0.6.9"
-    )
-    XCTAssertEqual(parser.homepageURL, feedURL)
-  }
-
-  func testManualUpdateLinksRequireHTTPSAndDoNotOverridePackages() throws {
-    let feedURL = try XCTUnwrap(URL(string: "https://example.com/releases/appcast.xml"))
-    for value in ["http://example.com/update", "file:///tmp/App.app", "javascript:alert(1)"] {
-      let candidate = SparkleCandidate(updatePageURL: URL(string: value))
-      XCTAssertNil(candidate.manualUpdateURL(relativeTo: feedURL))
+    func testResomarkInformationalUpdateKeepsItsWebsiteLink() throws {
+        let xml = """
+            <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+              <channel>
+                <link>https://update.resomark.com/appcast.xml</link>
+                <item>
+                  <title>Resomark 1.0 Private Beta</title>
+                  <sparkle:version>1503</sparkle:version>
+                  <sparkle:shortVersionString>0.6.10</sparkle:shortVersionString>
+                  <link>https://resomark.com/private-beta?ref=updater&amp;from=0.6.9</link>
+                </item>
+                <item>
+                  <sparkle:version>1502</sparkle:version>
+                  <sparkle:shortVersionString>0.6.9</sparkle:shortVersionString>
+                  <enclosure url="https://update.resomark.com/Resomark_v0.6.9.dmg" />
+                </item>
+              </channel>
+            </rss>
+            """
+        let parser = SparkleAppcastParser(data: Data(xml.utf8))
+        let candidate = try XCTUnwrap(SparkleUpdateProvider.bestCandidate(from: parser.parse()))
+        let feedURL = try XCTUnwrap(URL(string: "https://update.resomark.com/appcast.xml"))
+        XCTAssertEqual(candidate.displayVersion, "0.6.10")
+        XCTAssertEqual(candidate.buildVersion, "1503")
+        XCTAssertNil(candidate.supportedPackageURL(relativeTo: feedURL))
+        XCTAssertEqual(
+            candidate.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
+            "https://resomark.com/private-beta?ref=updater&from=0.6.9"
+        )
+        XCTAssertEqual(parser.homepageURL, feedURL)
     }
-    let relative = SparkleCandidate(updatePageURL: URL(string: "next"))
-    XCTAssertEqual(
-      relative.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
-      "https://example.com/releases/next")
-    let downloadable = SparkleCandidate(
-      updatePageURL: URL(string: "https://example.com/update"),
-      downloadURL: URL(string: "https://example.com/App.dmg")
-    )
-    XCTAssertNil(downloadable.manualUpdateURL(relativeTo: feedURL))
-    XCTAssertNotNil(downloadable.supportedPackageURL(relativeTo: feedURL))
-  }
 
-  func testParsesVersionAndReleaseNotesMetadata() throws {
-    let xml = """
-      <?xml version="1.0" encoding="utf-8"?>
-      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-        <channel>
-          <link>https://example.com/app</link>
-          <item>
-            <title>Version 2.4</title>
-            <pubDate>Thu, 20 Aug 2026 12:00:00 +0000</pubDate>
-            <description><![CDATA[<p>Faster update checks.</p>]]></description>
-            <sparkle:releaseNotesLink>https://example.com/notes</sparkle:releaseNotesLink>
-            <enclosure
-              url="https://example.com/App.zip"
-              length="2048576"
-              sparkle:version="240"
-              sparkle:shortVersionString="2.4"
-              sparkle:minimumSystemVersion="26.0"
-              sparkle:os="macos"
-              sparkle:edSignature="signed-update"
-            />
-          </item>
-        </channel>
-      </rss>
-      """
+    func testManualUpdateLinksRequireHTTPSAndDoNotOverridePackages() throws {
+        let feedURL = try XCTUnwrap(URL(string: "https://example.com/releases/appcast.xml"))
+        for value in ["http://example.com/update", "file:///tmp/App.app", "javascript:alert(1)"] {
+            let candidate = SparkleCandidate(updatePageURL: URL(string: value))
+            XCTAssertNil(candidate.manualUpdateURL(relativeTo: feedURL))
+        }
+        let relative = SparkleCandidate(updatePageURL: URL(string: "next"))
+        XCTAssertEqual(
+            relative.manualUpdateURL(relativeTo: feedURL)?.absoluteString,
+            "https://example.com/releases/next")
+        let downloadable = SparkleCandidate(
+            updatePageURL: URL(string: "https://example.com/update"),
+            downloadURL: URL(string: "https://example.com/App.dmg")
+        )
+        XCTAssertNil(downloadable.manualUpdateURL(relativeTo: feedURL))
+        XCTAssertNotNil(downloadable.supportedPackageURL(relativeTo: feedURL))
+    }
 
-    let parser = SparkleAppcastParser(data: Data(xml.utf8))
-    let candidate = try XCTUnwrap(parser.parse().first)
+    func testParsesVersionAndReleaseNotesMetadata() throws {
+        let xml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+              <channel>
+                <link>https://example.com/app</link>
+                <item>
+                  <title>Version 2.4</title>
+                  <pubDate>Thu, 20 Aug 2026 12:00:00 +0000</pubDate>
+                  <description><![CDATA[<p>Faster update checks.</p>]]></description>
+                  <sparkle:releaseNotesLink>https://example.com/notes</sparkle:releaseNotesLink>
+                  <enclosure
+                    url="https://example.com/App.zip"
+                    length="2048576"
+                    sparkle:version="240"
+                    sparkle:shortVersionString="2.4"
+                    sparkle:minimumSystemVersion="26.0"
+                    sparkle:os="macos"
+                    sparkle:edSignature="signed-update"
+                  />
+                </item>
+              </channel>
+            </rss>
+            """
 
-    XCTAssertEqual(parser.homepageURL?.absoluteString, "https://example.com/app")
-    XCTAssertEqual(candidate.shortVersion, "2.4")
-    XCTAssertEqual(candidate.displayVersion, "2.4")
-    XCTAssertEqual(candidate.buildVersion, "240")
-    XCTAssertEqual(candidate.minimumSystemVersion, "26.0")
-    XCTAssertEqual(candidate.operatingSystem, "macos")
-    XCTAssertEqual(candidate.downloadURL?.absoluteString, "https://example.com/App.zip")
-    XCTAssertEqual(candidate.packageByteCount, 2_048_576)
-    XCTAssertEqual(candidate.releaseNotesURL?.absoluteString, "https://example.com/notes")
-    XCTAssertEqual(candidate.publicationDate, "Thu, 20 Aug 2026 12:00:00 +0000")
-    XCTAssertEqual(candidate.edSignature, "signed-update")
-    XCTAssertNil(candidate.channel)
-  }
+        let parser = SparkleAppcastParser(data: Data(xml.utf8))
+        let candidate = try XCTUnwrap(parser.parse().first)
 
-  func testIgnoresSparkleBetaChannelAndPrereleaseItems() throws {
-    let xml = """
-      <?xml version="1.0" encoding="utf-8"?>
-      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-        <channel>
-          <item>
-            <title>v4.2.1</title>
-            <sparkle:version>99</sparkle:version>
-            <sparkle:shortVersionString>4.2.1</sparkle:shortVersionString>
-            <enclosure url="https://example.com/MacShot-4.2.1.dmg" />
-          </item>
-          <item>
-            <title>v4.2.2-beta.2</title>
-            <sparkle:version>101</sparkle:version>
-            <sparkle:shortVersionString>4.2.2-beta.2</sparkle:shortVersionString>
-            <sparkle:channel>beta</sparkle:channel>
-            <enclosure url="https://example.com/MacShot-4.2.2-beta.2.dmg" />
-          </item>
-        </channel>
-      </rss>
-      """
+        XCTAssertEqual(parser.homepageURL?.absoluteString, "https://example.com/app")
+        XCTAssertEqual(candidate.shortVersion, "2.4")
+        XCTAssertEqual(candidate.displayVersion, "2.4")
+        XCTAssertEqual(candidate.buildVersion, "240")
+        XCTAssertEqual(candidate.minimumSystemVersion, "26.0")
+        XCTAssertEqual(candidate.operatingSystem, "macos")
+        XCTAssertEqual(candidate.downloadURL?.absoluteString, "https://example.com/App.zip")
+        XCTAssertEqual(candidate.packageByteCount, 2_048_576)
+        XCTAssertEqual(candidate.releaseNotesURL?.absoluteString, "https://example.com/notes")
+        XCTAssertEqual(candidate.publicationDate, "Thu, 20 Aug 2026 12:00:00 +0000")
+        XCTAssertEqual(candidate.edSignature, "signed-update")
+        XCTAssertNil(candidate.channel)
+    }
 
-    let candidates = try SparkleAppcastParser(data: Data(xml.utf8)).parse()
-    XCTAssertEqual(candidates.map(\.channel), [nil, "beta"])
+    func testIgnoresSparkleBetaChannelAndPrereleaseItems() throws {
+        let xml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+              <channel>
+                <item>
+                  <title>v4.2.1</title>
+                  <sparkle:version>99</sparkle:version>
+                  <sparkle:shortVersionString>4.2.1</sparkle:shortVersionString>
+                  <enclosure url="https://example.com/MacShot-4.2.1.dmg" />
+                </item>
+                <item>
+                  <title>v4.2.2-beta.2</title>
+                  <sparkle:version>101</sparkle:version>
+                  <sparkle:shortVersionString>4.2.2-beta.2</sparkle:shortVersionString>
+                  <sparkle:channel>beta</sparkle:channel>
+                  <enclosure url="https://example.com/MacShot-4.2.2-beta.2.dmg" />
+                </item>
+              </channel>
+            </rss>
+            """
 
-    let candidate = try XCTUnwrap(SparkleUpdateProvider.bestCandidate(from: candidates))
-    XCTAssertEqual(candidate.shortVersion, "4.2.1")
-    XCTAssertEqual(candidate.buildVersion, "99")
-    XCTAssertNil(candidate.channel)
-  }
+        let candidates = try SparkleAppcastParser(data: Data(xml.utf8)).parse()
+        XCTAssertEqual(candidates.map(\.channel), [nil, "beta"])
 
-  func testIgnoresItemLinkWhenReadingHomepage() throws {
-    let xml = """
-      <?xml version="1.0" encoding="utf-8"?>
-      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-        <channel>
-          <link>https://example.com/home</link>
-          <item>
-            <title>Version 1.1</title>
-            <link>https://example.com/releases/1.1</link>
-            <enclosure url="https://example.com/App.zip" sparkle:shortVersionString="1.1" />
-          </item>
-        </channel>
-      </rss>
-      """
+        let candidate = try XCTUnwrap(SparkleUpdateProvider.bestCandidate(from: candidates))
+        XCTAssertEqual(candidate.shortVersion, "4.2.1")
+        XCTAssertEqual(candidate.buildVersion, "99")
+        XCTAssertNil(candidate.channel)
+    }
 
-    let parser = SparkleAppcastParser(data: Data(xml.utf8))
-    _ = try parser.parse()
+    func testIgnoresItemLinkWhenReadingHomepage() throws {
+        let xml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+              <channel>
+                <link>https://example.com/home</link>
+                <item>
+                  <title>Version 1.1</title>
+                  <link>https://example.com/releases/1.1</link>
+                  <enclosure url="https://example.com/App.zip" sparkle:shortVersionString="1.1" />
+                </item>
+              </channel>
+            </rss>
+            """
 
-    XCTAssertEqual(parser.homepageURL?.absoluteString, "https://example.com/home")
-  }
+        let parser = SparkleAppcastParser(data: Data(xml.utf8))
+        _ = try parser.parse()
 
-  func testIgnoresUnchanneledPrereleaseVersion() {
-    let stable = SparkleCandidate(shortVersion: "1.0.0", buildVersion: "10")
-    let beta = SparkleCandidate(shortVersion: "1.1.0-beta.1", buildVersion: "11")
+        XCTAssertEqual(parser.homepageURL?.absoluteString, "https://example.com/home")
+    }
 
-    let candidate = SparkleUpdateProvider.bestCandidate(from: [stable, beta])
-    XCTAssertEqual(candidate?.shortVersion, "1.0.0")
-  }
+    func testIgnoresUnchanneledPrereleaseVersion() {
+        let stable = SparkleCandidate(shortVersion: "1.0.0", buildVersion: "10")
+        let beta = SparkleCandidate(shortVersion: "1.1.0-beta.1", buildVersion: "11")
 
-  func testParsesUnixTimestampPublicationDate() throws {
-    let date = try XCTUnwrap(SparkleUpdateProvider.parsePublicationDate("1786372688"))
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let candidate = SparkleUpdateProvider.bestCandidate(from: [stable, beta])
+        XCTAssertEqual(candidate?.shortVersion, "1.0.0")
+    }
 
-    let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-    XCTAssertEqual(components.year, 2026)
-    XCTAssertEqual(components.month, 8)
-    XCTAssertEqual(components.day, 10)
-    XCTAssertEqual(components.hour, 14)
-    XCTAssertEqual(components.minute, 38)
-  }
+    func testParsesUnixTimestampPublicationDate() throws {
+        let date = try XCTUnwrap(SparkleUpdateProvider.parsePublicationDate("1786372688"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
-  func testParsesJavaScriptStyleGMTOffsetPublicationDate() throws {
-    let date = try XCTUnwrap(
-      SparkleUpdateProvider.parsePublicationDate("Wed, 12 Aug 2026 22:08:10 GMT+0200")
-    )
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 8)
+        XCTAssertEqual(components.day, 10)
+        XCTAssertEqual(components.hour, 14)
+        XCTAssertEqual(components.minute, 38)
+    }
 
-    let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-    XCTAssertEqual(components.year, 2026)
-    XCTAssertEqual(components.month, 8)
-    XCTAssertEqual(components.day, 12)
-    XCTAssertEqual(components.hour, 20)
-    XCTAssertEqual(components.minute, 8)
-  }
+    func testParsesJavaScriptStyleGMTOffsetPublicationDate() throws {
+        let date = try XCTUnwrap(
+            SparkleUpdateProvider.parsePublicationDate("Wed, 12 Aug 2026 22:08:10 GMT+0200")
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
-  func testParsesCTimeStylePublicationDateWithNamedTimeZone() throws {
-    let date = try XCTUnwrap(
-      SparkleUpdateProvider.parsePublicationDate("Mon Aug 3 18:18:39 CEST 2026")
-    )
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 8)
+        XCTAssertEqual(components.day, 12)
+        XCTAssertEqual(components.hour, 20)
+        XCTAssertEqual(components.minute, 8)
+    }
 
-    let components = calendar.dateComponents(
-      [.year, .month, .day, .hour, .minute],
-      from: date
-    )
-    XCTAssertEqual(components.year, 2026)
-    XCTAssertEqual(components.month, 8)
-    XCTAssertEqual(components.day, 3)
-    XCTAssertEqual(components.hour, 16)
-    XCTAssertEqual(components.minute, 18)
-  }
+    func testParsesCTimeStylePublicationDateWithNamedTimeZone() throws {
+        let date = try XCTUnwrap(
+            SparkleUpdateProvider.parsePublicationDate("Mon Aug 3 18:18:39 CEST 2026")
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
-  func testParsesCTimeStylePublicationDateWithTwoDigitDay() throws {
-    let date = try XCTUnwrap(
-      SparkleUpdateProvider.parsePublicationDate("Tue Jun 23 15:23:58 CEST 2026")
-    )
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = calendar.dateComponents(
+            [.year, .month, .day, .hour, .minute],
+            from: date
+        )
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 8)
+        XCTAssertEqual(components.day, 3)
+        XCTAssertEqual(components.hour, 16)
+        XCTAssertEqual(components.minute, 18)
+    }
 
-    let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
-    XCTAssertEqual(components.year, 2026)
-    XCTAssertEqual(components.month, 6)
-    XCTAssertEqual(components.day, 23)
-    XCTAssertEqual(components.hour, 13)
-  }
+    func testParsesCTimeStylePublicationDateWithTwoDigitDay() throws {
+        let date = try XCTUnwrap(
+            SparkleUpdateProvider.parsePublicationDate("Tue Jun 23 15:23:58 CEST 2026")
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
-  func testParsesGMTPublicationDate() throws {
-    let date = try XCTUnwrap(
-      SparkleUpdateProvider.parsePublicationDate("Thu, 20 Aug 2026 12:00:00 GMT")
-    )
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 6)
+        XCTAssertEqual(components.day, 23)
+        XCTAssertEqual(components.hour, 13)
+    }
 
-    let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
-    XCTAssertEqual(components.year, 2026)
-    XCTAssertEqual(components.month, 8)
-    XCTAssertEqual(components.day, 20)
-    XCTAssertEqual(components.hour, 12)
-  }
+    func testParsesGMTPublicationDate() throws {
+        let date = try XCTUnwrap(
+            SparkleUpdateProvider.parsePublicationDate("Thu, 20 Aug 2026 12:00:00 GMT")
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
-  func testUsesCleanVersionTitleWhenShortVersionContainsBuildNumber() throws {
-    let candidate = SparkleCandidate(
-      title: "Version 2.9.2",
-      shortVersion: "2.9.2.1014 release",
-      buildVersion: "1014"
-    )
+        let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 8)
+        XCTAssertEqual(components.day, 20)
+        XCTAssertEqual(components.hour, 12)
+    }
 
-    XCTAssertEqual(candidate.displayVersion, "2.9.2")
-  }
+    func testUsesCleanVersionTitleWhenShortVersionContainsBuildNumber() throws {
+        let candidate = SparkleCandidate(
+            title: "Version 2.9.2",
+            shortVersion: "2.9.2.1014 release",
+            buildVersion: "1014"
+        )
 
-  func testOnlySecureDownloadPayloadEnablesDirectUpdate() throws {
-    let feedURL = try XCTUnwrap(URL(string: "https://example.com/releases/appcast.xml"))
-    let relativeCandidate = SparkleCandidate(downloadURL: URL(string: "App.zip"))
-    let insecureCandidate = SparkleCandidate(
-      downloadURL: URL(string: "http://example.com/App.zip")
-    )
-    let unsupportedCandidate = SparkleCandidate(
-      downloadURL: URL(string: "https://example.com/App.pkg")
-    )
-    let informationOnlyCandidate = SparkleCandidate()
+        XCTAssertEqual(candidate.displayVersion, "2.9.2")
+    }
 
-    XCTAssertTrue(relativeCandidate.hasSecureDownload(relativeTo: feedURL))
-    XCTAssertEqual(
-      relativeCandidate.supportedPackageURL(relativeTo: feedURL)?.absoluteString,
-      "https://example.com/releases/App.zip"
-    )
-    XCTAssertFalse(insecureCandidate.hasSecureDownload(relativeTo: feedURL))
-    XCTAssertNil(unsupportedCandidate.supportedPackageURL(relativeTo: feedURL))
-    XCTAssertFalse(informationOnlyCandidate.hasSecureDownload(relativeTo: feedURL))
-  }
+    func testOnlySecureDownloadPayloadEnablesDirectUpdate() throws {
+        let feedURL = try XCTUnwrap(URL(string: "https://example.com/releases/appcast.xml"))
+        let relativeCandidate = SparkleCandidate(downloadURL: URL(string: "App.zip"))
+        let insecureCandidate = SparkleCandidate(
+            downloadURL: URL(string: "http://example.com/App.zip")
+        )
+        let unsupportedCandidate = SparkleCandidate(
+            downloadURL: URL(string: "https://example.com/App.pkg")
+        )
+        let informationOnlyCandidate = SparkleCandidate()
 
-  func testIgnoresDeltaEnclosuresWhenSelectingInstallablePackage() throws {
-    let xml = """
-      <?xml version="1.0" encoding="utf-8"?>
-      <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-        <channel>
-          <item>
-            <title>0.0.16</title>
-            <sparkle:version>0.0.16</sparkle:version>
-            <sparkle:shortVersionString>0.0.16</sparkle:shortVersionString>
-            <enclosure url="https://example.com/Screenflare-0.0.16.zip" />
-            <sparkle:deltas>
-              <enclosure
-                url="https://example.com/Screenflare-0.0.16-0.0.15.delta"
-                sparkle:deltaFrom="0.0.15"
-              />
-            </sparkle:deltas>
-          </item>
-        </channel>
-      </rss>
-      """
+        XCTAssertTrue(relativeCandidate.hasSecureDownload(relativeTo: feedURL))
+        XCTAssertEqual(
+            relativeCandidate.supportedPackageURL(relativeTo: feedURL)?.absoluteString,
+            "https://example.com/releases/App.zip"
+        )
+        XCTAssertFalse(insecureCandidate.hasSecureDownload(relativeTo: feedURL))
+        XCTAssertNil(unsupportedCandidate.supportedPackageURL(relativeTo: feedURL))
+        XCTAssertFalse(informationOnlyCandidate.hasSecureDownload(relativeTo: feedURL))
+    }
 
-    let feedURL = try XCTUnwrap(URL(string: "https://example.com/appcast.xml"))
-    let candidate = try XCTUnwrap(
-      SparkleAppcastParser(data: Data(xml.utf8)).parse().first
-    )
+    func testIgnoresDeltaEnclosuresWhenSelectingInstallablePackage() throws {
+        let xml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+              <channel>
+                <item>
+                  <title>0.0.16</title>
+                  <sparkle:version>0.0.16</sparkle:version>
+                  <sparkle:shortVersionString>0.0.16</sparkle:shortVersionString>
+                  <enclosure url="https://example.com/Screenflare-0.0.16.zip" />
+                  <sparkle:deltas>
+                    <enclosure
+                      url="https://example.com/Screenflare-0.0.16-0.0.15.delta"
+                      sparkle:deltaFrom="0.0.15"
+                    />
+                  </sparkle:deltas>
+                </item>
+              </channel>
+            </rss>
+            """
 
-    XCTAssertEqual(
-      candidate.supportedPackageURL(relativeTo: feedURL)?.absoluteString,
-      "https://example.com/Screenflare-0.0.16.zip"
-    )
-  }
+        let feedURL = try XCTUnwrap(URL(string: "https://example.com/appcast.xml"))
+        let candidate = try XCTUnwrap(
+            SparkleAppcastParser(data: Data(xml.utf8)).parse().first
+        )
 
-  func testPrefersHigherBuildWhenMarketingVersionsMatch() {
-    let older = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "108")
-    let newer = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "110")
+        XCTAssertEqual(
+            candidate.supportedPackageURL(relativeTo: feedURL)?.absoluteString,
+            "https://example.com/Screenflare-0.0.16.zip"
+        )
+    }
 
-    let candidate = SparkleUpdateProvider.bestCandidate(from: [older, newer])
+    func testPrefersHigherBuildWhenMarketingVersionsMatch() {
+        let older = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "108")
+        let newer = SparkleCandidate(shortVersion: "2.4.1", buildVersion: "110")
 
-    XCTAssertEqual(candidate?.buildVersion, "110")
-    XCTAssertEqual(candidate?.shortVersion, "2.4.1")
-  }
+        let candidate = SparkleUpdateProvider.bestCandidate(from: [older, newer])
 
-  func testShowsBuildWhenSparkleMarketingVersionIsUnchanged() {
-    let application = AppRecord(
-      name: "ExcalidrawZ",
-      bundleIdentifier: "com.chocoford.excalidraw",
-      applicationURL: URL(fileURLWithPath: "/Applications/ExcalidrawZ.app"),
-      currentVersion: "2.4.1",
-      buildVersion: "108",
-      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
-      status: .updateAvailable,
-      latestVersion: "2.4.1",
-      latestBuildVersion: "110"
-    )
+        XCTAssertEqual(candidate?.buildVersion, "110")
+        XCTAssertEqual(candidate?.shortVersion, "2.4.1")
+    }
 
-    XCTAssertEqual(application.versionSummary, "2.4.1 (108)")
-    XCTAssertEqual(application.latestVersionSummary, "2.4.1 (110)")
-    XCTAssertEqual(application.updateVersionSummary, "2.4.1 (108) → 2.4.1 (110)")
-  }
+    func testShowsBuildWhenSparkleMarketingVersionIsUnchanged() {
+        let application = AppRecord(
+            name: "ExcalidrawZ",
+            bundleIdentifier: "com.chocoford.excalidraw",
+            applicationURL: URL(fileURLWithPath: "/Applications/ExcalidrawZ.app"),
+            currentVersion: "2.4.1",
+            buildVersion: "108",
+            updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
+            status: .updateAvailable,
+            latestVersion: "2.4.1",
+            latestBuildVersion: "110"
+        )
 
-  func testOmitsBuildWhenMarketingVersionsAlreadyDiffer() {
-    let application = AppRecord(
-      name: "macshot",
-      bundleIdentifier: "com.sw33tlie.macshot.macshot",
-      applicationURL: URL(fileURLWithPath: "/Applications/macshot.app"),
-      currentVersion: "4.2.1",
-      buildVersion: "99",
-      updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
-      status: .updateAvailable,
-      latestVersion: "4.2.2-beta.2",
-      latestBuildVersion: "101"
-    )
+        XCTAssertEqual(application.versionSummary, "2.4.1 (108)")
+        XCTAssertEqual(application.latestVersionSummary, "2.4.1 (110)")
+        XCTAssertEqual(application.updateVersionSummary, "2.4.1 (108) → 2.4.1 (110)")
+    }
 
-    XCTAssertEqual(application.versionSummary, "4.2.1")
-    XCTAssertEqual(application.latestVersionSummary, "4.2.2-beta.2")
-    XCTAssertEqual(application.updateVersionSummary, "4.2.1 → 4.2.2-beta.2")
-  }
+    func testOmitsBuildWhenMarketingVersionsAlreadyDiffer() {
+        let application = AppRecord(
+            name: "macshot",
+            bundleIdentifier: "com.sw33tlie.macshot.macshot",
+            applicationURL: URL(fileURLWithPath: "/Applications/macshot.app"),
+            currentVersion: "4.2.1",
+            buildVersion: "99",
+            updateConfiguration: UpdateConfiguration(mechanism: .sparkle),
+            status: .updateAvailable,
+            latestVersion: "4.2.2-beta.2",
+            latestBuildVersion: "101"
+        )
+
+        XCTAssertEqual(application.versionSummary, "4.2.1")
+        XCTAssertEqual(application.latestVersionSummary, "4.2.2-beta.2")
+        XCTAssertEqual(application.updateVersionSummary, "4.2.1 → 4.2.2-beta.2")
+    }
 }

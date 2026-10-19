@@ -3,26 +3,26 @@ import Foundation
 /// Repository naming rules for application families without an embedded release endpoint.
 /// These are candidates: the provider must still read a valid release before offering an update.
 enum KnownGitHubReleaseSources {
-  static func metadata(for bundleIdentifier: String) -> GitHubReleasesMetadata? {
-    let prefix = "ai.storyteller."
-    guard bundleIdentifier.hasPrefix(prefix) else { return nil }
-    let slug = String(bundleIdentifier.dropFirst(prefix.count))
-    guard slug.count > "craft".count, slug.count <= 100, slug.hasSuffix("craft"),
-      let first = slug.utf8.first, (97...122).contains(first) || (48...57).contains(first),
-      slug.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) || $0 == 45 })
-    else { return nil }
+    static func metadata(for bundleIdentifier: String) -> GitHubReleasesMetadata? {
+        let prefix = "ai.storyteller."
+        guard bundleIdentifier.hasPrefix(prefix) else { return nil }
+        let slug = String(bundleIdentifier.dropFirst(prefix.count))
+        guard slug.count > "craft".count, slug.count <= 100, slug.hasSuffix("craft"),
+            let first = slug.utf8.first, (97...122).contains(first) || (48...57).contains(first),
+            slug.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) || $0 == 45 })
+        else { return nil }
 
-    let repository = "storytold/\(slug)"
-    guard
-      let apiURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest"),
-      let homepageURL = URL(string: "https://github.com/\(repository)")
-    else {
-      return nil
+        let repository = "storytold/\(slug)"
+        guard
+            let apiURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest"),
+            let homepageURL = URL(string: "https://github.com/\(repository)")
+        else {
+            return nil
+        }
+        return GitHubReleasesMetadata(
+            identifier: repository,
+            apiURL: apiURL,
+            homepageURL: homepageURL
+        )
     }
-    return GitHubReleasesMetadata(
-      identifier: repository,
-      apiURL: apiURL,
-      homepageURL: homepageURL
-    )
-  }
 }

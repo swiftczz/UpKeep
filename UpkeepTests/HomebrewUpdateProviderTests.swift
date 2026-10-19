@@ -3,359 +3,363 @@ import XCTest
 @testable import Upkeep
 
 final class HomebrewUpdateProviderTests: XCTestCase {
-  func testOutdatedAutoUpdatesCaskIsUpdateAvailable() {
-    let status = HomebrewUpdateProvider.resolvedStatus(
-      currentVersion: "1.34493.0",
-      remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78"
-    )
-    XCTAssertEqual(status, .updateAvailable)
-  }
-
-  func testCurrentAutoUpdatesCaskIsUpToDate() {
-    let status = HomebrewUpdateProvider.resolvedStatus(
-      currentVersion: "1.34493.1",
-      remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78"
-    )
-    XCTAssertEqual(status, .upToDate)
-  }
-
-  func testMashedCaskVersionWithMatchingBuildIsNotAnUpdate() {
-    let status = HomebrewUpdateProvider.resolvedStatus(
-      currentVersion: "5.80.7",
-      remoteVersion: "5.80.7.66659",
-      buildVersion: "66659"
-    )
-    XCTAssertEqual(status, .upToDate)
-  }
-
-  func testCaskVersionMatchingBundleVersionIsUpToDate() {
-    let status = HomebrewUpdateProvider.resolvedStatus(
-      currentVersion: "1.38",
-      remoteVersion: "1.38.1",
-      buildVersion: "1.38.1"
-    )
-    XCTAssertEqual(status, .upToDate)
-  }
-
-  func testUnversionedLatestCaskStaysSelfManaged() {
-    let status = HomebrewUpdateProvider.resolvedStatus(
-      currentVersion: "1.0",
-      remoteVersion: "latest"
-    )
-    XCTAssertEqual(status, .selfManaged)
-  }
-
-  func testPrefersCaskHomepageOverExistingUpdaterURL() {
-    let existing = URL(
-      string: "https://antigravity-hub-auto-updater.example/manifest"
-    )
-    XCTAssertEqual(
-      HomebrewUpdateProvider.homepageURL(
-        caskHomepage: "https://antigravity.google/product/antigravity-2",
-        existing: existing
-      )?.absoluteString,
-      "https://antigravity.google/product/antigravity-2"
-    )
-  }
-
-  func testKeepsExistingHomepageWhenCaskOmitsHomepage() {
-    let existing = URL(string: "https://example.com")
-    XCTAssertEqual(
-      HomebrewUpdateProvider.homepageURL(caskHomepage: nil, existing: existing),
-      existing
-    )
-    XCTAssertEqual(
-      HomebrewUpdateProvider.homepageURL(caskHomepage: "  ", existing: existing),
-      existing
-    )
-  }
-
-  func testPrefersHomebrewWhenBrewHasUpdate() {
-    XCTAssertTrue(claim(.electronBuilder, .updateAvailable, feed: true, brew: true))
-    XCTAssertTrue(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: true))
-    XCTAssertTrue(claim(.sparkle, .updateAvailable, feed: true, brew: true))
-    XCTAssertTrue(claim(.tauri, .upToDate, feed: true, brew: true))
-    XCTAssertTrue(claim(.customAPI, .checking, feed: true, brew: true))
-    XCTAssertTrue(claim(.githubReleases, .upToDate, feed: true, brew: true))
-  }
-
-  func testClaimsInstalledCaskWhenBrewHasNoUpdate() {
-    XCTAssertTrue(claim(.electronBuilder, .checking, feed: true, brew: false))
-    XCTAssertFalse(claim(.electronBuilder, .updateAvailable, feed: true, brew: false))
-    XCTAssertTrue(claim(.vscodeUpdater, .checking, feed: true, brew: false))
-    XCTAssertFalse(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: false))
-    XCTAssertTrue(claim(.sparkle, .upToDate, feed: true, brew: false))
-    XCTAssertTrue(claim(.tauri, .checking, feed: true, brew: false))
-    XCTAssertFalse(claim(.customAPI, .updateAvailable, feed: true, brew: false))
-    XCTAssertTrue(claim(.githubReleases, .checking, feed: true, brew: false))
-  }
-
-  func testClaimsCaskAndRetainsSparkleFeedForChecks() throws {
-    let info = try JSONDecoder().decode(
-      BrewInfoResponse.self,
-      from: Data(
-        """
-        {
-          "casks": [
-            {
-              "token": "screendrop",
-              "version": "0.31.3",
-              "homepage": "https://example.com/screendrop",
-              "url": null,
-              "artifacts": [
-                {
-                  "app": ["Screendrop.app"],
-                  "target": "/Applications/Screendrop.app"
-                }
-              ]
-            }
-          ]
-        }
-        """.utf8
-      )
-    )
-    let outdated = try JSONDecoder().decode(
-      BrewOutdatedResponse.self,
-      from: Data(#"{"casks":[]}"#.utf8)
-    )
-    let snapshot = HomebrewSnapshot(
-      info: info,
-      outdated: outdated,
-      packageApplicationPaths: [:]
-    )
-    let application = AppRecord(
-      name: "Screendrop",
-      bundleIdentifier: "com.fayazahmed.Screendrop",
-      applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
-      currentVersion: "0.31.3",
-      updateConfiguration: UpdateConfiguration(
-        mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
-      status: .upToDate,
-      lastInstalledAt: .now
-    )
-
-    let enriched = snapshot.applying(to: application)
-
-    XCTAssertEqual(enriched.updateConfiguration.mechanism, .homebrew)
-    XCTAssertEqual(enriched.updateConfiguration.identifier, "screendrop")
-    XCTAssertEqual(enriched.alternateUpdateConfiguration?.mechanism, .sparkle)
-    XCTAssertEqual(
-      enriched.alternateUpdateConfiguration?.feedURL, URL(string: "https://example.com/appcast.xml")
-    )
-    XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
-    XCTAssertEqual(enriched.channelTitle, "Homebrew")
-    XCTAssertNil(enriched.installedUpdateConfiguration?.mechanism)
-
-    for mechanism in UpdateMechanism.allCases where mechanism.canBeAlternateUpdateMechanism {
-      var installed = application
-      installed.installedUpdateConfiguration = UpdateConfiguration(mechanism: mechanism)
-      let checked = snapshot.applying(to: installed)
-      XCTAssertEqual(checked.updateConfiguration.mechanism, .homebrew)
-      XCTAssertEqual(checked.channelTitle, "Homebrew")
-      XCTAssertEqual(checked.channelSystemImage, UpdateChannel.homebrew.systemImage)
+    func testOutdatedAutoUpdatesCaskIsUpdateAvailable() {
+        let status = HomebrewUpdateProvider.resolvedStatus(
+            currentVersion: "1.34493.0",
+            remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78"
+        )
+        XCTAssertEqual(status, .updateAvailable)
     }
-  }
 
-  func testKeepsFirstPartyUpdateAvailableWhenBrewHasNoUpdate() throws {
-    let info = try JSONDecoder().decode(
-      BrewInfoResponse.self,
-      from: Data(
-        """
-        {
-          "casks": [
-            {
-              "token": "screendrop",
-              "version": "0.31.3",
-              "homepage": "https://example.com/screendrop",
-              "url": null,
-              "artifacts": [
+    func testCurrentAutoUpdatesCaskIsUpToDate() {
+        let status = HomebrewUpdateProvider.resolvedStatus(
+            currentVersion: "1.34493.1",
+            remoteVersion: "1.34493.1,255293a41a25d54c5177aa9614fb4cd620e70b78"
+        )
+        XCTAssertEqual(status, .upToDate)
+    }
+
+    func testMashedCaskVersionWithMatchingBuildIsNotAnUpdate() {
+        let status = HomebrewUpdateProvider.resolvedStatus(
+            currentVersion: "5.80.7",
+            remoteVersion: "5.80.7.66659",
+            buildVersion: "66659"
+        )
+        XCTAssertEqual(status, .upToDate)
+    }
+
+    func testCaskVersionMatchingBundleVersionIsUpToDate() {
+        let status = HomebrewUpdateProvider.resolvedStatus(
+            currentVersion: "1.38",
+            remoteVersion: "1.38.1",
+            buildVersion: "1.38.1"
+        )
+        XCTAssertEqual(status, .upToDate)
+    }
+
+    func testUnversionedLatestCaskStaysSelfManaged() {
+        let status = HomebrewUpdateProvider.resolvedStatus(
+            currentVersion: "1.0",
+            remoteVersion: "latest"
+        )
+        XCTAssertEqual(status, .selfManaged)
+    }
+
+    func testPrefersCaskHomepageOverExistingUpdaterURL() {
+        let existing = URL(
+            string: "https://antigravity-hub-auto-updater.example/manifest"
+        )
+        XCTAssertEqual(
+            HomebrewUpdateProvider.homepageURL(
+                caskHomepage: "https://antigravity.google/product/antigravity-2",
+                existing: existing
+            )?.absoluteString,
+            "https://antigravity.google/product/antigravity-2"
+        )
+    }
+
+    func testKeepsExistingHomepageWhenCaskOmitsHomepage() {
+        let existing = URL(string: "https://example.com")
+        XCTAssertEqual(
+            HomebrewUpdateProvider.homepageURL(caskHomepage: nil, existing: existing),
+            existing
+        )
+        XCTAssertEqual(
+            HomebrewUpdateProvider.homepageURL(caskHomepage: "  ", existing: existing),
+            existing
+        )
+    }
+
+    func testPrefersHomebrewWhenBrewHasUpdate() {
+        XCTAssertTrue(claim(.electronBuilder, .updateAvailable, feed: true, brew: true))
+        XCTAssertTrue(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: true))
+        XCTAssertTrue(claim(.sparkle, .updateAvailable, feed: true, brew: true))
+        XCTAssertTrue(claim(.tauri, .upToDate, feed: true, brew: true))
+        XCTAssertTrue(claim(.customAPI, .checking, feed: true, brew: true))
+        XCTAssertTrue(claim(.githubReleases, .upToDate, feed: true, brew: true))
+    }
+
+    func testClaimsInstalledCaskWhenBrewHasNoUpdate() {
+        XCTAssertTrue(claim(.electronBuilder, .checking, feed: true, brew: false))
+        XCTAssertFalse(claim(.electronBuilder, .updateAvailable, feed: true, brew: false))
+        XCTAssertTrue(claim(.vscodeUpdater, .checking, feed: true, brew: false))
+        XCTAssertFalse(claim(.vscodeUpdater, .updateAvailable, feed: true, brew: false))
+        XCTAssertTrue(claim(.sparkle, .upToDate, feed: true, brew: false))
+        XCTAssertTrue(claim(.tauri, .checking, feed: true, brew: false))
+        XCTAssertFalse(claim(.customAPI, .updateAvailable, feed: true, brew: false))
+        XCTAssertTrue(claim(.githubReleases, .checking, feed: true, brew: false))
+    }
+
+    func testClaimsCaskAndRetainsSparkleFeedForChecks() throws {
+        let info = try JSONDecoder().decode(
+            BrewInfoResponse.self,
+            from: Data(
+                """
                 {
-                  "app": ["Screendrop.app"],
-                  "target": "/Applications/Screendrop.app"
+                  "casks": [
+                    {
+                      "token": "screendrop",
+                      "version": "0.31.3",
+                      "homepage": "https://example.com/screendrop",
+                      "url": null,
+                      "artifacts": [
+                        {
+                          "app": ["Screendrop.app"],
+                          "target": "/Applications/Screendrop.app"
+                        }
+                      ]
+                    }
+                  ]
                 }
-              ]
-            }
-          ]
+                """.utf8
+            )
+        )
+        let outdated = try JSONDecoder().decode(
+            BrewOutdatedResponse.self,
+            from: Data(#"{"casks":[]}"#.utf8)
+        )
+        let snapshot = HomebrewSnapshot(
+            info: info,
+            outdated: outdated,
+            packageApplicationPaths: [:]
+        )
+        let application = AppRecord(
+            name: "Screendrop",
+            bundleIdentifier: "com.fayazahmed.Screendrop",
+            applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
+            currentVersion: "0.31.3",
+            updateConfiguration: UpdateConfiguration(
+                mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
+            status: .upToDate,
+            lastInstalledAt: .now
+        )
+
+        let enriched = snapshot.applying(to: application)
+
+        XCTAssertEqual(enriched.updateConfiguration.mechanism, .homebrew)
+        XCTAssertEqual(enriched.updateConfiguration.identifier, "screendrop")
+        XCTAssertEqual(enriched.alternateUpdateConfiguration?.mechanism, .sparkle)
+        XCTAssertEqual(
+            enriched.alternateUpdateConfiguration?.feedURL,
+            URL(string: "https://example.com/appcast.xml")
+        )
+        XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
+        XCTAssertEqual(enriched.channelTitle, "Homebrew")
+        XCTAssertNil(enriched.installedUpdateConfiguration?.mechanism)
+
+        for mechanism in UpdateMechanism.allCases where mechanism.canBeAlternateUpdateMechanism {
+            var installed = application
+            installed.installedUpdateConfiguration = UpdateConfiguration(mechanism: mechanism)
+            let checked = snapshot.applying(to: installed)
+            XCTAssertEqual(checked.updateConfiguration.mechanism, .homebrew)
+            XCTAssertEqual(checked.channelTitle, "Homebrew")
+            XCTAssertEqual(checked.channelSystemImage, UpdateChannel.homebrew.systemImage)
         }
-        """.utf8
-      )
-    )
-    let outdated = try JSONDecoder().decode(
-      BrewOutdatedResponse.self,
-      from: Data(#"{"casks":[]}"#.utf8)
-    )
-    let snapshot = HomebrewSnapshot(
-      info: info,
-      outdated: outdated,
-      packageApplicationPaths: [:]
-    )
-    let application = AppRecord(
-      name: "Screendrop",
-      bundleIdentifier: "com.fayazahmed.Screendrop",
-      applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
-      currentVersion: "0.31.3",
-      updateConfiguration: UpdateConfiguration(
-        mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
-      status: .updateAvailable,
-      latestVersion: "0.32.0"
-    )
+    }
 
-    let enriched = snapshot.applying(to: application)
+    func testKeepsFirstPartyUpdateAvailableWhenBrewHasNoUpdate() throws {
+        let info = try JSONDecoder().decode(
+            BrewInfoResponse.self,
+            from: Data(
+                """
+                {
+                  "casks": [
+                    {
+                      "token": "screendrop",
+                      "version": "0.31.3",
+                      "homepage": "https://example.com/screendrop",
+                      "url": null,
+                      "artifacts": [
+                        {
+                          "app": ["Screendrop.app"],
+                          "target": "/Applications/Screendrop.app"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+        let outdated = try JSONDecoder().decode(
+            BrewOutdatedResponse.self,
+            from: Data(#"{"casks":[]}"#.utf8)
+        )
+        let snapshot = HomebrewSnapshot(
+            info: info,
+            outdated: outdated,
+            packageApplicationPaths: [:]
+        )
+        let application = AppRecord(
+            name: "Screendrop",
+            bundleIdentifier: "com.fayazahmed.Screendrop",
+            applicationURL: URL(fileURLWithPath: "/Applications/Screendrop.app"),
+            currentVersion: "0.31.3",
+            updateConfiguration: UpdateConfiguration(
+                mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
+            status: .updateAvailable,
+            latestVersion: "0.32.0"
+        )
 
-    XCTAssertEqual(enriched.updateConfiguration.mechanism, .sparkle)
-    XCTAssertEqual(enriched.latestVersion, "0.32.0")
-    XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
-  }
+        let enriched = snapshot.applying(to: application)
 
-  func testMergesReleaseNotesFromAlternateSourceIntoHomebrewRecord() {
-    var homebrew = AppRecord(
-      name: "Termio",
-      bundleIdentifier: "sh.termio.app",
-      applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
-      currentVersion: "0.48.0",
-      updateConfiguration: UpdateConfiguration(mechanism: .homebrew, identifier: "termio"),
-      status: .upToDate,
-      latestVersion: "0.48.0",
-      homebrewCaskToken: "termio"
-    )
-    homebrew.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .sparkle)
-    homebrew.alternateUpdateConfiguration?.feedURL = URL(
-      string: "https://downloads.termio.sh/appcast.xml")
+        XCTAssertEqual(enriched.updateConfiguration.mechanism, .sparkle)
+        XCTAssertEqual(enriched.latestVersion, "0.32.0")
+        XCTAssertEqual(enriched.homebrewCaskToken, "screendrop")
+    }
 
-    var checked = homebrew.alternateUpdateCheckRecord!
-    checked.status = .upToDate
-    checked.latestVersion = "0.48.0"
-    checked.releaseNotes = "Termio release notes"
-    checked.releaseNotesURL = URL(string: "https://example.com/releases/0.48.0")
+    func testMergesReleaseNotesFromAlternateSourceIntoHomebrewRecord() {
+        var homebrew = AppRecord(
+            name: "Termio",
+            bundleIdentifier: "sh.termio.app",
+            applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+            currentVersion: "0.48.0",
+            updateConfiguration: UpdateConfiguration(mechanism: .homebrew, identifier: "termio"),
+            status: .upToDate,
+            latestVersion: "0.48.0",
+            homebrewCaskToken: "termio"
+        )
+        homebrew.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .sparkle)
+        homebrew.alternateUpdateConfiguration?.feedURL = URL(
+            string: "https://downloads.termio.sh/appcast.xml")
 
-    let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(checked, intoHomebrew: homebrew)
+        var checked = homebrew.alternateUpdateCheckRecord!
+        checked.status = .upToDate
+        checked.latestVersion = "0.48.0"
+        checked.releaseNotes = "Termio release notes"
+        checked.releaseNotesURL = URL(string: "https://example.com/releases/0.48.0")
 
-    XCTAssertEqual(merged.updateConfiguration.mechanism, .homebrew)
-    XCTAssertEqual(merged.releaseNotes, "Termio release notes")
-    XCTAssertEqual(merged.releaseNotesURL, URL(string: "https://example.com/releases/0.48.0"))
-    XCTAssertEqual(merged.alternateUpdateConfiguration?.mechanism, .sparkle)
-  }
+        let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(
+            checked, intoHomebrew: homebrew)
 
-  func testAlternateUpdateWinsWhenBrewIsCurrent() {
-    let homebrew = AppRecord(
-      name: "Termio",
-      bundleIdentifier: "sh.termio.app",
-      applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
-      currentVersion: "0.48.0",
-      updateConfiguration: UpdateConfiguration(mechanism: .homebrew, identifier: "termio"),
-      status: .upToDate,
-      latestVersion: "0.48.0",
-      homebrewCaskToken: "termio",
-      installedUpdateConfiguration: UpdateConfiguration(mechanism: .homebrew)
-    )
-    var checked = AppRecord(
-      name: "Termio",
-      bundleIdentifier: "sh.termio.app",
-      applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
-      currentVersion: "0.48.0",
-      updateConfiguration: UpdateConfiguration(
-        mechanism: .sparkle, feedURL: URL(string: "https://downloads.termio.sh/appcast.xml")),
-      status: .updateAvailable,
-      latestVersion: "0.49.0",
-      canAutomaticallyUpdate: true
-    )
-    checked.releaseNotes = "New first-party release"
+        XCTAssertEqual(merged.updateConfiguration.mechanism, .homebrew)
+        XCTAssertEqual(merged.releaseNotes, "Termio release notes")
+        XCTAssertEqual(merged.releaseNotesURL, URL(string: "https://example.com/releases/0.48.0"))
+        XCTAssertEqual(merged.alternateUpdateConfiguration?.mechanism, .sparkle)
+    }
 
-    let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(checked, intoHomebrew: homebrew)
+    func testAlternateUpdateWinsWhenBrewIsCurrent() {
+        let homebrew = AppRecord(
+            name: "Termio",
+            bundleIdentifier: "sh.termio.app",
+            applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+            currentVersion: "0.48.0",
+            updateConfiguration: UpdateConfiguration(mechanism: .homebrew, identifier: "termio"),
+            status: .upToDate,
+            latestVersion: "0.48.0",
+            homebrewCaskToken: "termio",
+            installedUpdateConfiguration: UpdateConfiguration(mechanism: .homebrew)
+        )
+        var checked = AppRecord(
+            name: "Termio",
+            bundleIdentifier: "sh.termio.app",
+            applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+            currentVersion: "0.48.0",
+            updateConfiguration: UpdateConfiguration(
+                mechanism: .sparkle, feedURL: URL(string: "https://downloads.termio.sh/appcast.xml")
+            ),
+            status: .updateAvailable,
+            latestVersion: "0.49.0",
+            canAutomaticallyUpdate: true
+        )
+        checked.releaseNotes = "New first-party release"
 
-    XCTAssertEqual(merged.updateConfiguration.mechanism, .sparkle)
-    XCTAssertEqual(merged.latestVersion, "0.49.0")
-    XCTAssertEqual(merged.homebrewCaskToken, "termio")
-    XCTAssertEqual(merged.releaseNotes, "New first-party release")
-    XCTAssertEqual(merged.installedUpdateConfiguration?.mechanism, .homebrew)
-    XCTAssertEqual(merged.channelTitle, "Website")
-    XCTAssertEqual(merged.channelSystemImage, UpdateChannel.website.systemImage)
-  }
+        let merged = HomebrewUpdateProvider.mergeAlternateCheckResult(
+            checked, intoHomebrew: homebrew)
 
-  func testFallsBackToHomebrewWhenFirstPartyCheckFails() {
-    XCTAssertTrue(claim(.vscodeUpdater, .selfManaged, feed: true, brew: false))
-    XCTAssertTrue(claim(.electronBuilder, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))
-    XCTAssertTrue(claim(.sparkle, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))
-    XCTAssertTrue(claim(.tauri, .selfManaged, feed: true, brew: false))
-  }
+        XCTAssertEqual(merged.updateConfiguration.mechanism, .sparkle)
+        XCTAssertEqual(merged.latestVersion, "0.49.0")
+        XCTAssertEqual(merged.homebrewCaskToken, "termio")
+        XCTAssertEqual(merged.releaseNotes, "New first-party release")
+        XCTAssertEqual(merged.installedUpdateConfiguration?.mechanism, .homebrew)
+        XCTAssertEqual(merged.channelTitle, "Website")
+        XCTAssertEqual(merged.channelSystemImage, UpdateChannel.website.systemImage)
+    }
 
-  func testClaimsCasksWithNoFirstPartyProtocol() {
-    XCTAssertTrue(claim(.sparkle, .selfManaged, feed: false, brew: false))
-    XCTAssertTrue(claim(.selfManaged, .selfManaged, feed: false, brew: false))
-    XCTAssertTrue(claim(.homebrew, .selfManaged, feed: false, brew: false))
-  }
+    func testFallsBackToHomebrewWhenFirstPartyCheckFails() {
+        XCTAssertTrue(claim(.vscodeUpdater, .selfManaged, feed: true, brew: false))
+        XCTAssertTrue(claim(.electronBuilder, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))
+        XCTAssertTrue(claim(.sparkle, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))
+        XCTAssertTrue(claim(.tauri, .selfManaged, feed: true, brew: false))
+    }
 
-  func testExtractsApplicationPathsFromPackageReceiptFileList() {
-    let paths = HomebrewUpdateProvider.applicationPaths(
-      inPackageFileList: """
-        Applications
-        Applications/SF Symbols Beta.app
-        Applications/SF Symbols Beta.app/Contents/MacOS/SF Symbols Beta
-        Library/Application Support/Example/config.json
-        """
-    )
+    func testClaimsCasksWithNoFirstPartyProtocol() {
+        XCTAssertTrue(claim(.sparkle, .selfManaged, feed: false, brew: false))
+        XCTAssertTrue(claim(.selfManaged, .selfManaged, feed: false, brew: false))
+        XCTAssertTrue(claim(.homebrew, .selfManaged, feed: false, brew: false))
+    }
 
-    XCTAssertEqual(paths, ["/Applications/SF Symbols Beta.app"])
-  }
+    func testExtractsApplicationPathsFromPackageReceiptFileList() {
+        let paths = HomebrewUpdateProvider.applicationPaths(
+            inPackageFileList: """
+                Applications
+                Applications/SF Symbols Beta.app
+                Applications/SF Symbols Beta.app/Contents/MacOS/SF Symbols Beta
+                Library/Application Support/Example/config.json
+                """
+        )
 
-  func testExtractsMultipleApplicationsFromPackageReceiptFileList() {
-    let paths = HomebrewUpdateProvider.applicationPaths(
-      inPackageFileList: """
-        Applications/First.app/Contents/Info.plist
-        /Applications/Second.app/Contents/Info.plist
-        Applications/First.app/Contents/MacOS/First
-        """
-    )
+        XCTAssertEqual(paths, ["/Applications/SF Symbols Beta.app"])
+    }
 
-    XCTAssertEqual(paths, ["/Applications/First.app", "/Applications/Second.app"])
-  }
+    func testExtractsMultipleApplicationsFromPackageReceiptFileList() {
+        let paths = HomebrewUpdateProvider.applicationPaths(
+            inPackageFileList: """
+                Applications/First.app/Contents/Info.plist
+                /Applications/Second.app/Contents/Info.plist
+                Applications/First.app/Contents/MacOS/First
+                """
+        )
 
-  private func claim(
-    _ mechanism: UpdateMechanism,
-    _ status: UpdateStatus,
-    feed: Bool,
-    brew: Bool
-  ) -> Bool {
-    HomebrewUpdateProvider.shouldClaimInstalledCask(
-      mechanism: mechanism,
-      status: status,
-      hasCheckableFeed: feed,
-      brewHasUpdate: brew
-    )
-  }
+        XCTAssertEqual(paths, ["/Applications/First.app", "/Applications/Second.app"])
+    }
 
-  func testParsesCurlProgressBarPercent() {
-    let parser = HomebrewOutputProgressParser()
-    let progress = parser.consuming(
-      "####                                                                     12.5%\r")
-    XCTAssertEqual(progress.status, "正在下载…")
-    XCTAssertEqual(progress.fractionCompleted ?? 0, 0.125, accuracy: 0.0001)
-  }
+    private func claim(
+        _ mechanism: UpdateMechanism,
+        _ status: UpdateStatus,
+        feed: Bool,
+        brew: Bool
+    ) -> Bool {
+        HomebrewUpdateProvider.shouldClaimInstalledCask(
+            mechanism: mechanism,
+            status: status,
+            hasCheckableFeed: feed,
+            brewHasUpdate: brew
+        )
+    }
 
-  func testParsesPercentSplitAcrossChunks() {
-    let parser = HomebrewOutputProgressParser()
-    _ = parser.consuming("==> Downloading https://example.com\n##### 4")
-    let progress = parser.consuming("2.0%\r")
-    XCTAssertEqual(progress.fractionCompleted ?? 0, 0.42, accuracy: 0.0001)
-  }
+    func testParsesCurlProgressBarPercent() {
+        let parser = HomebrewOutputProgressParser()
+        let progress = parser.consuming(
+            "####                                                                     12.5%\r")
+        XCTAssertEqual(progress.status, "正在下载…")
+        XCTAssertEqual(progress.fractionCompleted ?? 0, 0.125, accuracy: 0.0001)
+    }
 
-  func testParsesHomebrewDownloadSizeRatio() {
-    let parser = HomebrewOutputProgressParser()
-    let progress = parser.consuming(
-      "\u{001B}[34m⠋\u{001B}[0m cask ###### Downloading  25.0MB/ 50.0MB"
-    )
-    XCTAssertEqual(progress.status, "正在下载…")
-    XCTAssertEqual(progress.fractionCompleted ?? 0, 0.5, accuracy: 0.0001)
-  }
+    func testParsesPercentSplitAcrossChunks() {
+        let parser = HomebrewOutputProgressParser()
+        _ = parser.consuming("==> Downloading https://example.com\n##### 4")
+        let progress = parser.consuming("2.0%\r")
+        XCTAssertEqual(progress.fractionCompleted ?? 0, 0.42, accuracy: 0.0001)
+    }
 
-  func testCapsDownloadProgressThenSwitchesToInstalling() {
-    let parser = HomebrewOutputProgressParser()
-    let downloading = parser.consuming(
-      "######################################################################## 100.0%\r")
-    XCTAssertEqual(downloading.fractionCompleted ?? 0, 0.9, accuracy: 0.0001)
+    func testParsesHomebrewDownloadSizeRatio() {
+        let parser = HomebrewOutputProgressParser()
+        let progress = parser.consuming(
+            "\u{001B}[34m⠋\u{001B}[0m cask ###### Downloading  25.0MB/ 50.0MB"
+        )
+        XCTAssertEqual(progress.status, "正在下载…")
+        XCTAssertEqual(progress.fractionCompleted ?? 0, 0.5, accuracy: 0.0001)
+    }
 
-    let installing = parser.consuming("\n==> Installing Cask token\n")
-    XCTAssertEqual(installing.status, "正在安装…")
-    XCTAssertEqual(installing.fractionCompleted ?? 0, 0.92, accuracy: 0.0001)
-  }
+    func testCapsDownloadProgressThenSwitchesToInstalling() {
+        let parser = HomebrewOutputProgressParser()
+        let downloading = parser.consuming(
+            "######################################################################## 100.0%\r")
+        XCTAssertEqual(downloading.fractionCompleted ?? 0, 0.9, accuracy: 0.0001)
+
+        let installing = parser.consuming("\n==> Installing Cask token\n")
+        XCTAssertEqual(installing.status, "正在安装…")
+        XCTAssertEqual(installing.fractionCompleted ?? 0, 0.92, accuracy: 0.0001)
+    }
 }
