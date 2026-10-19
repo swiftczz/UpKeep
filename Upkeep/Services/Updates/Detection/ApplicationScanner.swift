@@ -330,6 +330,14 @@ struct ApplicationScanner: ApplicationScanning {
       if buildVersion == nil || buildVersion == currentVersion {
         buildVersion = String(detectedVSCode.commit.prefix(7))
       }
+    } else if let configuration = ElectronCustomAPIUpdateDetector.detect(
+      in: bundle.bundleURL, currentVersion: currentVersion)
+    {
+      return AppRecord(
+        name: name, bundleIdentifier: bundleIdentifier, applicationURL: applicationURL,
+        currentVersion: currentVersion, buildVersion: buildVersion,
+        applicationModificationDate: applicationModificationDate,
+        updateConfiguration: configuration, status: .checking)
     } else {
       let detection = ExecutableUpdaterDetector.detect(bundleURL: bundle.bundleURL)
       if let detectedTauri = detection.tauriEndpoint {

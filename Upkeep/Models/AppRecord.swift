@@ -149,6 +149,11 @@ extension AppRecord {
     return SecureUpdateURL.https(updatePageURL)
   }
 
+  var requiresBundleMigration: Bool {
+    guard let target = updateConfiguration.targetBundleIdentifier else { return false }
+    return target != bundleIdentifier
+  }
+
   var versionSummary: String {
     Self.formattedVersion(
       currentVersion,

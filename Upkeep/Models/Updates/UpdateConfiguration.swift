@@ -8,19 +8,22 @@ struct UpdateConfiguration: Hashable, Sendable, Codable {
   var homepageURL: URL?
   var identifier: String?
   var githubReleaseTagPrefix: String?
+  var targetBundleIdentifier: String?
 
   init(
     mechanism: UpdateMechanism,
     feedURL: URL? = nil,
     homepageURL: URL? = nil,
     identifier: String? = nil,
-    githubReleaseTagPrefix: String? = nil
+    githubReleaseTagPrefix: String? = nil,
+    targetBundleIdentifier: String? = nil
   ) {
     self.mechanism = mechanism
     self.feedURL = feedURL
     self.homepageURL = homepageURL
     self.identifier = identifier
     self.githubReleaseTagPrefix = githubReleaseTagPrefix
+    self.targetBundleIdentifier = targetBundleIdentifier
   }
 
   /// Derive this from the metadata endpoint, never the package's download host.

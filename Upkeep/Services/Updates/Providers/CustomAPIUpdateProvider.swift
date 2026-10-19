@@ -46,7 +46,8 @@ struct CustomAPIUpdateManifest: Equatable, Sendable {
   ) -> CustomAPIUpdateManifest? {
     guard
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let version = normalizedVersion(json["version"] as? String)
+      let version = normalizedVersion(json["productVersion"] as? String)
+        ?? normalizedVersion(json["version"] as? String)
     else {
       return nil
     }
@@ -60,6 +61,17 @@ struct CustomAPIUpdateManifest: Equatable, Sendable {
         if asset["name"] == nil { asset["name"] = key }
         return asset
       }
+    } else if json["assets"] == nil,
+      let rawURL = json["url"] as? String,
+      let url = SecureUpdateURL.https(string: rawURL),
+      ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
+    {
+      rawAssets = [
+        [
+          "url": rawURL, "sha256": json["sha256hash"] ?? json["sha256"] ?? "",
+          "sha512": json["sha512"] ?? "", "size": json["size"] ?? 0,
+        ]
+      ]
     } else {
       return nil
     }
@@ -104,9 +116,12 @@ struct CustomAPIUpdateManifest: Equatable, Sendable {
       version: version,
       notes: localizedNotes(json, languageCode: languageCode),
       publicationDate: date(from: json["published_at"]) ?? date(from: json["created_at"])
-        ?? date(from: json["pub_date"]) ?? date(from: json["published"]),
+        ?? date(from: json["pub_date"]) ?? date(from: json["published"])
+        ?? epochDate(from: json["timestamp"]),
       assets: assets,
-      releaseURL: (json["url"] as? String).flatMap(SecureUpdateURL.https(string:))
+      releaseURL: (json["releaseNotesUrl"] as? String ?? json["release_notes_url"] as? String
+        ?? json["html_url"] as? String ?? (json["assets"] == nil ? nil : json["url"] as? String))
+        .flatMap(SecureUpdateURL.https(string:))
     )
   }
 
@@ -117,6 +132,7 @@ struct CustomAPIUpdateManifest: Equatable, Sendable {
     if let notes = (json["notes"] as? String)?.nonBlankValue {
       return notes
     }
+    if let notes = (json["releaseNotes"] as? String)?.nonBlankValue { return notes }
     if let notes = (json["release_notes"] as? String)?.nonBlankValue {
       return notes
     }
@@ -152,6 +168,12 @@ struct CustomAPIUpdateManifest: Equatable, Sendable {
       return nil
     }
     return ISO8601Parsing.date(from: text)
+  }
+
+  private static func epochDate(from value: Any?) -> Date? {
+    let number = (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap(Double.init)
+    guard let number, number.isFinite, number > 0 else { return nil }
+    return Date(timeIntervalSince1970: number > 100_000_000_000 ? number / 1000 : number)
   }
 
   private func macPlatformScore(of fileName: String) -> Int {
@@ -195,7 +217,7 @@ struct CustomAPIUpdateProvider: Sendable {
           releaseNotes: manifest.notes,
           releaseNotesURL: manifest.releaseURL,
           packageByteCount: package?.size,
-          canInstall: package != nil
+          canInstall: package != nil && !application.requiresBundleMigration
         )
       case .notThisProtocol:
         application.updateConfiguration.mechanism = .selfManaged
@@ -219,6 +241,10 @@ struct CustomAPIUpdateProvider: Sendable {
       throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的官网更新接口。")
     }
 
+    guard !application.requiresBundleMigration else {
+      throw ProcessRunnerError.failed(status: 1, message: "请打开应用，使用应用自身的更新器完成此更新。")
+    }
+
     progress(.indeterminate("正在检查更新…"))
     guard
       case .update(let manifest) = try await fetchManifest(from: requestURL),
@@ -232,7 +258,8 @@ struct CustomAPIUpdateProvider: Sendable {
       replacing: application,
       expectedSHA512: package.sha512,
       expectedSHA256: package.sha256,
-      requiresValidSignature: requestURL.path.hasPrefix("/api/"),
+      requiresValidSignature: requestURL.path.hasPrefix("/api/")
+        || ElectronCustomAPIUpdateDetector.usesVersionedFeed(application.updateConfiguration),
       requiresTeamIdentifier: ApplicationCodeSigning.teamIdentifier(at: application.applicationURL)
         != nil,
       progress: progress
@@ -246,7 +273,7 @@ struct CustomAPIUpdateProvider: Sendable {
   }
 
   private static func feedURL(for application: AppRecord) -> URL? {
-    application.updateConfiguration.feedURL.flatMap(SecureUpdateURL.https)
+    ElectronCustomAPIUpdateDetector.currentFeedURL(for: application)
   }
 
   private func fetchManifest(from url: URL) async throws -> FetchResult {
@@ -262,6 +289,8 @@ struct CustomAPIUpdateProvider: Sendable {
         sawOtherFailure = true
         continue
       }
+
+      if response.statusCode == 204 { return .upToDate }
 
       if response.statusCode == 200 {
         guard response.data.count <= 5_000_000,

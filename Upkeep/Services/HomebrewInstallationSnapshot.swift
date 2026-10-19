@@ -64,13 +64,9 @@ struct HomebrewInstallationSnapshot {
 
     var application = application
     application.homebrewCaskToken = installation.token
-    var installed = application
-    installed.latestVersion = nil
-    installed.latestBuildVersion = nil
-    var receipt = installed
-    receipt.currentVersion = installation.version
-    receipt.buildVersion = nil
-    guard installed.hasSameRelease(as: receipt) else { return application }
+    guard Self.matchesInstalledRelease(installation.version, application: application) else {
+      return application
+    }
 
     // A later native update must not be relabeled using an old Homebrew receipt.
     if let source = application.installedUpdateConfiguration?.mechanism, source != .homebrew {
@@ -90,10 +86,50 @@ struct HomebrewInstallationSnapshot {
       return application
     }
 
-    application.installedUpdateConfiguration = UpdateConfiguration(
-      mechanism: .homebrew, identifier: installation.token)
+    let configuration = UpdateConfiguration(
+      mechanism: .homebrew, homepageURL: application.updateConfiguration.homepageURL,
+      identifier: installation.token)
+    application.installedUpdateConfiguration = configuration
     application.lastInstalledAt = max(
       application.lastInstalledAt ?? .distantPast, installation.date)
+
+    // A framework without a feed cannot check for updates. Use the verified
+    // Homebrew route immediately, including during local-only installation scans.
+    if !application.updateConfiguration.isCheckable,
+      application.updateConfiguration.mechanism != .homebrew,
+      !application.needsUpdate
+    {
+      application.rememberAlternateUpdateConfiguration(from: application)
+      application.updateConfiguration = configuration
+      application.status = .upToDate
+      application.latestVersion = application.currentVersion
+      application.latestBuildVersion = application.buildVersion
+      application.canAutomaticallyUpdate = false
+    }
     return application
+  }
+
+  private static func matchesInstalledRelease(_ caskVersion: String, application: AppRecord) -> Bool
+  {
+    // Development casks can record `build,full-commit` while the bundle exposes
+    // the same build and an abbreviated commit as its marketing version.
+    if caskVersion.range(of: #"\A[0-9]+,[0-9a-fA-F]{7,64}\z"#, options: .regularExpression) != nil,
+      application.currentVersion.range(of: #"\A[0-9a-fA-F]{7,64}\z"#, options: .regularExpression)
+        != nil
+    {
+      let parts = caskVersion.split(separator: ",")
+      guard application.buildVersion == String(parts[0]) else { return false }
+      let commit = String(parts[1]).lowercased()
+      let installedCommit = application.currentVersion.lowercased()
+      return commit.hasPrefix(installedCommit) || installedCommit.hasPrefix(commit)
+    }
+
+    var installed = application
+    installed.latestVersion = nil
+    installed.latestBuildVersion = nil
+    var receipt = installed
+    receipt.currentVersion = caskVersion
+    receipt.buildVersion = nil
+    return installed.hasSameRelease(as: receipt)
   }
 }

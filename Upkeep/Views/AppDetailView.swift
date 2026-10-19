@@ -375,7 +375,8 @@ struct AppDetailView: View {
   }
 
   private var usesApplicationUpdaterHandoff: Bool {
-    application.updateConfiguration.mechanism == .sparkle && application.needsUpdate
+    (application.updateConfiguration.mechanism == .sparkle || application.requiresBundleMigration)
+      && application.needsUpdate
       && !application.canAutomaticallyUpdate && application.manualUpdateURL == nil
   }
 
