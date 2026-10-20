@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct AppDetailView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var primaryActionNamespace
     let application: AppRecord
     let updateState: ApplicationUpdateState?
     let isUpdateIgnored: Bool
@@ -21,6 +23,15 @@ struct AppDetailView: View {
             LazyVStack(alignment: .leading, spacing: 28) {
                 header
 
+                if let updateFailure {
+                    UpdateFailureBanner(
+                        message: updateFailure,
+                        retry: retryAction,
+                        dismiss: { updateState?.clearOutcome() }
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
                 Divider()
 
                 applicationInformation
@@ -31,6 +42,7 @@ struct AppDetailView: View {
             }
             .padding(32)
             .frame(maxWidth: 900, alignment: .leading)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: updateFailure)
         }
         // Each application's lazy layout starts at the top with fresh height estimates.
         .id(application.id)
@@ -82,12 +94,55 @@ struct AppDetailView: View {
 
             Spacer(minLength: 24)
 
-            if let updateState, updateState.isUpdating {
-                AppUpdateProgressView(state: updateState)
-            } else {
+            primaryActionArea
+        }
+    }
+
+    private enum PrimaryActionPhase: Equatable {
+        case idle
+        case updating
+        case succeeded(version: String)
+    }
+
+    private var primaryActionPhase: PrimaryActionPhase {
+        guard let updateState else { return .idle }
+        if updateState.isUpdating { return .updating }
+        if case .succeeded(let version) = updateState.outcome { return .succeeded(version: version) }
+        return .idle
+    }
+
+    private var updateFailure: String? {
+        guard let updateState, !updateState.isUpdating,
+            case .failed(let message) = updateState.outcome
+        else { return nil }
+        return message
+    }
+
+    private var retryAction: (() -> Void)? {
+        guard usesUpdatePrimaryAction else { return nil }
+        return { handlePrimaryAction() }
+    }
+
+    /// The action, its progress and the result share one glass shape that morphs between them.
+    private var primaryActionArea: some View {
+        GlassEffectContainer {
+            switch primaryActionPhase {
+            case .updating:
+                if let updateState {
+                    AppUpdateProgressView(state: updateState)
+                        .transition(.blurReplace)
+                }
+            case .succeeded(let version):
+                UpdateSucceededBadge(version: version)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 8))
+                    .glassEffectID(PrimaryActionGlassID.shape, in: primaryActionNamespace)
+            case .idle:
                 splitActionControl
             }
         }
+        // Keeps the header height stable while the trailing control changes.
+        .frame(minHeight: 34)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.35), value: primaryActionPhase)
     }
 
     private var splitActionControl: some View {
@@ -100,6 +155,7 @@ struct AppDetailView: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .keyboardShortcut(usesUpdatePrimaryAction ? "u" : "o", modifiers: .command)
 
             Rectangle()
                 .fill(primaryActionForeground.opacity(0.3))
@@ -123,6 +179,7 @@ struct AppDetailView: View {
             .accessibilityLabel("更多操作")
         }
         .glassEffect(primaryActionGlass, in: .rect(cornerRadius: 8))
+        .glassEffectID(PrimaryActionGlassID.shape, in: primaryActionNamespace)
         .disabled(preparationID != nil)
     }
 
@@ -163,7 +220,7 @@ struct AppDetailView: View {
             }
         }
         .foregroundStyle(primaryActionForeground)
-        .help(primaryActionHelp)
+        .help("\(primaryActionHelp)（\(usesUpdatePrimaryAction ? "⌘U" : "⌘O")）")
         .accessibilityLabel(preparationID == nil ? primaryActionTitle : "正在准备更新")
         .accessibilityHint(primaryActionHelp)
     }
@@ -443,6 +500,76 @@ struct AppDetailView: View {
             GitHubConnectionNotice.recognizes(message)
         else { return nil }
         return message
+    }
+}
+
+private enum PrimaryActionGlassID: Hashable {
+    case shape
+}
+
+private struct UpdateSucceededBadge: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var celebrates = false
+    let version: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .symbolEffect(.bounce, value: celebrates)
+            Text("已更新到 \(version)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .onAppear {
+            if !reduceMotion { celebrates = true }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct UpdateFailureBanner: View {
+    let message: String
+    let retry: (() -> Void)?
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("更新未完成")
+                    .font(.callout.weight(.semibold))
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            if let retry {
+                Button("重试", action: retry)
+                    .buttonStyle(.glass)
+            }
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderless)
+            .help("关闭")
+            .accessibilityLabel("关闭失败提示")
+        }
+        .padding(12)
+        .background(.orange.opacity(0.08), in: .rect(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.orange.opacity(0.25))
+        }
     }
 }
 

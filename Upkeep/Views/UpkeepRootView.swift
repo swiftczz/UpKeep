@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct UpkeepRootView: View {
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(GitHubAccount.self) private var githubAccount
     private let applicationLauncher: ApplicationLauncher
     private let applicationChangeMonitor: ApplicationChangeMonitor
@@ -43,6 +45,19 @@ struct UpkeepRootView: View {
                 ignoreUpdates: { library.ignoreUpdates(for: $0) },
                 stopIgnoringUpdates: { library.stopIgnoringUpdates(for: $0) }
             )
+            .safeAreaBar(edge: .bottom) {
+                // The empty list already shows scan progress in its own placeholder.
+                if !library.sidebarSections.applicationIDs.isEmpty {
+                    LibraryStatusBar(
+                        phase: library.phase,
+                        checkedCount: max(
+                            library.checkingTotalCount - library.checkingApplicationIDs.count, 0),
+                        checkTotalCount: library.checkingTotalCount,
+                        updateAllProgress: library.updateAllProgress,
+                        lastCheckedAt: library.lastCheckedAt
+                    )
+                }
+            }
             .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 430)
         } detail: {
             if let application = library.selectedApplication {
@@ -51,7 +66,9 @@ struct UpkeepRootView: View {
                         application: uninstallingApplication,
                         knownApplications: library.applications,
                         onCancel: {
-                            self.uninstallingApplication = nil
+                            withAnimation(pageTransitionAnimation) {
+                                self.uninstallingApplication = nil
+                            }
                         },
                         onUninstalled: {
                             library.forgetUninstalled(uninstallingApplication)
@@ -62,6 +79,7 @@ struct UpkeepRootView: View {
                         }
                     )
                     .id("uninstall-\(uninstallingApplication.id)")
+                    .transition(.blurReplace)
                 } else {
                     AppDetailView(
                         application: application,
@@ -99,9 +117,12 @@ struct UpkeepRootView: View {
                             open(releaseNotesURL)
                         },
                         uninstallApplication: {
-                            uninstallingApplication = application
+                            withAnimation(pageTransitionAnimation) {
+                                uninstallingApplication = application
+                            }
                         }
                     )
+                    .transition(.blurReplace)
                     .task(
                         id:
                             "\(application.id)|\(application.currentVersion)|\(application.latestVersion ?? "")|\(application.hasIncompleteReleaseMetadata)|\(library.phase == .idle)|\(library.updatingApplicationIDs.contains(application.id))"
@@ -110,7 +131,7 @@ struct UpkeepRootView: View {
                     }
                 }
             } else {
-                DetailUnavailableView(isLoading: library.isRefreshing)
+                DetailUnavailableView(phase: library.phase)
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -127,35 +148,37 @@ struct UpkeepRootView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if !library.automaticUpdates.isEmpty {
                     Button(action: beginUpdateAll) {
-                        if updateAllPreparationID != nil {
-                            HStack {
-                                ProgressView().controlSize(.small)
-                                Text("正在准备…")
+                        // A constant label keeps the toolbar from shifting while work runs;
+                        // the sidebar footer reports which application is being updated.
+                        Label {
+                            Text("更新全部")
+                        } icon: {
+                            Group {
+                                if isUpdateAllBusy {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.down.circle")
+                                }
                             }
-                        } else {
-                            Label("更新全部", systemImage: "arrow.down.circle")
+                            .frame(width: 16, height: 16)
                         }
                     }
                     .disabled(
                         !library.updatingApplicationIDs.isEmpty || updateAllPreparationID != nil
                     )
-                    .accessibilityLabel(updateAllPreparationID == nil ? "更新全部" : "正在准备更新全部")
-                    .help("更新 \(library.automaticUpdates.count) 个可自动更新的应用")
+                    .accessibilityLabel(updateAllAccessibilityLabel)
+                    .help(updateAllHelp)
                 }
 
                 Button {
                     beginManualRefresh()
                 } label: {
-                    Group {
-                        if isManualRefreshInProgress {
-                            ProgressView()
-                                .controlSize(.small)
-                                .accessibilityHidden(true)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .frame(width: 16, height: 16)
+                    Image(systemName: "arrow.clockwise")
+                        .symbolEffect(
+                            .rotate, isActive: isManualRefreshInProgress && !reduceMotion
+                        )
+                        .frame(width: 16, height: 16)
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(!library.updatingApplicationIDs.isEmpty || manualRefreshTask != nil)
@@ -165,6 +188,9 @@ struct UpkeepRootView: View {
         }
         .task {
             await library.loadIfNeeded()
+        }
+        .onChange(of: library.availableUpdates.count, initial: true) { _, count in
+            NSApp?.dockTile.badgeLabel = count > 0 ? String(count) : nil
         }
         .task {
             while !Task.isCancelled {
@@ -229,6 +255,29 @@ struct UpkeepRootView: View {
         } message: {
             Text(rootAlertMessage)
         }
+    }
+
+    private var pageTransitionAnimation: Animation? {
+        reduceMotion ? nil : .smooth(duration: 0.3)
+    }
+
+    private var isUpdateAllBusy: Bool {
+        updateAllPreparationID != nil || library.updateAllProgress != nil
+    }
+
+    private var updateAllHelp: String {
+        if let progress = library.updateAllProgress {
+            let position = min(progress.completedCount + 1, progress.totalCount)
+            return "正在更新 \(position)/\(progress.totalCount)"
+        }
+        if updateAllPreparationID != nil { return "正在准备更新…" }
+        return "更新 \(library.automaticUpdates.count) 个可自动更新的应用"
+    }
+
+    private var updateAllAccessibilityLabel: String {
+        if library.updateAllProgress != nil { return "正在更新全部" }
+        if updateAllPreparationID != nil { return "正在准备更新全部" }
+        return "更新全部"
     }
 
     private var pendingUpdateAllRelaunch: [AppRecord] {

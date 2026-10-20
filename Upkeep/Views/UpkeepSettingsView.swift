@@ -2,6 +2,7 @@ import SwiftUI
 
 struct UpkeepSettingsView: View {
     @Environment(GitHubAccount.self) private var githubAccount
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var connectionSheet: GitHubConnectionMethod?
     @State private var errorMessage: String?
 
@@ -39,6 +40,7 @@ struct UpkeepSettingsView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: connectionDescription)
 
                 Text(
                     githubAccount.isConnected
@@ -65,7 +67,10 @@ struct UpkeepSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 540, height: 320)
+        // Grow with the content, such as an error message, instead of scrolling a fixed box.
+        .frame(width: 540)
+        .fixedSize(horizontal: false, vertical: true)
+        .scrollDisabled(true)
         .navigationTitle("设置")
         .sheet(item: $connectionSheet) { method in
             GitHubConnectionSheet(method: method)
@@ -96,6 +101,7 @@ enum GitHubConnectionMethod: String, Identifiable {
 }
 
 private struct GitHubConnectionSheet: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let method: GitHubConnectionMethod
     @Environment(GitHubAccount.self) private var githubAccount
     @Environment(\.dismiss) private var dismiss
@@ -165,6 +171,7 @@ private struct GitHubConnectionSheet: View {
         }
         .padding(28)
         .frame(width: 440)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: sheetState)
         .task(id: attemptID) {
             if method == .browser { await authorizeInBrowser() } else { tokenIsFocused = true }
         }
@@ -187,14 +194,13 @@ private struct GitHubConnectionSheet: View {
                 .textSelection(.enabled)
                 .accessibilityLabel("GitHub 验证码 \(authorization.userCode)")
 
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(
-                    "验证码有效期：\(max(0, Int(authorization.expiresAt.timeIntervalSince(context.date)))) 秒"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            }
+            // The system renders the countdown as m:ss without rebuilding this view every second.
+            Text(
+                "验证码有效期：\(Text(timerInterval: Date.now...max(Date.now, authorization.expiresAt), countsDown: true))"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
 
             if isWorking {
                 ProgressView().controlSize(.small)
@@ -231,6 +237,10 @@ private struct GitHubConnectionSheet: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var sheetState: [String?] {
+        [authorization?.userCode, errorMessage, String(isWorking), String(didOpenBrowser)]
     }
 
     private func authorizeInBrowser() async {

@@ -1,13 +1,13 @@
 import SwiftUI
 
 struct DetailUnavailableView: View {
-    let isLoading: Bool
+    let phase: LibraryPhase
 
     var body: some View {
-        if isLoading {
+        if let title = phase.title {
             VStack(spacing: 12) {
                 ProgressView()
-                Text("正在扫描应用…")
+                Text(title)
                     .foregroundStyle(.secondary)
             }
         } else {

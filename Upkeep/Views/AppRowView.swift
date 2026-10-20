@@ -104,6 +104,7 @@ private struct AppRowAccessoryView: View {
     let updateState: ApplicationUpdateState?
 
     private var updateProgress: UpdateProgress? { updateState?.progress }
+    private var outcome: ApplicationUpdateState.Outcome? { updateState?.outcome }
 
     var body: some View {
         accessory
@@ -115,9 +116,9 @@ private struct AppRowAccessoryView: View {
     private var accessory: some View {
         if let updateProgress {
             if let fraction = updateProgress.fractionCompleted {
-                ProgressView(value: fraction)
-                    .progressViewStyle(.circular)
+                SmoothProgressView(fraction: fraction, isCircular: true)
                     .controlSize(.small)
+                    .animation(reduceMotion ? nil : .linear(duration: 0.25), value: fraction)
                     .help(updateProgress.status)
                     .accessibilityLabel(progressAccessibilityLabel(updateProgress))
                     .transition(.opacity)
@@ -135,12 +136,25 @@ private struct AppRowAccessoryView: View {
                 .accessibilityLabel("正在检查更新")
                 .transition(.opacity)
         } else {
-            Image(systemName: channelSystemImage)
+            // One symbol view, so channel, success and failure swap with a symbol replace.
+            Image(systemName: symbol.name)
                 .font(.caption)
-                .foregroundStyle(.secondary)
-                .help(channelTitle)
-                .accessibilityLabel(channelTitle)
+                .foregroundStyle(symbol.style)
+                .contentTransition(.symbolEffect(.replace))
+                .help(symbol.help)
+                .accessibilityLabel(symbol.help)
                 .transition(.opacity)
+        }
+    }
+
+    private var symbol: (name: String, style: AnyShapeStyle, help: String) {
+        switch outcome {
+        case .succeeded(let version):
+            ("checkmark.circle.fill", AnyShapeStyle(.green), "已更新到 \(version)")
+        case .failed(let message):
+            ("exclamationmark.triangle.fill", AnyShapeStyle(.orange), "更新未完成：\(message)")
+        case nil:
+            (channelSystemImage, AnyShapeStyle(.secondary), channelTitle)
         }
     }
 
@@ -151,7 +165,11 @@ private struct AppRowAccessoryView: View {
         if isChecking {
             return 1
         }
-        return 0
+        switch outcome {
+        case .succeeded: return 3
+        case .failed: return 4
+        case nil: return 0
+        }
     }
 
     private func progressAccessibilityLabel(_ progress: UpdateProgress) -> String {

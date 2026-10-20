@@ -2,15 +2,23 @@ import CoreGraphics
 import Foundation
 import QuickLookThumbnailing
 import SwiftUI
+import Synchronization
 
 struct ApplicationIconClient: Sendable {
+    /// Answers synchronously so a view can render an already loaded icon in its first frame.
+    var cached: @Sendable (_ applicationURL: URL, _ displayScale: CGFloat) -> CGImage?
     var load: @Sendable (_ applicationURL: URL, _ displayScale: CGFloat) async -> CGImage?
 
     static func live() -> ApplicationIconClient {
         let cache = ApplicationIconCache()
-        return ApplicationIconClient { applicationURL, displayScale in
-            await cache.icon(for: applicationURL, displayScale: displayScale)
-        }
+        return ApplicationIconClient(
+            cached: { applicationURL, displayScale in
+                cache.cachedIcon(for: applicationURL, displayScale: displayScale)
+            },
+            load: { applicationURL, displayScale in
+                await cache.icon(for: applicationURL, displayScale: displayScale)
+            }
+        )
     }
 }
 
@@ -18,18 +26,25 @@ private actor ApplicationIconCache {
     private struct CacheKey: Hashable {
         let path: String
         let displayScale: Int
+
+        init(_ applicationURL: URL, displayScale: CGFloat) {
+            path = applicationURL.standardizedFileURL.path
+            self.displayScale = Int((displayScale * 100).rounded())
+        }
     }
 
-    private var cachedIcons: [CacheKey: CGImage] = [:]
+    private let cachedIcons = Mutex<[CacheKey: CGImage]>([:])
     private var pendingIcons: [CacheKey: Task<CGImage?, Never>] = [:]
 
-    func icon(for applicationURL: URL, displayScale: CGFloat) async -> CGImage? {
-        let key = CacheKey(
-            path: applicationURL.standardizedFileURL.path,
-            displayScale: Int((displayScale * 100).rounded())
-        )
+    nonisolated func cachedIcon(for applicationURL: URL, displayScale: CGFloat) -> CGImage? {
+        let key = CacheKey(applicationURL, displayScale: displayScale)
+        return cachedIcons.withLock { $0[key] }
+    }
 
-        if let cachedIcon = cachedIcons[key] {
+    func icon(for applicationURL: URL, displayScale: CGFloat) async -> CGImage? {
+        let key = CacheKey(applicationURL, displayScale: displayScale)
+
+        if let cachedIcon = cachedIcons.withLock({ $0[key] }) {
             return cachedIcon
         }
         if let pendingIcon = pendingIcons[key] {
@@ -44,7 +59,7 @@ private actor ApplicationIconCache {
         let icon = await task.value
         pendingIcons[key] = nil
         if let icon {
-            cachedIcons[key] = icon
+            cachedIcons.withLock { $0[key] = icon }
         }
         return icon
     }

@@ -21,6 +21,9 @@ final class AppLibrary {
     var lastCheckedAt: Date?
     var alertMessage: String?
     private(set) var checkingApplicationIDs = Set<AppRecord.ID>()
+    /// The size of the current check round, so progress can be shown as completed/total.
+    private(set) var checkingTotalCount = 0
+    private(set) var updateAllProgress: UpdateAllProgress?
     private(set) var updatingApplicationIDs = Set<AppRecord.ID>()
     private(set) var updateStatesByID: [AppRecord.ID: ApplicationUpdateState] = [:]
     private(set) var ignoredBundleIdentifiers: Set<String> {
@@ -32,6 +35,7 @@ final class AppLibrary {
     @ObservationIgnored private let process: ApplicationProcessClient
     @ObservationIgnored private let userDefaults: UserDefaults
     @ObservationIgnored private let libraryStore: ApplicationLibraryStore
+    @ObservationIgnored private let notifier: UpdateNotifier
     @ObservationIgnored private var pendingCheckedApplications: [AppRecord] = []
     @ObservationIgnored private var pendingCheckedFlushTask: Task<Void, Never>?
     @ObservationIgnored private var requestedRefreshCachePolicy: UpdateCachePolicy = .allowed
@@ -51,7 +55,8 @@ final class AppLibrary {
         coordinator: any UpdateCoordinating = UpdateCoordinator(),
         process: ApplicationProcessClient = .live,
         userDefaults: UserDefaults = .standard,
-        libraryStore: ApplicationLibraryStore = .live()
+        libraryStore: ApplicationLibraryStore = .live(),
+        notifier: UpdateNotifier = .live
     ) {
         let ignoredBundleIdentifiers = Set(
             userDefaults.stringArray(forKey: Self.ignoredBundleIdentifiersKey) ?? []
@@ -74,6 +79,7 @@ final class AppLibrary {
         self.process = process
         self.userDefaults = userDefaults
         self.libraryStore = libraryStore
+        self.notifier = notifier
         self.ignoredBundleIdentifiers = ignoredBundleIdentifiers
         self.hasLoaded = !applications.isEmpty
         self.lastCheckedAt = loadedCheckedAt
@@ -358,7 +364,7 @@ final class AppLibrary {
             selecting: previousSelection
         )
         phase = .checking
-        checkingApplicationIDs = Set(Self.checkableApplications(applications).map(\.id))
+        beginChecking(Self.checkableApplications(applications))
         await Task.yield()
 
         let enrichedApplications = await coordinator.enrich(applications, cachePolicy: cachePolicy)
@@ -372,7 +378,7 @@ final class AppLibrary {
             applications,
             prioritizing: selectedApplicationID
         )
-        checkingApplicationIDs = Set(applicationsToCheck.map(\.id))
+        beginChecking(applicationsToCheck)
         await checkApplications(applicationsToCheck, generation: generation)
         guard isCurrentRefresh(generation) else { return false }
         flushPendingChecked()
@@ -419,6 +425,11 @@ final class AppLibrary {
                 }
             }
         }
+    }
+
+    private func beginChecking(_ applications: [AppRecord]) {
+        checkingApplicationIDs = Set(applications.map(\.id))
+        checkingTotalCount = checkingApplicationIDs.count
     }
 
     private func isCurrentRefresh(_ generation: Int) -> Bool {
@@ -852,20 +863,57 @@ final class AppLibrary {
         guard !automaticUpdates.isEmpty else { return }
         let ids = applicationIDs ?? automaticUpdates.map(\.id)
         var failures: [String] = []
+        var updatedNames: [String] = []
+        var failedNames: [String] = []
+        notifier.prepare()
+        updateAllProgress = UpdateAllProgress(totalCount: ids.count)
+        defer { updateAllProgress = nil }
 
         for id in ids {
             guard !Task.isCancelled else { break }
-            guard let application = automaticUpdates.first(where: { $0.id == id }) else { continue }
+            guard let application = automaticUpdates.first(where: { $0.id == id }) else {
+                updateAllProgress?.completedCount += 1
+                continue
+            }
+            updateAllProgress?.currentApplicationName = application.name
             do {
-                _ = try await performVisibleUpdate(application)
+                if try await performVisibleUpdate(application) != nil {
+                    updatedNames.append(application.name)
+                }
             } catch {
                 failures.append("\(application.name)：\(error.localizedDescription)")
+                failedNames.append(application.name)
             }
+            updateAllProgress?.completedCount += 1
         }
 
         if !failures.isEmpty {
             alertMessage = failures.joined(separator: "\n")
         }
+        notifyUpdateAllFinished(updated: updatedNames, failed: failedNames)
+    }
+
+    private func notifyUpdateAllFinished(updated: [String], failed: [String]) {
+        let title: String
+        switch (updated.count, failed.count) {
+        case (0, 0):
+            return
+        case (1, 0):
+            title = "「\(updated[0])」已更新"
+        case (_, 0):
+            title = "已更新 \(updated.count) 个应用"
+        case (0, 1):
+            title = "「\(failed[0])」更新失败"
+        case (0, _):
+            title = "\(failed.count) 个应用更新失败"
+        default:
+            title = "已更新 \(updated.count) 个应用，\(failed.count) 个失败"
+        }
+        let body =
+            failed.isEmpty
+            ? updated.map { "「\($0)」" }.joined(separator: "、")
+            : "打开 Upkeep 查看失败原因。"
+        notifier.notify(title, body)
     }
 
     func reportOpeningFailure(for url: URL) {
@@ -875,11 +923,15 @@ final class AppLibrary {
     private func update(_ application: AppRecord) async {
         let selectionToRestore = selectedApplicationID == application.id ? application.id : nil
         var failureMessage: String?
+        notifier.prepare()
 
         do {
-            _ = try await performVisibleUpdate(application)
+            if let installed = try await performVisibleUpdate(application) {
+                notifier.notify("「\(application.name)」已更新", "已更新到 \(installed.versionSummary)。")
+            }
         } catch {
             failureMessage = error.localizedDescription
+            notifier.notify("「\(application.name)」更新失败", error.localizedDescription)
         }
 
         if let selectionToRestore, selectedApplicationID == nil,
@@ -892,10 +944,11 @@ final class AppLibrary {
         }
     }
 
+    /// Returns the installed record, or nil when the update did not settle on disk.
     @discardableResult
-    private func performVisibleUpdate(_ application: AppRecord) async throws -> Bool {
+    private func performVisibleUpdate(_ application: AppRecord) async throws -> AppRecord? {
         let applicationID = application.id
-        guard updatingApplicationIDs.insert(applicationID).inserted else { return false }
+        guard updatingApplicationIDs.insert(applicationID).inserted else { return nil }
         let state = updateStatesByID[applicationID] ?? ApplicationUpdateState()
         if updateStatesByID[applicationID] == nil { updateStatesByID[applicationID] = state }
         state.begin()
@@ -910,20 +963,26 @@ final class AppLibrary {
             let diskRecord = await waitForInstalledDiskRecord(application)
             guard let diskRecord else {
                 clearUpdateProgress(for: application)
-                return false
+                return nil
             }
             try? await Task.sleep(for: .milliseconds(300))
-            finishUpdating(application, diskRecord: diskRecord)
-            return true
+            return finishUpdating(application, diskRecord: diskRecord)
         } catch {
             clearUpdateProgress(for: application)
+            if !(error is CancellationError) {
+                updateStatesByID[applicationID]?.fail(error.localizedDescription)
+            }
             throw error
         }
     }
 
-    private func finishUpdating(_ application: AppRecord, diskRecord: AppRecord) {
-        applyInstalledDiskRecord(diskRecord, replacing: application)
+    private func finishUpdating(_ application: AppRecord, diskRecord: AppRecord) -> AppRecord? {
+        let installed = applyInstalledDiskRecord(diskRecord, replacing: application)
         clearUpdateProgress(for: application)
+        if let installed {
+            updateStatesByID[installed.id]?.succeed(version: installed.versionSummary)
+        }
+        return installed
     }
 
     private func clearUpdateProgress(for application: AppRecord) {
@@ -983,13 +1042,16 @@ final class AppLibrary {
         return nil
     }
 
-    private func applyInstalledDiskRecord(_ disk: AppRecord, replacing application: AppRecord) {
+    @discardableResult
+    private func applyInstalledDiskRecord(
+        _ disk: AppRecord, replacing application: AppRecord
+    ) -> AppRecord? {
         guard
             let index = applications.firstIndex(where: {
                 $0.id == application.id || $0.bundleIdentifier == application.bundleIdentifier
             })
         else {
-            return
+            return nil
         }
 
         var record = Self.installedDiskRecord(disk, replacing: application, installedAt: .now)
@@ -997,6 +1059,7 @@ final class AppLibrary {
 
         applications[index] = record
         persistSnapshot()
+        return record
     }
 
     private func persistIgnoredBundleIdentifiers() {

@@ -13,7 +13,11 @@ struct ReleaseNotesMarkdownView: View {
 
 private struct ReleaseNotesContentView: View {
     let request: ReleaseNotesCache.Request
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var document: ReleaseNotesMarkdown.Document?
+    @State private var showsProgress = false
+
+    private static let progressDelay: Duration = .milliseconds(150)
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 7) {
@@ -21,9 +25,11 @@ private struct ReleaseNotesContentView: View {
                 ForEach(document.sections) { section in
                     ReleaseNotesSectionView(section: section)
                 }
-            } else {
+                .transition(.opacity)
+            } else if showsProgress {
                 ProgressView("正在加载更新说明…")
                     .controlSize(.small)
+                    .transition(.opacity)
             }
         }
         .textSelection(.enabled)
@@ -31,13 +37,22 @@ private struct ReleaseNotesContentView: View {
         .task {
             await loadDocument()
         }
+        .task {
+            // Cached notes usually arrive first, so only slow loads flash an indicator.
+            try? await Task.sleep(for: Self.progressDelay)
+            guard !Task.isCancelled, document == nil else { return }
+            showsProgress = true
+        }
     }
 
     private func loadDocument() async {
         guard let loaded = try? await ReleaseNotesCache.shared.document(for: request),
             !Task.isCancelled
         else { return }
-        document = loaded
+        // Crossfade only from a visible indicator; fast loads appear in place.
+        withAnimation(showsProgress && !reduceMotion ? .easeOut(duration: 0.2) : nil) {
+            document = loaded
+        }
     }
 }
 

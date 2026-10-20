@@ -87,6 +87,9 @@ struct AppSidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Filtering follows typing immediately; only state changes such as finished updates
+        // or ignore actions move rows with animation.
+        .transaction(value: searchText) { $0.animation = nil }
         .animation(
             reduceMotion ? nil : .smooth(duration: hasShownInitialRows ? 0.24 : 0.32),
             value: visibleLayout

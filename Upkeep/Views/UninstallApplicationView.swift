@@ -2,6 +2,7 @@ import SwiftUI
 
 struct UninstallApplicationView: View {
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let application: AppRecord
     var knownApplications: [AppRecord] = []
@@ -34,16 +35,20 @@ struct UninstallApplicationView: View {
                 if isScanning {
                     ProgressView("正在查找关联文件…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.opacity)
                 } else if items.isEmpty {
                     ContentUnavailableView(
                         "没有找到关联文件",
                         systemImage: "trash",
                         description: Text("未找到 \(application.name) 的应用包或其他残留文件。")
                     )
+                    .transition(.opacity)
                 } else {
                     fileList
+                        .transition(.opacity)
                 }
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isScanning)
 
             Divider()
 
@@ -107,12 +112,17 @@ struct UninstallApplicationView: View {
             Spacer(minLength: 24)
 
             VStack(alignment: .trailing, spacing: 4) {
-                Text(sizeSummary(for: selectedItems))
+                Text(selectedSizeSummary)
                     .font(.title3.weight(.semibold).monospacedDigit())
+                    .contentTransition(.numericText())
                 Text(selectionSummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
             }
+            .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: selectedSizeSummary)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: selectionSummary)
         }
     }
 
@@ -217,16 +227,22 @@ struct UninstallApplicationView: View {
             Button("返回详情", action: onCancel)
                 .keyboardShortcut(.cancelAction)
 
+            // Return must not start a destructive action; ⌘⌫ matches Finder's Move to Trash.
             Button("移到废纸篓", role: .destructive) {
                 isConfirming = true
             }
             .disabled(selectedItems.isEmpty || isScanning || isUninstalling)
-            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(.delete, modifiers: .command)
+            .help("将选中的项目移到废纸篓（⌘⌫）")
         }
     }
 
     private var selectedItems: [ApplicationResidueItem] {
         items.filter { selectedIDs.contains($0.id) }
+    }
+
+    private var selectedSizeSummary: String {
+        sizeSummary(for: selectedItems)
     }
 
     private func sizeSummary(for items: [ApplicationResidueItem]) -> String {

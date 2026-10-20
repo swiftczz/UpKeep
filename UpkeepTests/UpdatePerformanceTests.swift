@@ -248,6 +248,26 @@ final class UpdatePerformanceTests: XCTestCase {
         await library.updateAll(applicationIDs: plan.applicationIDs)
         let updated = await coordinator.updatedIDs
         XCTAssertEqual(updated, [first.id])
+        XCTAssertNil(library.updateAllProgress)
+    }
+
+    func testOutcomeFollowsFinishedAttemptAndClearsOnRetry() {
+        let state = ApplicationUpdateState()
+        state.begin()
+        state.fail("网络错误")
+        XCTAssertFalse(state.isUpdating)
+        XCTAssertEqual(state.outcome, .failed(message: "网络错误"))
+
+        state.begin()
+        XCTAssertNil(state.outcome)
+        state.report(progress(0.4))
+        state.succeed(version: "2.0")
+        XCTAssertFalse(state.isUpdating)
+        XCTAssertNil(state.progress)
+        XCTAssertEqual(state.outcome, .succeeded(version: "2.0"))
+
+        state.clearOutcome()
+        XCTAssertNil(state.outcome)
     }
 
     func testUpdateAllSkipsCandidatesIgnoredAfterPreparation() async throws {

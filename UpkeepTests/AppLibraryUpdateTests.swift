@@ -224,6 +224,8 @@ final class AppLibraryUpdateTests: XCTestCase {
         XCTAssertEqual(library.selectedApplication?.name, "欧路词典")
         XCTAssertEqual(library.alertMessage, "模拟更新失败")
         XCTAssertEqual(
+            library.updateStatesByID[eudic.id]?.outcome, .failed(message: "模拟更新失败"))
+        XCTAssertEqual(
             library.selectedApplication?.installedUpdateConfiguration?.mechanism, .homebrew)
     }
 
@@ -299,6 +301,9 @@ final class AppLibraryUpdateTests: XCTestCase {
         XCTAssertFalse(library.applications.first?.canAutomaticallyUpdate ?? true)
         XCTAssertNotNil(library.applications.first?.lastInstalledAt)
         XCTAssertEqual(scanCount, 0)
+        let installedID = try XCTUnwrap(library.applications.first?.id)
+        XCTAssertEqual(
+            library.updateStatesByID[installedID]?.outcome, .succeeded(version: "2.0"))
     }
 
     func testSuccessfulUpdateRecordsActualChannelForEverySource() async throws {
