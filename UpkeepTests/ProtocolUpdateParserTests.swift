@@ -718,7 +718,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
             """.utf8
         )
 
-        let manifest = try XCTUnwrap(CustomAPIUpdateManifest.parse(data, languageCode: "zh-Hans"))
+        let manifest = try XCTUnwrap(HeuristicJSONReleaseParser.parse(data, languageCode: "zh-Hans"))
         XCTAssertEqual(manifest.version, "0.19.1")
         XCTAssertEqual(manifest.notes, "### 优化")
         XCTAssertEqual(manifest.publicationDate, ISO8601Parsing.date(from: "2026-08-20T07:46:53Z"))
@@ -731,7 +731,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         let intelPackage = try XCTUnwrap(manifest.selectedPackage(architecture: .x64))
         XCTAssertEqual(intelPackage.url.lastPathComponent, "app-v0.19.1-macos-x86_64.dmg")
 
-        XCTAssertNil(CustomAPIUpdateManifest.parse(Data(#"{"version":"1.0","platforms":{}}"#.utf8)))
+        XCTAssertNil(HeuristicJSONReleaseParser.parse(Data(#"{"version":"1.0","platforms":{}}"#.utf8)))
     }
 
     func testBuildsVSCodeUpdaterCheckURL() throws {

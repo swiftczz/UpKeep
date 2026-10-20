@@ -162,7 +162,7 @@ final class ElectronCustomAPIUpdateTests: XCTestCase, @unchecked Sendable {
     }
 
     func testSinglePackageFeedKeepsProductVersionChecksumAndPublicationDate() throws {
-        let manifest = try XCTUnwrap(CustomAPIUpdateManifest.parse(try feed()))
+        let manifest = try XCTUnwrap(HeuristicJSONReleaseParser.parse(try feed()))
         XCTAssertEqual(manifest.version, "5.8.4.41366630")
         XCTAssertEqual(
             manifest.selectedPackage(architecture: .arm64)?.sha256,

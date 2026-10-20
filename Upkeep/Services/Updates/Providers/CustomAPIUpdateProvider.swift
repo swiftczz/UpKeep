@@ -1,211 +1,24 @@
 import Foundation
 
-struct CustomAPIUpdateManifest: Equatable, Sendable {
-    struct Asset: Equatable, Sendable {
-        let name: String
-        let url: URL
-        let sha256: String?
-        let sha512: String?
-        let size: Int64?
-    }
-
-    var version: String
-    var notes: String?
-    var publicationDate: Date?
-    var assets: [Asset]
-    var releaseURL: URL? = nil
-
-    func selectedPackage(architecture: MacCPUArchitecture = .current) -> Asset? {
-        let ranked = assets.compactMap { asset -> (Int, Asset)? in
-            let fileName = asset.name.nonBlankValue ?? asset.url.lastPathComponent
-            let kindScore = ApplicationPackageInstaller.packageKindScore(of: fileName)
-            guard kindScore > 0 else {
-                return nil
-            }
-            let architectureScore = ApplicationPackageInstaller.architectureScore(
-                of: fileName,
-                architecture: architecture
-            )
-            let platformScore = macPlatformScore(of: fileName)
-            let tokens = fileName.lowercased().split { !$0.isLetter && !$0.isNumber }
-            guard architectureScore > 0, platformScore > 0,
-                !tokens.contains(where: {
-                    ["cli", "server", "web", "chrome", "firefox", "extension", "android", "ios"]
-                        .contains($0)
-                })
-            else { return nil }
-            return (platformScore * 1_000 + architectureScore * 10 + kindScore, asset)
-        }
-
-        return ranked.max(by: { $0.0 < $1.0 })?.1
-    }
-
-    static func parse(
-        _ data: Data,
-        languageCode: String = Locale.current.language.languageCode?.identifier ?? "en",
-        sourceURL: URL? = nil
-    ) -> CustomAPIUpdateManifest? {
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let version = normalizedVersion(json["productVersion"] as? String)
-                ?? normalizedVersion(json["version"] as? String)
-        else {
-            return nil
-        }
-
-        let rawAssets: [[String: Any]]
-        if let array = json["assets"] as? [[String: Any]] {
-            rawAssets = array
-        } else if let dictionary = json["assets"] as? [String: Any] {
-            rawAssets = dictionary.keys.sorted().compactMap { key in
-                guard var asset = dictionary[key] as? [String: Any] else { return nil }
-                if asset["name"] == nil { asset["name"] = key }
-                return asset
-            }
-        } else if json["assets"] == nil,
-            let rawURL = json["url"] as? String,
-            let url = SecureUpdateURL.https(string: rawURL),
-            ApplicationPackageInstaller.packageKindScore(of: url.lastPathComponent) > 0
-        {
-            rawAssets = [
-                [
-                    "url": rawURL, "sha256": json["sha256hash"] ?? json["sha256"] ?? "",
-                    "sha512": json["sha512"] ?? "", "size": json["size"] ?? 0,
-                ]
-            ]
-        } else {
-            return nil
-        }
-        let assets = rawAssets.compactMap { raw -> Asset? in
-            let name = (raw["name"] as? String)?.nonBlankValue
-            guard
-                let rawURL = (raw["url"] as? String)?.nonBlankValue
-                    ?? (raw["download_url"] as? String)?.nonBlankValue ?? name
-            else { return nil }
-            var url: URL?
-            if rawURL.hasPrefix("/"), !rawURL.hasPrefix("//"), let sourceURL,
-                let relative = URL(string: rawURL, relativeTo: sourceURL),
-                relative.absoluteURL.host == sourceURL.host,
-                var resolved = URLComponents(
-                    url: relative.absoluteURL,
-                    resolvingAgainstBaseURL: false)
-            {
-                // Pin a relative download route to this release when the API supplies a tag.
-                if resolved.path.hasPrefix("/api/download/"), let tag = json["tag"] as? String,
-                    !(resolved.queryItems ?? []).contains(where: { $0.name == "tag" })
-                {
-                    resolved.queryItems =
-                        (resolved.queryItems ?? []) + [URLQueryItem(name: "tag", value: tag)]
-                }
-                url = resolved.url.flatMap(SecureUpdateURL.https)
-            } else {
-                url = SecureUpdateURL.https(string: rawURL)
-            }
-            guard let url, url.user == nil, url.password == nil else { return nil }
-            return Asset(
-                name: name ?? url.lastPathComponent, url: url,
-                sha256: (raw["sha256"] as? String)?.nonBlankValue,
-                sha512: (raw["sha512"] as? String)?.nonBlankValue,
-                size: JSONByteCount.parse(raw["size"]))
-        }
-
-        guard !assets.isEmpty else {
-            return nil
-        }
-
-        return CustomAPIUpdateManifest(
-            version: version,
-            notes: localizedNotes(json, languageCode: languageCode),
-            publicationDate: date(from: json["published_at"]) ?? date(from: json["created_at"])
-                ?? date(from: json["pub_date"]) ?? date(from: json["published"])
-                ?? epochDate(from: json["timestamp"]),
-            assets: assets,
-            releaseURL: (json["releaseNotesUrl"] as? String ?? json["release_notes_url"] as? String
-                ?? json["html_url"] as? String
-                ?? (json["assets"] == nil ? nil : json["url"] as? String))
-                .flatMap(SecureUpdateURL.https(string:))
-        )
-    }
-
-    static func localizedNotes(
-        _ json: [String: Any],
-        languageCode: String
-    ) -> String? {
-        if let notes = (json["notes"] as? String)?.nonBlankValue {
-            return notes
-        }
-        if let notes = (json["releaseNotes"] as? String)?.nonBlankValue { return notes }
-        if let notes = (json["release_notes"] as? String)?.nonBlankValue {
-            return notes
-        }
-        guard let values = json["release_notes"] as? [String: String] else {
-            return nil
-        }
-
-        let prefersChinese = languageCode.lowercased().hasPrefix("zh")
-        let keys =
-            prefersChinese
-            ? ["zh-CN", "zh-Hans", "zh", "zh-HK", "zh-Hant", "en"]
-            : ["en", "zh-CN", "zh"]
-        for key in keys {
-            if let notes = values[key]?.nonBlankValue {
-                return notes
-            }
-        }
-        return values.values.compactMap(\.nonBlankValue).first
-    }
-
-    private static func normalizedVersion(_ value: String?) -> String? {
-        guard var version = value?.nonBlankValue else {
-            return nil
-        }
-        if version.hasPrefix("v") || version.hasPrefix("V") {
-            version = String(version.dropFirst())
-        }
-        return version.nonBlankValue
-    }
-
-    private static func date(from value: Any?) -> Date? {
-        guard let text = value as? String else {
-            return nil
-        }
-        return ISO8601Parsing.date(from: text)
-    }
-
-    private static func epochDate(from value: Any?) -> Date? {
-        let number = (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap(Double.init)
-        guard let number, number.isFinite, number > 0 else { return nil }
-        return Date(timeIntervalSince1970: number > 100_000_000_000 ? number / 1000 : number)
-    }
-
-    private func macPlatformScore(of fileName: String) -> Int {
-        let name = fileName.lowercased()
-        if name.contains("macos") || name.contains("darwin") || name.contains("osx") {
-            return 50
-        }
-        if name.contains("windows") || name.contains("win32") || name.contains("win64")
-            || name.contains("linux")
-        {
-            return 0
-        }
-        return 10
-    }
-}
-
+/// Checks JSON update endpoints: ones discovered in an app, vendor protocols with
+/// their own conventions, and endpoints described by `UpdateSourceRule`s.
 struct CustomAPIUpdateProvider: Sendable {
     var fetchResponse: @Sendable (URL) async throws -> (statusCode: Int, data: Data)? = {
         try await UpdateHTTP.response(from: $0)
     }
+    var rules: @Sendable () -> UpdateSourceRuleSet = { UpdateSourceRuleStore.shared.current() }
+
     func check(_ application: AppRecord) async -> AppRecord {
         var application = application
+        let profile = CustomAPIFeedProfile(application: application, rules: rules())
 
-        guard let requestURL = Self.feedURL(for: application) else {
+        guard let requestURL = profile.requestURL(for: application) else {
             application.status = .selfManaged
             return application
         }
 
         do {
-            switch try await fetchManifest(from: requestURL) {
+            switch try await fetchManifest(from: requestURL, profile: profile) {
             case .upToDate:
                 application.applyInstalledRelease()
             case .update(let manifest):
@@ -229,7 +42,7 @@ struct CustomAPIUpdateProvider: Sendable {
         } catch is CancellationError {
             return application
         } catch {
-            application.status = .unavailable("官网更新接口暂时无法访问。")
+            application.status = .unavailable(profile.unavailableMessage(for: error))
         }
 
         return application
@@ -239,20 +52,22 @@ struct CustomAPIUpdateProvider: Sendable {
         _ application: AppRecord,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) async throws {
-        guard let requestURL = Self.feedURL(for: application) else {
-            throw ProcessRunnerError.failed(status: 1, message: "此应用没有安全的官网更新接口。")
+        let profile = CustomAPIFeedProfile(application: application, rules: rules())
+        guard let requestURL = profile.requestURL(for: application) else {
+            throw CustomAPIUpdateError.noSecureFeed
         }
 
         guard !application.requiresBundleMigration else {
-            throw ProcessRunnerError.failed(status: 1, message: "请打开应用，使用应用自身的更新器完成此更新。")
+            throw CustomAPIUpdateError.requiresApplicationUpdater
         }
 
         progress(.indeterminate("正在检查更新…"))
         guard
-            case .update(let manifest) = try await fetchManifest(from: requestURL),
+            case .update(let manifest) = try await fetchManifest(
+                from: requestURL, profile: profile),
             let package = manifest.selectedPackage()
         else {
-            throw ProcessRunnerError.failed(status: 1, message: "更新源中没有兼容此 Mac 的安装包。")
+            throw CustomAPIUpdateError.noCompatiblePackage
         }
 
         try await ApplicationPackageInstaller.install(
@@ -260,9 +75,7 @@ struct CustomAPIUpdateProvider: Sendable {
             replacing: application,
             expectedSHA512: package.sha512,
             expectedSHA256: package.sha256,
-            requiresValidSignature: requestURL.path.hasPrefix("/api/")
-                || ElectronCustomAPIUpdateDetector.usesVersionedFeed(
-                    application.updateConfiguration),
+            requiresValidSignature: profile.requiresValidSignature(requestURL: requestURL),
             requiresTeamIdentifier: ApplicationCodeSigning.teamIdentifier(
                 at: application.applicationURL)
                 != nil,
@@ -272,23 +85,17 @@ struct CustomAPIUpdateProvider: Sendable {
 
     private enum FetchResult {
         case upToDate
-        case update(CustomAPIUpdateManifest)
+        case update(ReleaseCandidate)
         case notThisProtocol
     }
 
-    private static func feedURL(for application: AppRecord) -> URL? {
-        ElectronCustomAPIUpdateDetector.currentFeedURL(for: application)
-    }
-
-    private func fetchManifest(from url: URL) async throws -> FetchResult {
+    private func fetchManifest(
+        from url: URL, profile: CustomAPIFeedProfile
+    ) async throws -> FetchResult {
         var sawNotFound = false
         var sawOtherFailure = false
-        var candidates = [url]
-        if let stableURL = CustomAPIUpdateDetector.stableChannelURL(from: url) {
-            candidates.append(stableURL)
-        }
 
-        for candidate in candidates {
+        for candidate in profile.candidateURLs(for: url) {
             guard let response = try await fetchResponse(candidate) else {
                 sawOtherFailure = true
                 continue
@@ -298,8 +105,7 @@ struct CustomAPIUpdateProvider: Sendable {
 
             if response.statusCode == 200 {
                 guard response.data.count <= 5_000_000,
-                    var manifest = CustomAPIUpdateManifest.parse(
-                        response.data, sourceURL: candidate)
+                    var manifest = profile.parse(response.data, sourceURL: candidate)
                 else {
                     sawOtherFailure = true
                     continue
@@ -307,7 +113,7 @@ struct CustomAPIUpdateProvider: Sendable {
                 if VersionComparator.isPrerelease(manifest.version) {
                     return .upToDate
                 }
-                if manifest.notes == nil, candidate.path == "/api/release" {
+                if manifest.notes == nil, profile.supplementsChangelogNotes(from: candidate) {
                     await supplementNotes(in: &manifest, from: candidate)
                 }
                 try Task.checkCancellation()
@@ -322,12 +128,18 @@ struct CustomAPIUpdateProvider: Sendable {
         }
 
         if sawNotFound && !sawOtherFailure {
+            // A rule names its endpoint explicitly: a 404 means the rule is wrong,
+            // not that the app uses another protocol.
+            guard profile.allowsProtocolFallback else {
+                throw CustomAPIUpdateError.ruleEndpointNotFound
+            }
             return .notThisProtocol
         }
-        throw ProcessRunnerError.failed(status: 1, message: "无法读取官网更新清单。")
+        throw CustomAPIUpdateError.unreadableManifest
     }
 
-    private func supplementNotes(in manifest: inout CustomAPIUpdateManifest, from url: URL) async {
+    /// Release APIs at `/api/release` publish their notes at `/api/changelog`.
+    private func supplementNotes(in manifest: inout ReleaseCandidate, from url: URL) async {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return
         }
@@ -353,5 +165,101 @@ struct CustomAPIUpdateProvider: Sendable {
         components.queryItems = nil
         manifest.releaseURL = components.url
     }
+}
 
+/// The conventions a custom API record follows. Vendor-specific behavior is
+/// decided here, once, instead of inside the generic check.
+private enum CustomAPIFeedProfile {
+    /// Described by an `UpdateSourceRule`.
+    case rule(UpdateSourceRuleMatch)
+    /// WorkBuddy's v2 endpoint: the query carries the installed version.
+    case versionedElectronFeed
+    /// Found in an executable: `latest.json` channels and `/api/release` APIs.
+    case discovered
+
+    init(application: AppRecord, rules: UpdateSourceRuleSet) {
+        let configuration = application.updateConfiguration
+        if let match = rules.match(
+            configurationIdentifier: configuration.identifier,
+            bundleIdentifier: application.bundleIdentifier)
+        {
+            self = .rule(match)
+        } else if ElectronCustomAPIUpdateDetector.usesVersionedFeed(configuration) {
+            self = .versionedElectronFeed
+        } else {
+            self = .discovered
+        }
+    }
+
+    func requestURL(for application: AppRecord) -> URL? {
+        switch self {
+        case .rule(let match):
+            // Resolve again so `{version}` follows the installed version.
+            return match.feedURL(
+                values: match.values(
+                    version: application.currentVersion, build: application.buildVersion,
+                    bundleIdentifier: application.bundleIdentifier))
+        case .versionedElectronFeed, .discovered:
+            return ElectronCustomAPIUpdateDetector.currentFeedURL(for: application)
+        }
+    }
+
+    func candidateURLs(for url: URL) -> [URL] {
+        guard case .discovered = self,
+            let stableURL = CustomAPIUpdateDetector.stableChannelURL(from: url)
+        else { return [url] }
+        return [url, stableURL]
+    }
+
+    func parse(_ data: Data, sourceURL: URL) -> ReleaseCandidate? {
+        switch self {
+        case .rule(let match):
+            guard let fields = match.rule.fields else { return nil }
+            return RuleJSONReleaseParser(fields: fields).parse(data, sourceURL: sourceURL)
+        case .versionedElectronFeed, .discovered:
+            return HeuristicJSONReleaseParser.parse(data, sourceURL: sourceURL)
+        }
+    }
+
+    func supplementsChangelogNotes(from url: URL) -> Bool {
+        guard case .discovered = self else { return false }
+        return url.path == "/api/release"
+    }
+
+    func requiresValidSignature(requestURL: URL) -> Bool {
+        switch self {
+        case .rule, .versionedElectronFeed: true
+        case .discovered: requestURL.path.hasPrefix("/api/")
+        }
+    }
+
+    var allowsProtocolFallback: Bool {
+        if case .rule = self { return false }
+        return true
+    }
+
+    func unavailableMessage(for error: Error) -> String {
+        guard case .rule(let match) = self else { return "官网更新接口暂时无法访问。" }
+        let name = match.rule.name ?? match.rule.id
+        let reason = (error as? CustomAPIUpdateError)?.errorDescription ?? "更新地址暂时无法访问。"
+        return "更新规则「\(name)」：\(reason)"
+    }
+}
+
+enum CustomAPIUpdateError: LocalizedError {
+    case noSecureFeed
+    case requiresApplicationUpdater
+    case noCompatiblePackage
+    case unreadableManifest
+    case ruleEndpointNotFound
+
+    var errorDescription: String? {
+        switch self {
+        case .noSecureFeed: "此应用没有安全的官网更新接口。"
+        case .requiresApplicationUpdater: "请打开应用，使用应用自身的更新器完成此更新。"
+        case .noCompatiblePackage: "更新源中没有兼容此 Mac 的安装包。"
+        case .unreadableManifest: "无法读取官网更新清单。"
+        case .ruleEndpointNotFound: "更新地址返回 404，请检查规则中的 feed。"
+        }
+    }
 }

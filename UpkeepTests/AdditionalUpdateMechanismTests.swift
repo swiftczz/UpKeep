@@ -23,7 +23,7 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
                 ],
             ],
         ])
-        let manifest = try XCTUnwrap(CustomAPIUpdateManifest.parse(data))
+        let manifest = try XCTUnwrap(HeuristicJSONReleaseParser.parse(data))
         let package = try XCTUnwrap(manifest.selectedPackage(architecture: .arm64))
         XCTAssertEqual(package.name, "editor-darwin-arm64.zip")
         XCTAssertEqual(package.sha256, "abc")
@@ -35,7 +35,7 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
     func testRelativeReleaseAssetsStayPinnedToThePublishedTag() throws {
         let mechanism = URL(string: "https://example.com/api/release?channel=stable")!
         let manifest = try XCTUnwrap(
-            CustomAPIUpdateManifest.parse(
+            HeuristicJSONReleaseParser.parse(
                 try json([
                     "version": "1.2.0", "tag": "v1.2.0",
                     "assets": [
@@ -60,7 +60,7 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
             "https://user:secret@example.com/app.dmg",
         ] {
             XCTAssertNil(
-                CustomAPIUpdateManifest.parse(
+                HeuristicJSONReleaseParser.parse(
                     try json(["version": "1.0", "assets": [["url": download]]]),
                     sourceURL: mechanism))
         }

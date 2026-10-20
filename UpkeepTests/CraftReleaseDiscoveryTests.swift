@@ -154,7 +154,7 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("cache.json")
         let url = try XCTUnwrap(
-            KnownGitHubReleaseSources.metadata(for: "ai.storyteller.futurecraft")?.apiURL)
+            UpdateSourceRuleSet.builtIn.gitHubReleasesMetadata(for: "ai.storyteller.futurecraft")?.apiURL)
         let clock = DiscoveryClock()
         let cache = GitHubMissingReleaseCache(fileURL: file, now: { clock.now })
         await cache.remember(url)
@@ -168,7 +168,7 @@ final class CraftReleaseDiscoveryTests: XCTestCase {
 
     private func makeApplication() throws -> AppRecord {
         let metadata = try XCTUnwrap(
-            KnownGitHubReleaseSources.metadata(for: "ai.storyteller.futurecraft"))
+            UpdateSourceRuleSet.builtIn.gitHubReleasesMetadata(for: "ai.storyteller.futurecraft"))
         return AppRecord(
             name: "A localized application name",
             bundleIdentifier: "ai.storyteller.futurecraft",

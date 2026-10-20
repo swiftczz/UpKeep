@@ -29,31 +29,23 @@ struct UpdateConfiguration: Hashable, Sendable, Codable {
     /// Derive this from the metadata endpoint, never the package's download host.
     /// Keeping it derived prevents a stale channel when a feed changes.
     var channel: UpdateChannel {
-        switch mechanism {
-        case .appStore: return .appStore
-        case .homebrew: return .homebrew
-        case .githubReleases: return .github
-        case .selfManaged: return .unknown
-        case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .customAPI:
+        switch mechanism.traits.channel {
+        case .fixed(let channel):
+            return channel
+        case .feedHost:
             guard let host = feedURL?.host?.lowercased(), !host.isEmpty else { return .unknown }
-            if ["github.com", "www.github.com", "api.github.com", "raw.githubusercontent.com"]
-                .contains(
-                    host)
-            {
-                return .github
-            }
-            return .website
+            let githubHosts = [
+                "github.com", "www.github.com", "api.github.com", "raw.githubusercontent.com",
+            ]
+            return githubHosts.contains(host) ? .github : .website
         }
     }
 
     var isCheckable: Bool {
-        switch mechanism {
-        case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .customAPI, .githubReleases:
-            return true
-        case .sparkle:
-            return feedURL != nil
-        case .homebrew, .selfManaged:
-            return false
+        switch mechanism.traits.checkability {
+        case .always: true
+        case .requiresFeedURL: feedURL != nil
+        case .never: false
         }
     }
 }

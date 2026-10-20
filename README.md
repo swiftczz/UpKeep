@@ -48,7 +48,7 @@ Electron 应用除了标准更新配置，也支持从 `app.asar` 中按需读�
 
 对于 ZCode 等使用本地地址占位、运行时改用官网清单的 Electron 应用，可沿入口引用的模块读取正式接口与平台、渠道映射，继续复用 Electron Updater 的版本、说明、下载及校验流程。只读取公开配置，不发送设备标识或登录信息。
 
-Craft 套件通过通用命名规则接入 GitHub Releases：完整 Bundle ID `ai.storyteller.<名称>craft` 对应 `storytold/<名称>craft` 仓库，不依赖应用显示名称。遵循此规则的新增应用会自动识别，无需逐个添加名单。应用已有的更新协议优先使用。
+Craft 套件通过内置的更新规则接入 GitHub Releases：完整 Bundle ID `ai.storyteller.<名称>craft` 对应 `storytold/<名称>craft` 仓库，不依赖应用显示名称。遵循此规则的新增应用会自动识别，无需逐个添加名单。该规则是兜底规则，应用已有的更新协议优先使用。
 
 Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 Mac 桌面安装包，排除 CLI、网页及服务器附件；安装时仍校验 Bundle ID 和代码签名。检查结果沿用本地应用缓存；候选源返回 404 时缓存一小时，避免自动检查反复请求，手动刷新会重新验证。无需 ArtCraft Launcher 或其他应用清单接口。
 
@@ -57,6 +57,37 @@ Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 M
 通用安装器支持 ZIP、DMG、`.tar.gz`、`.tgz` 和 `.tar.xz` 应用包。Sparkle 的 PKG 更新（包括 DMG 或归档内的 PKG）复用公共安装助手；解包前验证 Ed25519 签名，安装前验证安装包的 Developer ID、系统信任及目标应用版本，安装后再次核对应用身份和版本。PKG 不使用公钥轮换回退。App Store 同样复用该助手，并额外处理商店收据。Sparkle 公钥轮换需验证新旧应用的 Developer ID 与原应用的签名要求，再用新公钥验证更新包；应用要求解压前验证时，不走解压后的轮换流程。
 
 通过 GitHub 发布页链接读取更新说明时，统一优先读取 API 正文，必要时回退到发布网页的正文区域，过滤仓库导航、Star、标签选择和附件列表。
+
+### 自定义更新规则
+
+只提供 JSON 更新接口或 GitHub 仓库的应用，可以用规则文件接入，无需修改代码。把 `.json` 文件放进 `~/Library/Application Support/Upkeep/UpdateSources/`（可在“设置”中打开），下次检查更新时生效。一个文件可以写一条规则，也可以写规则数组；文件按名称排序，同一 id 以靠前的文件为准，并覆盖同名的内置规则。
+
+```json
+{
+  "id": "example-editor",
+  "name": "Example Editor",
+  "kind": "jsonFeed",
+  "match": { "bundleIdentifier": "com.example.editor" },
+  "feed": "https://example.com/api/update?arch={arch}&version={version}",
+  "fields": {
+    "version": ["latest.version", "version"],
+    "notes": ["latest.notes.zh-CN", "latest.notes.en"],
+    "date": "latest.published_at",
+    "assets": "latest.downloads",
+    "assetURL": "url",
+    "assetSHA256": "sha256",
+    "assetSize": "size"
+  }
+}
+```
+
+- `kind`：`jsonFeed` 读取 JSON 接口；`githubReleases` 读取 GitHub 仓库的最新发布，需填写 `repository`（如 `"example/{slug}"`），可用 `assetNamePrefix` 只选择指定前缀的安装包。
+- `match`：`bundleIdentifier` 精确匹配；`bundleIdentifierPattern` 用正则匹配完整 Bundle ID，命名分组（如 `(?<slug>...)`）可在模板中使用。
+- 模板占位符：`{version}`、`{build}`、`{bundleIdentifier}`、`{arch}`（`arm64` 或 `x64`）及命名分组。URL 中的值会做百分号编码。
+- `fields`：用点号路径读取响应，如 `release.assets.0.url`，`$` 表示响应本身；每个字段可以列出多个候选路径，取第一个非空值。`assets` 可以指向数组、以名称为键的对象或单个安装包；省略时，响应本身就是唯一的安装包。
+- `precedence`：默认 `beforeHeuristics`，优先于从安装包推断的更新源，但不覆盖 App Store 收据和 Info.plist 中声明的 Sparkle 更新源；`fallback` 只在其他方式都无法识别时使用。
+
+规则只决定从哪里读取、如何解析，不能放宽安装校验：下载必须使用 HTTPS，安装包的 Bundle ID 必须与已安装应用一致，代码签名必须有效；已安装应用有开发者签名时，新版本的 Team ID 也必须一致。规则有误时，“设置”中会列出文件名和原因，应用会显示对应规则的错误信息。
 
 ## 日常使用
 
@@ -144,9 +175,12 @@ Upkeep/
     Updates/                        来源、机制、更新配置、状态与进度
   Services/                         说明解析、安装、卸载及系统服务
     Updates/
-      Detection/                    扫描应用及识别更新配置
+      Sources/                      更新源协议、内置更新源与注册表
+      Detection/                    扫描应用及各更新源的识别器
       Providers/                    按更新机制读取清单与执行更新
-      UpdateCoordinator.swift       按机制调度主配置与备用配置
+      Parsing/                      统一的发布信息与 JSON 解析
+      Rules/                        声明式更新规则、内置规则与规则文件加载
+      UpdateCoordinator.swift       按注册表调度主配置与备用配置
   Store/                            应用列表状态与本地缓存
   Views/                            侧栏、详情与卸载界面
 UpkeepPrivilegedHelper/             公共 PKG 安装与受保护应用卸载助手
@@ -155,7 +189,20 @@ UpkeepTests/                        主程序测试
 UpkeepPrivilegedHelperTests/        后台助手测试
 ```
 
-更新配置由 `UpdateConfiguration` 统一描述，包含 `mechanism`、`feedURL`、`identifier`、`homepageURL` 和 GitHub 发布标签前缀。`UpdateChannel` 表示来源，按机制和更新接口推导，避免接口变更后来源残留；`UpdateMechanism` 表示协议，更新调度只依据机制选择处理模块。
+更新配置由 `UpdateConfiguration` 统一描述，包含 `mechanism`、`feedURL`、`identifier`、`homepageURL` 和 GitHub 发布标签前缀。`UpdateChannel` 表示来源，按机制和更新接口推导，避免接口变更后来源残留；`UpdateMechanism` 表示协议，其名称、搜索词、可否作为备用通道、可检查条件和来源推导集中在 `UpdateMechanism.traits` 中定义。
+
+更新源分为两部分，都在 `UpdateSourceRegistry.standard` 中注册：
+
+- `UpdateSourceDetector` 从已安装的应用识别更新配置。识别器按注册顺序执行，第一个结果生效：App Store 收据、Sparkle 更新源、更新规则、Electron 与 VS Code 配置、可执行文件中的更新地址，最后是兜底规则。
+- `UpdateSourceProvider` 按机制检查和安装更新。`UpdateCoordinator` 只按机制查表，不包含具体协议的分支；Homebrew 这类一次性处理整个列表的来源实现 `UpdateLibraryEnricher`。
+
+接入新的更新方式时，按需求选择：
+
+1. 只有 JSON 接口或 GitHub 仓库：写一条 `UpdateSourceRule`。内置规则放在 `BuiltInUpdateSourceRules.swift`，格式与用户规则文件相同。
+2. 已有协议的新识别方式：新增一个 `UpdateSourceDetector`，插入注册表中合适的位置。
+3. 全新的协议：在 `UpdateMechanism` 中新增一种机制并补充 `traits`，实现 `UpdateSourceProvider`（通常还需要识别器），再注册到 `UpdateSourceRegistry.standard`。
+
+JSON 接口的解析结果统一为 `ReleaseCandidate`。规则使用 `RuleJSONReleaseParser` 按指定字段读取；扫描发现的接口仍由 `HeuristicJSONReleaseParser` 兼容各家常见字段。WorkBuddy 版本化接口、`latest.json` 正式通道回退和 `/api/release` 更新说明补全等厂商约定集中在 `CustomAPIUpdateProvider` 的接口配置中。
 
 应用的 `updateConfiguration`、`alternateUpdateConfiguration`、`installedUpdateConfiguration` 分别保存当前、备用和已确认安装的完整配置。切换配置时整体复制，GitHub 桌面版标签前缀等信息不会串到其他通道。旧版扁平缓存仅在 `AppRecord+Codable.swift` 中迁移，新缓存使用嵌套配置结构。
 

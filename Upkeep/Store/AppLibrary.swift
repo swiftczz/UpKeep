@@ -1018,15 +1018,16 @@ final class AppLibrary {
 
     private func waitForInstalledDiskRecord(_ application: AppRecord) async -> AppRecord? {
         let applicationURL = application.applicationURL
+        let rules = UpdateSourceRuleStore.shared.current()
         guard FileManager.default.fileExists(atPath: applicationURL.path),
-            ApplicationScanner.makeRecord(from: applicationURL) != nil
+            ApplicationScanner.makeRecord(from: applicationURL, rules: rules) != nil
         else {
             return nil
         }
 
         for attempt in 0..<48 {
             if Task.isCancelled { return nil }
-            if let disk = ApplicationScanner.makeRecord(from: applicationURL) {
+            if let disk = ApplicationScanner.makeRecord(from: applicationURL, rules: rules) {
                 let versionChanged =
                     disk.currentVersion != application.currentVersion
                     || disk.buildVersion != application.buildVersion

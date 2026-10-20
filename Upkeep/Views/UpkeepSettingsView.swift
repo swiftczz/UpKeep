@@ -65,6 +65,8 @@ struct UpkeepSettingsView: View {
             } footer: {
                 Text("连接是可选的。Upkeep 仅查询应用的发布信息，连接凭据保存在此 Mac 的钥匙串中。")
             }
+
+            UpdateSourceRulesSection()
         }
         .formStyle(.grouped)
         // Grow with the content, such as an error message, instead of scrolling a fixed box.
@@ -91,6 +93,74 @@ struct UpkeepSettingsView: View {
         } catch {
             errorMessage = GitHubAuthenticationError.presentable(error)
         }
+    }
+}
+
+/// Where users add JSON rule files, and why a rule was rejected.
+private struct UpdateSourceRulesSection: View {
+    @State private var rules: UpdateSourceRuleSet?
+    private let store = UpdateSourceRuleStore.shared
+
+    var body: some View {
+        Section {
+            HStack(spacing: 14) {
+                Image(systemName: "doc.badge.gearshape")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("自定义更新规则").font(.headline)
+                    Text(summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                Spacer()
+
+                Button("重新载入", action: reload)
+                    .buttonStyle(.glass)
+                Button("打开文件夹", action: openDirectory)
+                    .buttonStyle(.glass)
+            }
+            .padding(.vertical, 4)
+
+            ForEach(rules?.issues ?? [], id: \.self) { issue in
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(issue.source).font(.callout.weight(.medium))
+                        Text(issue.message)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+        } footer: {
+            Text("把 JSON 规则文件放进此文件夹，下次检查更新时生效。规则只决定从哪里读取更新信息，不会放宽安装包的签名校验。")
+        }
+        .task { reload() }
+    }
+
+    private var summary: String {
+        guard let rules else { return "正在读取…" }
+        let count = rules.rules.count
+        if count == 0 { return rules.issues.isEmpty ? "尚未添加规则" : "没有可用的规则" }
+        return "已载入 \(count) 条规则"
+    }
+
+    private func reload() {
+        rules = store.userRules()
+    }
+
+    private func openDirectory() {
+        let directory = store.directory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(directory)
     }
 }
 

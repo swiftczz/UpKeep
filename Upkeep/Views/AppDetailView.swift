@@ -404,20 +404,12 @@ struct AppDetailView: View {
             return "此条目未提供安装包，前往开发者页面查看更新详情"
         }
         if usesUpdatePrimaryAction {
-            switch application.updateConfiguration.mechanism {
-            case .appStore:
-                if usesAppStoreUpdateHandoff {
-                    return application.requiresAppStoreUpdatePageHandoff
-                        ? "在 App Store 更新页安装此更新"
-                        : "在 App Store 中打开此应用并更新"
-                }
-                return "使用当前 App Store 账号下载并安装此更新"
-            case .homebrew:
-                return "使用 Homebrew 下载并安装此更新"
-            case .sparkle, .electronBuilder, .tauri, .vscodeUpdater, .customAPI,
-                .githubReleases, .selfManaged:
-                return "下载并安装此更新"
+            if usesAppStoreUpdateHandoff {
+                return application.requiresAppStoreUpdatePageHandoff
+                    ? "在 App Store 更新页安装此更新"
+                    : "在 App Store 中打开此应用并更新"
             }
+            return application.updateConfiguration.mechanism.traits.installHelp
         }
 
         return application.needsUpdate

@@ -16,12 +16,12 @@ extension ApplicationScanning {
     }
 }
 
-private enum SourceDetectionMode {
-    case installedOnly
-    case full
-}
+private typealias SourceDetectionMode = UpdateSourceDetectionContext.Depth
 
 struct ApplicationScanner: ApplicationScanning {
+    var ruleStore: UpdateSourceRuleStore = .shared
+    var registry: UpdateSourceRegistry = .standard
+
     func scan() async -> [AppRecord] {
         await scan(reusing: [])
     }
@@ -39,6 +39,8 @@ struct ApplicationScanner: ApplicationScanning {
         sourceDetection: SourceDetectionMode
     ) async -> [AppRecord] {
         let ownBundleIdentifier = Bundle.main.bundleIdentifier
+        let ruleStore = ruleStore
+        let registry = registry
         let previousByPath = Dictionary(
             previousApplications.map { ($0.applicationURL.standardizedFileURL.path, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -48,7 +50,9 @@ struct ApplicationScanner: ApplicationScanning {
             Self.scanSynchronously(
                 excludingBundleIdentifier: ownBundleIdentifier,
                 reusing: previousByPath,
-                sourceDetection: sourceDetection
+                sourceDetection: sourceDetection,
+                rules: ruleStore.current(),
+                registry: registry
             )
         }.value
     }
@@ -56,7 +60,9 @@ struct ApplicationScanner: ApplicationScanning {
     private static func scanSynchronously(
         excludingBundleIdentifier: String?,
         reusing previousByPath: [String: AppRecord] = [:],
-        sourceDetection: SourceDetectionMode = .full
+        sourceDetection: SourceDetectionMode = .full,
+        rules: UpdateSourceRuleSet,
+        registry: UpdateSourceRegistry
     ) -> [AppRecord] {
         let fileManager = FileManager.default
         let locations = [
@@ -96,7 +102,9 @@ struct ApplicationScanner: ApplicationScanning {
                         from: applicationURL,
                         reusing: previousByPath[path],
                         preferredLanguages: Locale.preferredLanguages,
-                        sourceDetection: sourceDetection
+                        sourceDetection: sourceDetection,
+                        rules: rules,
+                        registry: registry
                     ),
                     record.bundleIdentifier != excludingBundleIdentifier
                 else {
@@ -112,37 +120,49 @@ struct ApplicationScanner: ApplicationScanning {
 
     static func makeRecord(
         from applicationURL: URL,
-        preferredLanguages: [String] = Locale.preferredLanguages
-    ) -> AppRecord? {
-        makeRecord(
-            from: applicationURL,
-            reusing: nil,
-            preferredLanguages: preferredLanguages
-        )
-    }
-
-    static func makeInstalledApplicationRecord(
-        from applicationURL: URL,
-        preferredLanguages: [String] = Locale.preferredLanguages
+        preferredLanguages: [String] = Locale.preferredLanguages,
+        rules: UpdateSourceRuleSet = .builtIn,
+        registry: UpdateSourceRegistry = .standard
     ) -> AppRecord? {
         makeRecord(
             from: applicationURL,
             reusing: nil,
             preferredLanguages: preferredLanguages,
-            sourceDetection: .installedOnly
+            rules: rules,
+            registry: registry
+        )
+    }
+
+    static func makeInstalledApplicationRecord(
+        from applicationURL: URL,
+        preferredLanguages: [String] = Locale.preferredLanguages,
+        rules: UpdateSourceRuleSet = .builtIn,
+        registry: UpdateSourceRegistry = .standard
+    ) -> AppRecord? {
+        makeRecord(
+            from: applicationURL,
+            reusing: nil,
+            preferredLanguages: preferredLanguages,
+            sourceDetection: .installedOnly,
+            rules: rules,
+            registry: registry
         )
     }
 
     static func makeRecord(
         from applicationURL: URL,
         reusing previous: AppRecord?,
-        preferredLanguages: [String] = Locale.preferredLanguages
+        preferredLanguages: [String] = Locale.preferredLanguages,
+        rules: UpdateSourceRuleSet = .builtIn,
+        registry: UpdateSourceRegistry = .standard
     ) -> AppRecord? {
         makeRecord(
             from: applicationURL,
             reusing: previous,
             preferredLanguages: preferredLanguages,
-            sourceDetection: .full
+            sourceDetection: .full,
+            rules: rules,
+            registry: registry
         )
     }
 
@@ -150,7 +170,9 @@ struct ApplicationScanner: ApplicationScanning {
         from applicationURL: URL,
         reusing previous: AppRecord?,
         preferredLanguages: [String],
-        sourceDetection: SourceDetectionMode
+        sourceDetection: SourceDetectionMode,
+        rules: UpdateSourceRuleSet,
+        registry: UpdateSourceRegistry
     ) -> AppRecord? {
         guard let bundle = resolvedBundle(from: applicationURL) else {
             return nil
@@ -188,7 +210,12 @@ struct ApplicationScanner: ApplicationScanning {
         let hasSparkleSource =
             feedURL != nil
             || FileManager.default.fileExists(atPath: sparkleURL.path)
-        let knownGitHubSource = KnownGitHubReleaseSources.metadata(for: bundleIdentifier)
+        let context = UpdateSourceDetectionContext(
+            applicationURL: applicationURL, bundleURL: bundle.bundleURL, name: name,
+            bundleIdentifier: bundleIdentifier, currentVersion: currentVersion,
+            buildVersion: buildVersion, depth: sourceDetection,
+            hasAppStoreReceipt: hasAppStoreReceipt, iOSAppStoreMetadata: iOSAppStoreMetadata,
+            sparkleFeedURL: feedURL, hasSparkleSource: hasSparkleSource, rules: rules)
 
         // Retry unknown sources in full scans so new detector rules can recover them.
         // The installed-only monitor still reuses unchanged records without reading binaries.
@@ -200,8 +227,9 @@ struct ApplicationScanner: ApplicationScanning {
             !(previous.updateConfiguration.mechanism == .selfManaged
                 && (sourceDetection == .full
                     || hasSparkleSource
-                    || knownGitHubSource != nil
+                    || rules.firstMatch(for: bundleIdentifier) != nil
                     || ExecutableUpdaterDetector.hasApplicationService(in: bundle.bundleURL))),
+            !ruleRouteChanged(since: previous, context: context),
             canReuse(
                 previous,
                 bundleIdentifier: bundleIdentifier,
@@ -214,69 +242,11 @@ struct ApplicationScanner: ApplicationScanning {
             return previous
         }
 
-        let configuration: UpdateConfiguration
-        var appStorePlatform: AppStorePlatform?
-        if hasAppStoreReceipt {
-            configuration = UpdateConfiguration(
-                mechanism: .appStore,
-                identifier: (sourceDetection == .full ? iOSAppStoreMetadata?.storeIdentifier : nil)
-                    ?? appStoreAdamIdentifier(at: applicationURL))
-            appStorePlatform = .mac
-        } else if let iOSAppStoreMetadata {
-            configuration = UpdateConfiguration(
-                mechanism: .appStore, identifier: iOSAppStoreMetadata.storeIdentifier)
-            appStorePlatform = iOSAppStoreMetadata.platform
-        } else if hasSparkleSource {
-            configuration = UpdateConfiguration(mechanism: .sparkle, feedURL: feedURL)
-        } else if sourceDetection == .full,
-            let metadata = ElectronBuilderDetector.detect(in: bundle.bundleURL)
-        {
-            configuration = UpdateConfiguration(
-                mechanism: .electronBuilder, feedURL: metadata.feedURL,
-                homepageURL: metadata.homepageURL, identifier: metadata.identifier)
-        } else if let metadata = VSCodeUpdaterDetector.detect(in: bundle.bundleURL) {
-            configuration = UpdateConfiguration(
-                mechanism: .vscodeUpdater, feedURL: metadata.updateURL,
-                homepageURL: metadata.homepageURL,
-                identifier: VSCodeUpdaterDetector.updateIdentifier(
-                    quality: metadata.quality, commit: metadata.commit))
-            if sourceDetection == .installedOnly || buildVersion == nil
-                || buildVersion == currentVersion
-            {
-                buildVersion = String(metadata.commit.prefix(7))
-            }
-        } else if sourceDetection == .full,
-            let detected = ElectronCustomAPIUpdateDetector.detect(
-                in: bundle.bundleURL, currentVersion: currentVersion)
-        {
-            configuration = detected
-        } else {
-            // Installed-only scans reuse the same record construction without reading binaries.
-            let detection =
-                sourceDetection == .full
-                ? ExecutableUpdaterDetector.detect(bundleURL: bundle.bundleURL)
-                : ExecutableUpdaterDetection()
-            if let endpoint = detection.tauriEndpoint {
-                configuration = UpdateConfiguration(
-                    mechanism: .tauri, feedURL: endpoint, identifier: endpoint.absoluteString)
-            } else if let endpoint = detection.customAPIUpdateEndpoint {
-                configuration = UpdateConfiguration(
-                    mechanism: .customAPI, feedURL: endpoint, identifier: endpoint.absoluteString)
-            } else if let metadata = detection.githubReleases.first(where: {
-                $0.tagPrefix != nil
-                    && GitHubReleasesDetector.matchesApplication(
-                        $0, name: name, bundleIdentifier: bundleIdentifier)
-            }) ?? detection.githubReleases.first(where: {
-                GitHubReleasesDetector.matchesApplication(
-                    $0, name: name, bundleIdentifier: bundleIdentifier)
-            }) ?? knownGitHubSource {
-                configuration = UpdateConfiguration(
-                    mechanism: .githubReleases, feedURL: metadata.apiURL,
-                    homepageURL: metadata.homepageURL, identifier: metadata.identifier,
-                    githubReleaseTagPrefix: metadata.tagPrefix)
-            } else {
-                configuration = UpdateConfiguration(mechanism: .selfManaged)
-            }
+        let detected = registry.detectors.lazy.compactMap { $0.detect(context) }.first
+        let configuration = detected?.configuration ?? UpdateConfiguration(mechanism: .selfManaged)
+        let appStorePlatform = detected?.appStorePlatform
+        if let detectedBuildVersion = detected?.buildVersion {
+            buildVersion = detectedBuildVersion
         }
 
         let status: UpdateStatus
@@ -293,6 +263,28 @@ struct ApplicationScanner: ApplicationScanning {
             updateConfiguration: configuration, appStorePlatform: appStorePlatform,
             appStoreCountryCode: sourceDetection == .installedOnly && hasAppStoreReceipt
                 ? nil : iOSAppStoreMetadata?.countryCode, status: status)
+    }
+
+    /// A rule added, edited or removed after this record was cached takes effect
+    /// without waiting for the application's next version.
+    private static func ruleRouteChanged(
+        since previous: AppRecord, context: UpdateSourceDetectionContext
+    ) -> Bool {
+        let cached = previous.updateConfiguration
+        if UpdateSourceRule.ruleID(fromConfigurationIdentifier: cached.identifier) != nil,
+            context.rules.match(
+                configurationIdentifier: cached.identifier,
+                bundleIdentifier: context.bundleIdentifier) == nil
+        {
+            return true
+        }
+        // Store receipts and Sparkle feeds outrank rules in the registry's detector order.
+        guard !context.hasAppStoreReceipt, context.iOSAppStoreMetadata == nil,
+            !context.hasSparkleSource,
+            let detected = RuleSourceDetector(precedence: .beforeHeuristics).detect(context)
+        else { return false }
+        return detected.configuration.mechanism != cached.mechanism
+            || detected.configuration.identifier != cached.identifier
     }
 
     static func sortedByModificationDate(_ applications: [AppRecord]) -> [AppRecord] {
@@ -422,7 +414,7 @@ struct ApplicationScanner: ApplicationScanning {
         return Bundle(url: wrappedBundleURL) ?? Bundle(url: applicationURL)
     }
 
-    private static func appStoreAdamIdentifier(at applicationURL: URL) -> String? {
+    static func appStoreAdamIdentifier(at applicationURL: URL) -> String? {
         guard let item = NSMetadataItem(url: applicationURL) else {
             return nil
         }
@@ -516,7 +508,7 @@ struct ApplicationScanner: ApplicationScanning {
     }
 }
 
-private struct IOSAppStoreMetadata {
+struct IOSAppStoreMetadata: Sendable {
     let storeIdentifier: String?
     let countryCode: String?
     let platform: AppStorePlatform

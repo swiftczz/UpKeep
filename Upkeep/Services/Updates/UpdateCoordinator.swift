@@ -33,19 +33,13 @@ enum UpdateCachePolicy: Sendable {
     }
 }
 
+/// Routes each record to the provider registered for its mechanism.
 struct UpdateCoordinator: UpdateCoordinating, Sendable {
-    private let appStore = AppStoreUpdateProvider()
-    private let macAppStore = MacAppStoreUpdateProvider()
-    private let homebrew = HomebrewUpdateProvider()
-    private let sparkle = SparkleUpdateProvider()
-    private let electronBuilder = ElectronBuilderUpdateProvider()
-    private let tauri = TauriUpdateProvider()
-    private let vscode = VSCodeUpdateProvider()
-    private let customAPIUpdate = CustomAPIUpdateProvider()
-    private let githubReleases = GitHubReleasesUpdateProvider()
+    private let registry: UpdateSourceRegistry
     private let process: ApplicationProcessClient
 
-    init(process: ApplicationProcessClient = .live) {
+    init(registry: UpdateSourceRegistry = .standard, process: ApplicationProcessClient = .live) {
+        self.registry = registry
         self.process = process
     }
 
@@ -57,87 +51,44 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
         _ applications: [AppRecord],
         cachePolicy: UpdateCachePolicy
     ) async -> [AppRecord] {
-        if cachePolicy == .reloadIgnoringCache {
-            await githubReleases.invalidateMissingReleaseCache()
+        for provider in registry.providers {
+            await provider.prepareForRefresh(cachePolicy: cachePolicy)
         }
-        return await homebrew.enrich(applications, cachePolicy: cachePolicy)
+        var enriched = applications
+        for enricher in registry.enrichers {
+            enriched = await enricher.enrich(enriched, cachePolicy: cachePolicy)
+        }
+        return enriched
     }
 
     func check(_ application: AppRecord) async -> AppRecord {
+        // A cask can delegate checks to the updater embedded in its app.
         if application.updateConfiguration.mechanism == .homebrew,
             let alternate = application.alternateUpdateCheckRecord
         {
-            let checked: AppRecord
-            switch alternate.updateConfiguration.mechanism {
-            case .sparkle:
-                checked = await sparkle.check(alternate, fallbackNotes: application)
-            case .tauri:
-                checked = await tauri.check(alternate, fallbackNotes: application)
-            default:
-                checked = await checkUsingMechanism(alternate)
-            }
+            let checked = await registry.provider(for: alternate.updateConfiguration.mechanism)
+                .check(alternate, fallbackNotes: application)
             return HomebrewUpdateProvider.mergeAlternateCheckResult(
                 checked,
                 intoHomebrew: application
             )
         }
 
-        return await checkUsingMechanism(application)
-    }
-
-    private func checkUsingMechanism(_ application: AppRecord) async -> AppRecord {
-        switch application.updateConfiguration.mechanism {
-        case .appStore:
-            return await appStore.check(application)
-        case .sparkle where application.updateConfiguration.feedURL != nil:
-            return await sparkle.check(application)
-        case .electronBuilder:
-            return await electronBuilder.check(application)
-        case .tauri:
-            return await tauri.check(application)
-        case .vscodeUpdater:
-            return await vscode.check(application)
-        case .customAPI:
-            return await customAPIUpdate.check(application)
-        case .githubReleases:
-            return await githubReleases.check(application)
-        case .homebrew, .selfManaged, .sparkle:
-            return application
-        }
+        return await registry.provider(for: application.updateConfiguration.mechanism)
+            .check(application, fallbackNotes: nil)
     }
 
     func update(
         _ application: AppRecord,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) async throws {
+        let provider = registry.provider(for: application.updateConfiguration.mechanism)
         try await UpdateRelaunch.perform(
             application,
             process: process,
             progress: progress
         ) {
-            switch application.updateConfiguration.mechanism {
-            case .homebrew:
-                try await homebrew.upgrade(application, progress: progress)
-            case .appStore:
-                try await macAppStore.upgrade(application, progress: progress)
-            case .sparkle:
-                try await sparkle.upgrade(application, progress: progress)
-            case .electronBuilder:
-                try await electronBuilder.upgrade(application, progress: progress)
-            case .tauri:
-                try await tauri.upgrade(application, progress: progress)
-            case .vscodeUpdater:
-                try await vscode.upgrade(application, progress: progress)
-            case .customAPI:
-                try await customAPIUpdate.upgrade(application, progress: progress)
-            case .githubReleases:
-                try await githubReleases.upgrade(application, progress: progress)
-            case .selfManaged:
-                throw ProcessRunnerError.failed(
-                    status: 1,
-                    message: "此应用没有可自动安装的更新源。"
-                )
-            }
+            try await provider.upgrade(application, progress: progress)
         }
     }
 }

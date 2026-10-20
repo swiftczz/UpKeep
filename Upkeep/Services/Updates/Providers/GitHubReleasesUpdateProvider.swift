@@ -63,15 +63,16 @@ struct GitHubReleaseManifest: Equatable, Sendable {
             }
     }
 
-    func selectedCraftPackage(repository: String, architecture: MacCPUArchitecture = .current)
-        -> Asset?
-    {
+    /// For repositories that publish several products: only assets downloaded from
+    /// `repository` whose names start with `namePrefix` are candidates.
+    func selectedPackage(
+        repository: String, namePrefix: String, architecture: MacCPUArchitecture = .current
+    ) -> Asset? {
         assets.filter { asset in
             guard let download = GitHubReleaseDownload.parse(asset.downloadURL),
                 "\(download.owner)/\(download.repository)" == repository,
                 download.fileName == asset.name,
-                let slug = repository.split(separator: "/").last,
-                asset.name.lowercased().hasPrefix("\(slug)-"),
+                asset.name.lowercased().hasPrefix(namePrefix.lowercased()),
                 macOSScore(of: asset.name) >= 90,
                 ApplicationPackageInstaller.architectureScore(
                     of: asset.name, architecture: architecture)
@@ -196,6 +197,7 @@ struct GitHubReleasesUpdateProvider: Sendable {
         try await UpdateHTTP.successfulData(from: $0)
     }
     var missingReleaseCache = GitHubMissingReleaseCache.shared
+    var rules: @Sendable () -> UpdateSourceRuleSet = { UpdateSourceRuleStore.shared.current() }
 
     func invalidateMissingReleaseCache() async {
         await missingReleaseCache.invalidate()
@@ -213,7 +215,8 @@ struct GitHubReleasesUpdateProvider: Sendable {
         do {
             let release = try await loadRelease(
                 from: apiURL, tagPrefix: application.updateConfiguration.githubReleaseTagPrefix,
-                cacheMissing: craftMetadata(for: application) != nil)
+                // Rule-assigned repositories are guesses; remember ones without releases.
+                cacheMissing: ruleAssignment(for: application) != nil)
             let package = selectedPackage(in: release, for: application)
             let installability = await installability(
                 of: package,
@@ -281,18 +284,25 @@ struct GitHubReleasesUpdateProvider: Sendable {
         )
     }
 
-    private func craftMetadata(for application: AppRecord) -> GitHubReleasesMetadata? {
-        guard let metadata = KnownGitHubReleaseSources.metadata(for: application.bundleIdentifier),
+    /// The rule that assigned this record's repository, if it still does.
+    private func ruleAssignment(
+        for application: AppRecord
+    ) -> (repository: String, namePrefix: String?)? {
+        guard let (match, values) = rules().gitHubReleasesMatch(for: application.bundleIdentifier),
+            let metadata = match.gitHubReleasesMetadata(values: values),
             metadata.apiURL == application.updateConfiguration.feedURL
         else { return nil }
-        return metadata
+        return (metadata.identifier, match.assetNamePrefix(values: values))
     }
 
     private func selectedPackage(in release: GitHubReleaseManifest, for application: AppRecord)
         -> GitHubReleaseManifest.Asset?
     {
-        if let metadata = craftMetadata(for: application) {
-            return release.selectedCraftPackage(repository: metadata.identifier)
+        if let assignment = ruleAssignment(for: application),
+            let namePrefix = assignment.namePrefix
+        {
+            return release.selectedPackage(
+                repository: assignment.repository, namePrefix: namePrefix)
         }
         return release.selectedPackage()
     }
