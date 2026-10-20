@@ -12,17 +12,12 @@ enum KnownGitHubReleaseSources {
             slug.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) || $0 == 45 })
         else { return nil }
 
-        let repository = "storytold/\(slug)"
-        guard
-            let apiURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest"),
-            let homepageURL = URL(string: "https://github.com/\(repository)")
-        else {
-            return nil
-        }
+        guard let repository = GitHubRepository(owner: "storytold", name: slug),
+            let apiURL = repository.apiURL(path: ["releases", "latest"]),
+            let homepageURL = repository.homepageURL
+        else { return nil }
         return GitHubReleasesMetadata(
-            identifier: repository,
-            apiURL: apiURL,
-            homepageURL: homepageURL
-        )
+            identifier: repository.identifier, apiURL: apiURL, homepageURL: homepageURL)
+
     }
 }

@@ -271,23 +271,21 @@ struct HomebrewUpdateProvider: Sendable {
         guard let release = GitHubReleaseManifest.parse(data),
             let version = application.latestVersion?.split(separator: ",").first,
             String(version) == release.version,
-            release.assets.contains(where: {
+            let asset = release.assets.first(where: {
                 GitHubReleaseDownload.parse($0.downloadURL) == download
             })
         else { return result }
         if result.packageByteCount == nil {
-            result.packageByteCount = GitHubReleaseManifest.packageByteCount(
-                named: download.fileName, in: data)
+            result.packageByteCount = asset.size
         }
         result.releaseDate = result.releaseDate ?? release.releaseDate
         if result.releaseNotes?.nonBlankValue == nil,
             let notes = release.releaseNotes?.nonBlankValue
         {
             result.releaseNotes = notes
-            result.releaseNotesURL = URL(
-                string:
-                    "https://github.com/\(download.owner)/\(download.repository)/releases/tag/\(download.tag)"
-            )
+            result.releaseNotesURL = GitHubRepository(
+                owner: download.owner, name: download.repository)?
+                .webURL(path: ["releases", "tag", download.tag])
         }
         return result
     }

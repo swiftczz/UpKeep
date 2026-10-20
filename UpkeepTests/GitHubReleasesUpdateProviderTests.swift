@@ -285,29 +285,13 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
         XCTAssertEqual(release.selectedPackage()?.name, "CLion-macos-arm64.dmg")
     }
 
-    func testReadsGitHubReleaseAssetSizeByFileName() {
-        let data = releaseData(
-            tag: "v2026.3",
-            assets: ["BetterCapture-2026.3-arm64.dmg", "checksums.txt"]
-        )
-
-        XCTAssertEqual(
-            GitHubReleaseManifest.packageByteCount(
-                named: "BetterCapture-2026.3-arm64.dmg",
-                in: data
-            ),
-            12_345_678
-        )
-        XCTAssertNil(
-            GitHubReleaseManifest.packageByteCount(named: "missing.dmg", in: data)
-        )
-        XCTAssertNil(
-            GitHubReleaseManifest.packageByteCount(
-                named: "BetterCapture-2026.3-arm64.dmg",
-                in: releaseData(
-                    tag: "v2026.3", assets: ["BetterCapture-2026.3-arm64.dmg"], draft: true)
-            )
-        )
+    func testReadsGitHubReleaseAssetSizes() throws {
+        let release = try XCTUnwrap(
+            GitHubReleaseManifest.parse(
+                releaseData(
+                    tag: "v2026.3", assets: ["BetterCapture-2026.3-arm64.dmg", "checksums.txt"])))
+        XCTAssertEqual(release.selectedPackage()?.name, "BetterCapture-2026.3-arm64.dmg")
+        XCTAssertEqual(release.selectedPackage()?.size, 12_345_678)
     }
 
     func testIgnoresDraftAndPrereleaseResponses() {

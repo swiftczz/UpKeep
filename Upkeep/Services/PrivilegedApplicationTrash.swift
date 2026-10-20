@@ -2,7 +2,6 @@ import AppKit
 import Darwin
 import Foundation
 import LocalAuthentication
-import Security
 import UpkeepPrivilegedHelperProtocol
 
 enum PrivilegedApplicationTrash {
@@ -111,50 +110,31 @@ enum PrivilegedApplicationTrash {
         ) ->
             Void
     ) throws -> Bool {
-        let connection = NSXPCConnection(
-            machServiceName: UpkeepPrivilegedHelperConstants.machServiceName, options: .privileged
-        )
-        connection.remoteObjectInterface = NSXPCInterface(with: UpkeepPrivilegedHelperProtocol.self)
-        connection.setCodeSigningRequirement(try helperRequirement())
         let reply = PrivilegedHelperReply<Result<Bool, NSError>>()
-        connection.invalidationHandler = {
-            reply.resolve(.failure(failure("卸载助手连接已断开，请重新启动 Upkeep 后再试。")))
+        return try PrivilegedHelperConnection.withConnection(configure: { connection in
+            connection.invalidationHandler = {
+                reply.resolve(.failure(failure("卸载助手连接已断开，请重新启动 Upkeep 后再试。")))
+            }
+            connection.interruptionHandler = {
+                reply.resolve(.failure(failure("卸载助手连接中断，请检查应用是否仍在原位置。")))
+            }
+        }) { connection in
+            guard
+                let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    reply.resolve(.failure(error as NSError))
+                }) as? UpkeepPrivilegedHelperProtocol
+            else {
+                throw failure("无法连接卸载助手。")
+            }
+            send(proxy) { reply.resolve($0) }
+            return try reply.wait(
+                timeout: 15,
+                otherwise: .failure(
+                    failure(
+                        "卸载助手未及时返回结果，请检查应用是否仍在原位置后再试。"
+                    ))
+            ).get()
         }
-        connection.interruptionHandler = {
-            reply.resolve(.failure(failure("卸载助手连接中断，请检查应用是否仍在原位置。")))
-        }
-        connection.resume()
-        defer { connection.invalidate() }
-        guard
-            let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                reply.resolve(.failure(error as NSError))
-            }) as? UpkeepPrivilegedHelperProtocol
-        else {
-            throw failure("无法连接卸载助手。")
-        }
-        send(proxy) { reply.resolve($0) }
-        return try reply.wait(
-            timeout: 15,
-            otherwise: .failure(
-                failure(
-                    "卸载助手未及时返回结果，请检查应用是否仍在原位置后再试。"
-                ))
-        ).get()
-    }
-
-    private static func helperRequirement() throws -> String {
-        guard let executable = Bundle.main.executableURL else { throw failure("找不到卸载助手。") }
-        let url = executable.deletingLastPathComponent().appendingPathComponent(
-            "UpkeepPrivilegedHelper")
-        var code: SecStaticCode?
-        var requirement: SecRequirement?
-        var value: CFString?
-        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
-            SecCodeCopyDesignatedRequirement(code, [], &requirement) == errSecSuccess,
-            let requirement,
-            SecRequirementCopyString(requirement, [], &value) == errSecSuccess, let value
-        else { throw failure("无法验证卸载助手的签名，请重新安装完整的 Upkeep 应用。") }
-        return value as String
     }
 
     private static func failure(_ message: String) -> NSError {

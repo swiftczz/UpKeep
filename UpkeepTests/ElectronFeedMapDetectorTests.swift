@@ -151,25 +151,8 @@ final class ElectronFeedMapDetectorTests: XCTestCase {
             ]),
             "main.js": Data(try (code ?? script()).utf8),
         ]
-        var entries: [String: Any] = [:]
-        var payload = Data()
-        for name in files.keys.sorted() {
-            let data = files[name]!
-            entries[name] = ["size": data.count, "offset": String(payload.count)]
-            payload.append(data)
-        }
-        let header = try JSONSerialization.data(withJSONObject: ["files": entries])
-        let padding = (4 - header.count % 4) % 4
-        let pickleSize = header.count + padding + 8
-        var archive = Data()
-        for value in [4, pickleSize, pickleSize - 4, header.count] {
-            var word = UInt32(value).littleEndian
-            withUnsafeBytes(of: &word) { archive.append(contentsOf: $0) }
-        }
-        archive.append(header)
-        archive.append(Data(repeating: 0, count: padding))
-        archive.append(payload)
-        try archive.write(to: resources.appendingPathComponent("app.asar"))
+        try ElectronArchiveFixture.write(
+            files: files, to: resources.appendingPathComponent("app.asar"))
         return app
     }
 }

@@ -47,28 +47,6 @@ struct GitHubReleaseManifest: Equatable, Sendable {
         )
     }
 
-    static func packageByteCount(named fileName: String, in data: Data) -> Int64? {
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            json["draft"] as? Bool != true
-        else {
-            return nil
-        }
-
-        let target = fileName.lowercased()
-        for asset in json["assets"] as? [[String: Any]] ?? [] {
-            let name = (asset["name"] as? String)?.nonBlankValue
-            let downloadName = (asset["browser_download_url"] as? String)
-                .flatMap(URL.init(string:))?
-                .lastPathComponent
-            guard name?.lowercased() == target || downloadName?.lowercased() == target else {
-                continue
-            }
-            return JSONByteCount.parse(asset["size"])
-        }
-        return nil
-    }
-
     func selectedPackage(
         architecture: MacCPUArchitecture = .current
     ) -> Asset? {

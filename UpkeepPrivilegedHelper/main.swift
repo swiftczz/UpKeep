@@ -1,11 +1,10 @@
 import Darwin
 import Foundation
-import Security
 import UpkeepPrivilegedHelperProtocol
 
 final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedHelperProtocol {
-    private lazy var expectedClientRequirement: SecRequirement? =
-        Self.clientRequirementFromHostApp()
+    private lazy var expectedClientRequirement: String? =
+        Self.hostApplicationURL().flatMap { CodeSignature.designatedRequirement(at: $0) }
 
     func run() {
         let listener = NSXPCListener(
@@ -20,9 +19,7 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
         _ listener: NSXPCListener,
         shouldAcceptNewConnection newConnection: NSXPCConnection
     ) -> Bool {
-        guard let requirement = expectedClientRequirement,
-            let requirementString = Self.requirementString(requirement)
-        else {
+        guard let requirementString = expectedClientRequirement else {
             return false
         }
 
@@ -104,31 +101,6 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
         } catch {
             reply(error.localizedDescription)
         }
-    }
-
-    private static func requirementString(_ requirement: SecRequirement) -> String? {
-        var value: CFString?
-        guard SecRequirementCopyString(requirement, [], &value) == errSecSuccess else { return nil }
-        return value as String?
-    }
-
-    private static func clientRequirementFromHostApp() -> SecRequirement? {
-        guard let appURL = hostApplicationURL() else {
-            return nil
-        }
-
-        var staticCode: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(appURL as CFURL, [], &staticCode) == errSecSuccess,
-            let staticCode
-        else {
-            return nil
-        }
-
-        var requirement: SecRequirement?
-        guard SecCodeCopyDesignatedRequirement(staticCode, [], &requirement) == errSecSuccess else {
-            return nil
-        }
-        return requirement
     }
 
     private static func hostApplicationURL() -> URL? {

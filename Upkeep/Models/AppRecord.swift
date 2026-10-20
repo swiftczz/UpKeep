@@ -102,15 +102,7 @@ extension AppRecord {
         application.updateConfiguration.homepageURL =
             alternateUpdateConfiguration.homepageURL
             ?? updateConfiguration.homepageURL
-        application.status = .checking
-        application.latestVersion = nil
-        application.latestBuildVersion = nil
-        application.releaseNotes = nil
-        application.releaseNotesURL = nil
-        application.releaseDate = nil
-        application.packageByteCount = nil
-        application.updatePageURL = nil
-        application.canAutomaticallyUpdate = false
+        application.discardRemoteRelease()
         return application
     }
 
@@ -252,6 +244,19 @@ extension AppRecord {
         }
         latestVersion = latestVersion ?? other.latestVersion
         latestBuildVersion = latestBuildVersion ?? other.latestBuildVersion
+    }
+
+    /// Preserve a completed check without changing independently merged package metadata,
+    /// the selected route, or local installation history.
+    mutating func copyCheckResult(from other: AppRecord) {
+        status = other.status
+        latestVersion = other.latestVersion
+        latestBuildVersion = other.latestBuildVersion
+        releaseNotes = other.releaseNotes
+        releaseDate = other.releaseDate
+        releaseNotesURL = other.releaseNotesURL
+        updatePageURL = other.updatePageURL
+        canAutomaticallyUpdate = other.canAutomaticallyUpdate
     }
 
     mutating func discardRemoteRelease() {

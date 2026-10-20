@@ -254,16 +254,7 @@ final class AppLibrary {
         guard application.hasIncompleteReleaseMetadata else {
             return
         }
-        switch application.updateConfiguration.mechanism {
-        case .appStore, .electronBuilder, .tauri, .vscodeUpdater, .customAPI, .githubReleases:
-            break
-        case .sparkle where application.updateConfiguration.feedURL != nil:
-            break
-        case .homebrew where application.alternateUpdateCheckRecord != nil:
-            break
-        case .homebrew, .selfManaged, .sparkle:
-            return
-        }
+        guard application.isCheckable else { return }
 
         let checked = await coordinator.check(application)
         // A scan or another check may have replaced the record while this request was in flight.
@@ -570,14 +561,7 @@ final class AppLibrary {
             if previous.updateConfiguration.mechanism == current.updateConfiguration.mechanism,
                 previous.status != .checking
             {
-                merged.status = previous.status
-                merged.latestVersion = previous.latestVersion
-                merged.latestBuildVersion = previous.latestBuildVersion
-                merged.releaseNotes = previous.releaseNotes
-                merged.releaseDate = previous.releaseDate
-                merged.releaseNotesURL = previous.releaseNotesURL
-                merged.updatePageURL = previous.updatePageURL
-                merged.canAutomaticallyUpdate = previous.canAutomaticallyUpdate
+                merged.copyCheckResult(from: previous)
             }
             return carryingMetadata(from: previous, onto: merged)
         }
@@ -704,12 +688,7 @@ final class AppLibrary {
         }
 
         var merged = current
-        merged.status = .updateAvailable
-        merged.latestVersion = previous.latestVersion
-        merged.latestBuildVersion = previous.latestBuildVersion
-        merged.releaseNotes = previous.releaseNotes
-        merged.releaseDate = previous.releaseDate
-        merged.releaseNotesURL = previous.releaseNotesURL
+        merged.copyCheckResult(from: previous)
         merged.updatePageURL =
             previous.updateConfiguration.mechanism == current.updateConfiguration.mechanism
             ? previous.updatePageURL : nil
@@ -867,18 +846,6 @@ final class AppLibrary {
         }
 
         return application.applicationURL
-    }
-
-    func appStoreURL(for applicationID: AppRecord.ID) -> URL? {
-        guard
-            let application = applications.first(where: { $0.id == applicationID }),
-            application.updateConfiguration.mechanism == .appStore,
-            let sourceURL = application.updateConfiguration.feedURL
-        else {
-            return nil
-        }
-
-        return Self.nativeAppStoreURL(from: sourceURL)
     }
 
     func updateAll(applicationIDs: [AppRecord.ID]? = nil) async {

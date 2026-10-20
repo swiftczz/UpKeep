@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import UpkeepPrivilegedHelperProtocol
 import XCTest
 
 @testable import Upkeep
@@ -127,6 +128,13 @@ final class SparkleKeyRotationTests: XCTestCase {
                 executableURL: URL(fileURLWithPath: "/usr/bin/codesign"),
                 arguments: ["--force", "--sign", "-", url.path])
             XCTAssertTrue(ApplicationCodeSigning.signatureIsValid(at: url))
+            // XPC can pin a signed helper even when that signature is not a
+            // Developer ID identity capable of authorizing a package or key rotation.
+            XCTAssertNotNil(CodeSignature.designatedRequirement(at: url))
+            XCTAssertNil(CodeSignature.developerIDTeam(at: url))
+            XCTAssertThrowsError(
+                try DeveloperPackageValidation.applicationTeam(
+                    at: url, bundleIdentifier: fixture.record.bundleIdentifier))
         }
         XCTAssertFalse(
             ApplicationCodeSigning.matchesDeveloperID(

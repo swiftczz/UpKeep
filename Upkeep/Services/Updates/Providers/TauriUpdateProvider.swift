@@ -252,44 +252,7 @@ enum TauriHomepage {
     }
 
     static func githubRepositoryHomepage(from url: URL) -> URL? {
-        guard let host = url.host?.lowercased() else {
-            return nil
-        }
-
-        let parts = url.pathComponents
-            .filter { $0 != "/" }
-            .map { $0.removingPercentEncoding ?? $0 }
-        let owner: String
-        let repository: String
-        if host == "github.com" || host == "www.github.com" {
-            guard parts.count >= 2 else { return nil }
-            owner = parts[0]
-            repository = parts[1]
-        } else if host == "api.github.com" {
-            guard parts.count >= 3, parts[0].lowercased() == "repos" else { return nil }
-            owner = parts[1]
-            repository = parts[2]
-        } else {
-            return nil
-        }
-
-        let reservedOwners: Set<String> = [
-            "about", "apps", "collections", "events", "explore", "features", "login",
-            "marketplace", "notifications", "orgs", "pricing", "settings", "sponsors",
-            "topics", "users",
-        ]
-        let normalizedOwner = owner.lowercased()
-        let normalizedRepository =
-            repository
-            .replacingOccurrences(of: ".git", with: "", options: [.anchored, .backwards])
-        guard !reservedOwners.contains(normalizedOwner),
-            isRepositoryComponent(normalizedOwner),
-            isRepositoryComponent(normalizedRepository),
-            let homepage = URL(string: "https://github.com/\(owner)/\(normalizedRepository)")
-        else {
-            return nil
-        }
-        return homepage
+        GitHubRepository(url: url)?.homepageURL
     }
 
     private static func siteHomepage(from url: URL) -> URL? {
@@ -313,9 +276,6 @@ enum TauriHomepage {
         )
     }
 
-    private static func isRepositoryComponent(_ value: String) -> Bool {
-        !value.isEmpty && value != "." && value != ".." && value.count <= 100
-    }
 }
 
 struct TauriUpdateCatalog: Equatable, Sendable {

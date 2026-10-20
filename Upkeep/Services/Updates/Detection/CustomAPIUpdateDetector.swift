@@ -3,18 +3,9 @@ import Foundation
 enum CustomAPIUpdateDetector {
     private static let latestNeedle = Data("latest.json".utf8)
     private static let apiLatestNeedle = Data("/api/latest".utf8)
-    private static let httpsNeedle = Data("https://".utf8)
-    private static let urlAllowed = CharacterSet(
-        charactersIn:
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%"
-    )
     private static let skippedPathComponents: Set<String> = [
         "alpha", "beta", "canary", "dev", "nightly", "preview", "rc",
     ]
-
-    static func detect(bundleURL: URL) -> URL? {
-        ExecutableUpdaterDetector.detect(bundleURL: bundleURL).customAPIUpdateEndpoint
-    }
 
     static func endpoint(inFile fileURL: URL) -> URL? {
         ExecutableUpdaterDetector.detect(fileURL: fileURL).customAPIUpdateEndpoint
@@ -63,40 +54,20 @@ enum CustomAPIUpdateDetector {
         in window: Data,
         allowReconstruction: Bool = true
     ) -> URL? {
-        let maximumURLLength = 400
-        var search = needleRange.lowerBound
-        var steps = 0
-
-        while search > window.startIndex && steps < maximumURLLength {
-            search = window.index(before: search)
-            steps += 1
-            guard window.distance(from: search, to: needleRange.lowerBound) >= httpsNeedle.count
-            else {
-                continue
-            }
-            let httpsEnd = window.index(search, offsetBy: httpsNeedle.count)
-            guard window[search..<httpsEnd].elementsEqual(httpsNeedle) else {
-                continue
-            }
-
-            let slice = Data(window[search..<needleRange.upperBound])
-            if let rawValue = String(data: slice, encoding: .utf8),
-                let url = validatedEndpoint(rawValue)
-            {
+        ExecutableUpdateURL.find(endingAt: needleRange, in: window) { slice in
+            if let raw = String(data: slice, encoding: .utf8), let url = validatedEndpoint(raw) {
                 return url
             }
-            if allowReconstruction, let url = reconstructedStableEndpoint(from: slice) {
-                return url
-            }
+            return allowReconstruction ? reconstructedStableEndpoint(from: slice) : nil
         }
-
-        return nil
     }
 
     private static func reconstructedStableEndpoint(from slice: Data) -> URL? {
         var ascii = Data()
         for byte in slice {
-            guard (32..<127).contains(byte), urlAllowed.contains(UnicodeScalar(byte)) else {
+            guard (32..<127).contains(byte),
+                ExecutableUpdateURL.allowedCharacters.contains(UnicodeScalar(byte))
+            else {
                 break
             }
             ascii.append(byte)
@@ -117,7 +88,11 @@ enum CustomAPIUpdateDetector {
         if rawValue.contains("%s") || rawValue.contains("%d") || rawValue.contains("{{") {
             return nil
         }
-        guard rawValue.unicodeScalars.allSatisfy({ urlAllowed.contains($0) }) else {
+        guard
+            rawValue.unicodeScalars.allSatisfy({
+                ExecutableUpdateURL.allowedCharacters.contains($0)
+            })
+        else {
             return nil
         }
         guard let url = SecureUpdateURL.https(string: rawValue),
@@ -137,7 +112,7 @@ enum CustomAPIUpdateDetector {
     // Rust/Go can store a base URL separately from the update API path.
     // Reconstruct only with both API markers and an origin belonging to the app.
     static func apiOrigins(in data: Data) -> [URL] {
-        guard data.range(of: httpsNeedle) != nil else { return [] }
+        guard data.range(of: ExecutableUpdateURL.httpsNeedle) != nil else { return [] }
         let text = String(decoding: data, as: UTF8.self)
         guard
             let expression = try? NSRegularExpression(

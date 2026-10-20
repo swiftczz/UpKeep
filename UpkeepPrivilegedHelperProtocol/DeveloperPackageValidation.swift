@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 public enum DeveloperPackageValidation {
     public typealias Command = (String, [String]) throws -> Data
@@ -33,26 +32,9 @@ public enum DeveloperPackageValidation {
         else {
             throw failure("安装包的目标应用标识不匹配。")
         }
-        var code: SecStaticCode?
-        var requirement: SecRequirement?
-        var information: CFDictionary?
-        let developerID =
-            "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
-        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
-            SecRequirementCreateWithString(developerID as CFString, [], &requirement)
-                == errSecSuccess,
-            let requirement,
-            SecStaticCodeCheckValidity(
-                code,
-                SecCSFlags(
-                    rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode
-                        | kSecCSStrictValidate), requirement) == errSecSuccess,
-            SecCodeCopySigningInformation(
-                code, SecCSFlags(rawValue: kSecCSSigningInformation), &information)
-                == errSecSuccess,
-            let information = information as? [String: Any],
-            let team = information[kSecCodeInfoTeamIdentifier as String] as? String
-        else { throw failure("目标应用没有有效的 Developer ID 签名。") }
+        guard let team = CodeSignature.developerIDTeam(at: url) else {
+            throw failure("目标应用没有有效的 Developer ID 签名。")
+        }
         return team
     }
 

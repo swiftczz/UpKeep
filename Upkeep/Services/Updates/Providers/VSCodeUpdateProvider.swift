@@ -142,7 +142,6 @@ struct VSCodeUpdateProvider: Sendable {
                     application.currentVersion)
                     == .orderedSame
                 {
-                    application.latestBuildVersion = payload.commit.map { String($0.prefix(7)) }
                     application.status = .updateAvailable
                     application.canAutomaticallyUpdate = payload.packageURL != nil
                 }

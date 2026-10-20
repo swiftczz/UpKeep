@@ -337,9 +337,7 @@ struct AppStoreLookupCandidate: Equatable, Sendable {
 
 enum AppStoreStorefront {
     static func currentCountryCode() async -> String? {
-        if #available(macOS 12.0, *),
-            let storefront = await Storefront.current
-        {
+        if let storefront = await Storefront.current {
             if let countryCode = AppStoreCountryCode.normalized(storefront.countryCode) {
                 return countryCode
             }

@@ -13,20 +13,8 @@ struct GitHubReleaseDownload: Equatable, Sendable {
     let tag: String
     let fileName: String
 
-    var cacheKey: String {
-        "\(owner)/\(repository)/\(tag)/\(fileName)"
-    }
-
     var apiURL: URL? {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/")
-        guard let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: allowed) else {
-            return nil
-        }
-        return SecureUpdateURL.https(
-            string:
-                "https://api.github.com/repos/\(owner)/\(repository)/releases/tags/\(encodedTag)"
-        )
+        GitHubRepository(owner: owner, name: repository)?.apiURL(path: ["releases", "tags", tag])
     }
 
     static func parse(_ value: String) -> GitHubReleaseDownload? {
@@ -37,45 +25,15 @@ struct GitHubReleaseDownload: Equatable, Sendable {
     }
 
     static func parse(_ url: URL) -> GitHubReleaseDownload? {
-        guard let host = url.host?.lowercased(),
-            host == "github.com" || host == "www.github.com"
+        guard let release = GitHubRepository.release(in: url), let fileName = release.fileName
         else {
             return nil
         }
-
-        let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? ""
-        let parts = path.split(separator: "/").map {
-            String($0).removingPercentEncoding ?? String($0)
-        }
-        guard parts.count >= 6,
-            parts[2].lowercased() == "releases",
-            parts[3].lowercased() == "download"
-        else {
-            return nil
-        }
-
-        let owner = parts[0]
-        let repository = parts[1].replacingOccurrences(
-            of: ".git",
-            with: "",
-            options: [.anchored, .backwards]
-        )
-        let tag = parts[4..<parts.count - 1].joined(separator: "/")
-        let fileName = parts[parts.count - 1]
-        guard !owner.isEmpty, owner != "." && owner != "..",
-            !repository.isEmpty, repository != "." && repository != "..",
-            !tag.isEmpty, !fileName.isEmpty
-        else {
-            return nil
-        }
-
         return GitHubReleaseDownload(
-            owner: owner,
-            repository: repository,
-            tag: tag,
-            fileName: fileName
-        )
+            owner: release.repository.owner, repository: release.repository.name,
+            tag: release.tag, fileName: fileName)
     }
+
 }
 
 enum GitHubReleasesDetector {
@@ -117,29 +75,26 @@ enum GitHubReleasesDetector {
                 }
 
                 let owner = String(text[ownerRange])
-                let repository = String(text[repositoryRange]).replacingOccurrences(
-                    of: ".git",
-                    with: "",
-                    options: [.anchored, .backwards]
-                )
+                let repository = String(text[repositoryRange])
                 let prefix =
                     match.numberOfRanges > 3
                     ? Range(match.range(at: 3), in: text).map { String(text[$0]) } : nil
-                let endpoint = prefix == nil ? "releases/latest" : "releases?per_page=100"
-                guard isRepositoryComponent(owner), isRepositoryComponent(repository),
-                    let apiURL = URL(
-                        string: "https://api.github.com/repos/\(owner)/\(repository)/\(endpoint)"
-                    ),
-                    let homepageURL = URL(string: "https://github.com/\(owner)/\(repository)")
-                else {
-                    return
+                guard let repository = GitHubRepository(owner: owner, name: repository),
+                    let homepageURL = repository.homepageURL,
+                    let endpoint = repository.apiURL(
+                        path: prefix == nil ? ["releases", "latest"] : ["releases"]),
+                    var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+                else { return }
+                if prefix != nil {
+                    components.queryItems = [URLQueryItem(name: "per_page", value: "100")]
                 }
+                guard let apiURL = components.url else { return }
 
                 matches.append(
                     (
                         match.range.location,
                         GitHubReleasesMetadata(
-                            identifier: "\(owner)/\(repository)",
+                            identifier: repository.identifier,
                             apiURL: apiURL,
                             homepageURL: homepageURL,
                             tagPrefix: prefix
@@ -181,10 +136,6 @@ enum GitHubReleasesDetector {
         return applicationValues.contains { value in
             !repositoryAliases.isDisjoint(with: aliases(for: value))
         }
-    }
-
-    private static func isRepositoryComponent(_ value: String) -> Bool {
-        !value.isEmpty && value != "." && value != ".." && value.count <= 100
     }
 
     private static func aliases(for value: String) -> Set<String> {

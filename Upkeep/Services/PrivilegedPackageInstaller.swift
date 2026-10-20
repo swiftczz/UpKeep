@@ -234,19 +234,11 @@ enum PrivilegedPackageInstaller {
     }
 
     private static func helperIsReachable() -> Bool {
-        let connection = NSXPCConnection(
-            machServiceName: UpkeepPrivilegedHelperConstants.machServiceName,
-            options: .privileged
-        )
-        connection.remoteObjectInterface = NSXPCInterface(
-            with: UpkeepPrivilegedHelperProtocol.self
-        )
-        connection.resume()
-        defer { connection.invalidate() }
-
-        let reply = PrivilegedHelperReply<Bool>()
-        ping(connection) { reply.resolve($0) }
-        return reply.wait(timeout: 5, otherwise: false)
+        (try? PrivilegedHelperConnection.withConnection { connection in
+            let reply = PrivilegedHelperReply<Bool>()
+            ping(connection) { reply.resolve($0) }
+            return reply.wait(timeout: 5, otherwise: false)
+        }) ?? false
     }
 
     private static var helperUnavailableError: NSError {
@@ -280,67 +272,65 @@ enum PrivilegedPackageInstaller {
         bundleIdentifier: String?, version: String?, buildVersion: String?,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) -> PrivilegedInstallResult {
-        let connection = NSXPCConnection(
-            machServiceName: UpkeepPrivilegedHelperConstants.machServiceName,
-            options: .privileged
-        )
-        connection.remoteObjectInterface = NSXPCInterface(
-            with: UpkeepPrivilegedHelperProtocol.self
-        )
-        connection.resume()
-        defer { connection.invalidate() }
-
-        return sendInstallRequest(
-            using: PrivilegedHelperConnectionDependencies(
-                ping: { reply in ping(connection, reply: reply) },
-                install: { reply in
-                    progress(.indeterminate("正在安装…"))
-                    guard
-                        let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                            reply(
-                                .failed(
-                                    NSError(
-                                        domain: "Upkeep.PrivilegedInstaller", code: 3,
-                                        userInfo: [
-                                            NSLocalizedDescriptionKey:
-                                                "安装助手连接中断：\(error.localizedDescription)"
-                                        ]
-                                    )))
-                        }) as? UpkeepPrivilegedHelperProtocol
-                    else {
-                        reply(.failed(helperUnavailableError))
-                        return
-                    }
-                    let completion: (String?) -> Void = { errorMessage in
-                        if let errorMessage, !errorMessage.isEmpty {
-                            reply(
-                                .failed(
-                                    NSError(
-                                        domain: "Upkeep.PrivilegedInstaller", code: 4,
-                                        userInfo: [NSLocalizedDescriptionKey: errorMessage]
-                                    )))
-                        } else {
-                            reply(.installed)
+        do {
+            return try PrivilegedHelperConnection.withConnection { connection in
+                return sendInstallRequest(
+                    using: PrivilegedHelperConnectionDependencies(
+                        ping: { reply in ping(connection, reply: reply) },
+                        install: { reply in
+                            progress(.indeterminate("正在安装…"))
+                            guard
+                                let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                                    reply(
+                                        .failed(
+                                            NSError(
+                                                domain: "Upkeep.PrivilegedInstaller", code: 3,
+                                                userInfo: [
+                                                    NSLocalizedDescriptionKey:
+                                                        "安装助手连接中断：\(error.localizedDescription)"
+                                                ]
+                                            )))
+                                }) as? UpkeepPrivilegedHelperProtocol
+                            else {
+                                reply(.failed(helperUnavailableError))
+                                return
+                            }
+                            let completion: (String?) -> Void = { errorMessage in
+                                if let errorMessage, !errorMessage.isEmpty {
+                                    reply(
+                                        .failed(
+                                            NSError(
+                                                domain: "Upkeep.PrivilegedInstaller", code: 4,
+                                                userInfo: [NSLocalizedDescriptionKey: errorMessage]
+                                            )))
+                                } else {
+                                    reply(.installed)
+                                }
+                            }
+                            if let receiptURL {
+                                proxy.installAppStorePackage(
+                                    packagePath: packageURL.path,
+                                    receiptPath: receiptURL.path,
+                                    applicationPath: applicationURL.path,
+                                    withReply: completion)
+                            } else if let bundleIdentifier {
+                                proxy.installDeveloperPackage(
+                                    packagePath: packageURL.path,
+                                    applicationPath: applicationURL.path,
+                                    bundleIdentifier: bundleIdentifier,
+                                    version: version, buildVersion: buildVersion,
+                                    withReply: completion)
+                            } else {
+                                completion("缺少目标应用标识。")
+                            }
                         }
-                    }
-                    if let receiptURL {
-                        proxy.installAppStorePackage(
-                            packagePath: packageURL.path,
-                            receiptPath: receiptURL.path, applicationPath: applicationURL.path,
-                            withReply: completion)
-                    } else if let bundleIdentifier {
-                        proxy.installDeveloperPackage(
-                            packagePath: packageURL.path,
-                            applicationPath: applicationURL.path,
-                            bundleIdentifier: bundleIdentifier,
-                            version: version, buildVersion: buildVersion, withReply: completion)
-                    } else {
-                        completion("缺少目标应用标识。")
-                    }
-                }
-            ),
-            installationTimeout: receiptURL == nil ? 1500 : 300
-        )
+                    ),
+                    installationTimeout: receiptURL == nil ? 1500 : 300
+                )
+            }
+        } catch {
+            return .failed(error as NSError)
+        }
     }
 
     static func sendInstallRequest(
