@@ -13,15 +13,8 @@ struct LibraryStatusBar: View {
         Group {
             if let activity {
                 row(text: activity.text) {
-                    if let fraction = activity.fraction {
-                        SmoothProgressView(fraction: fraction, isCircular: true)
-                            .animation(
-                                reduceMotion ? nil : .linear(duration: 0.25), value: fraction)
-                    } else {
-                        ProgressView()
-                    }
+                    ProgressRing(fraction: activity.fraction, lineWidth: 1.75)
                 }
-                .controlSize(.mini)
             } else if let lastCheckedAt {
                 TimelineView(.everyMinute) { context in
                     row(text: "上次检查：\(Self.relativeText(for: lastCheckedAt, now: context.date))") {
@@ -72,8 +65,9 @@ struct LibraryStatusBar: View {
             indicator()
                 .frame(width: 14, height: 14)
 
+            // Counts change several times a second during a check; update in place.
             Text(text)
-                .contentTransition(.numericText())
+                .transaction { $0.animation = nil }
                 .lineLimit(1)
                 .truncationMode(.middle)
         }

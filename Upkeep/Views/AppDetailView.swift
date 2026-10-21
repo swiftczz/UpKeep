@@ -91,6 +91,8 @@ struct AppDetailView: View {
                     }
                 }
             }
+            // The name keeps its width; the progress bar beside it gives way first.
+            .layoutPriority(1)
 
             Spacer(minLength: 24)
 
@@ -129,6 +131,7 @@ struct AppDetailView: View {
             switch primaryActionPhase {
             case .updating:
                 if let updateState {
+                    // Sits directly in the header: no card or border around the progress.
                     AppUpdateProgressView(state: updateState)
                         .transition(.blurReplace)
                 }

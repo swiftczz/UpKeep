@@ -155,8 +155,7 @@ struct UpkeepRootView: View {
                         } icon: {
                             Group {
                                 if isUpdateAllBusy {
-                                    ProgressView()
-                                        .controlSize(.small)
+                                    ProgressRing(fraction: updateAllFraction, isWorking: true)
                                 } else {
                                     Image(systemName: "arrow.down.circle")
                                 }
@@ -259,6 +258,13 @@ struct UpkeepRootView: View {
 
     private var pageTransitionAnimation: Animation? {
         reduceMotion ? nil : .smooth(duration: 0.3)
+    }
+
+    /// Nil while preparing, so the ring shows only its comet.
+    private var updateAllFraction: Double? {
+        library.updateAllProgress.map {
+            Double($0.completedCount) / Double(max($0.totalCount, 1))
+        }
     }
 
     private var isUpdateAllBusy: Bool {

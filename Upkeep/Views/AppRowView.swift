@@ -98,6 +98,7 @@ extension AppRowView: Equatable {
 
 private struct AppRowAccessoryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.backgroundProminence) private var backgroundProminence
     let channelSystemImage: String
     let channelTitle: String
     let isChecking: Bool
@@ -115,23 +116,16 @@ private struct AppRowAccessoryView: View {
     @ViewBuilder
     private var accessory: some View {
         if let updateProgress {
-            if let fraction = updateProgress.fractionCompleted {
-                SmoothProgressView(fraction: fraction, isCircular: true)
-                    .controlSize(.small)
-                    .animation(reduceMotion ? nil : .linear(duration: 0.25), value: fraction)
-                    .help(updateProgress.status)
-                    .accessibilityLabel(progressAccessibilityLabel(updateProgress))
-                    .transition(.opacity)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-                    .help(updateProgress.status)
-                    .accessibilityLabel(updateProgress.status)
-                    .transition(.opacity)
-            }
+            // The same overall fraction as the detail bar, so both move together.
+            ProgressRing(
+                fraction: updateState?.overallFraction,
+                isWorking: updateProgress.fractionCompleted == nil
+            )
+            .help(updateProgress.status)
+            .accessibilityLabel(progressAccessibilityLabel(updateProgress))
+            .transition(.opacity)
         } else if isChecking {
-            ProgressView()
-                .controlSize(.small)
+            ProgressRing(fraction: nil)
                 .help("正在检查更新")
                 .accessibilityLabel("正在检查更新")
                 .transition(.opacity)
@@ -148,13 +142,23 @@ private struct AppRowAccessoryView: View {
     }
 
     private var symbol: (name: String, style: AnyShapeStyle, help: String) {
+        // On a selected row the accent background would swallow green and orange;
+        // the symbol's shape still tells success from failure.
+        let prominent = backgroundProminence == .increased
         switch outcome {
         case .succeeded(let version):
-            ("checkmark.circle.fill", AnyShapeStyle(.green), "已更新到 \(version)")
+            return (
+                "checkmark.circle.fill", prominent ? AnyShapeStyle(.white) : AnyShapeStyle(.green),
+                "已更新到 \(version)"
+            )
         case .failed(let message):
-            ("exclamationmark.triangle.fill", AnyShapeStyle(.orange), "更新未完成：\(message)")
+            return (
+                "exclamationmark.triangle.fill",
+                prominent ? AnyShapeStyle(.white) : AnyShapeStyle(.orange),
+                "更新未完成：\(message)"
+            )
         case nil:
-            (channelSystemImage, AnyShapeStyle(.secondary), channelTitle)
+            return (channelSystemImage, AnyShapeStyle(.secondary), channelTitle)
         }
     }
 
@@ -173,9 +177,7 @@ private struct AppRowAccessoryView: View {
     }
 
     private func progressAccessibilityLabel(_ progress: UpdateProgress) -> String {
-        if let percentText = progress.percentText {
-            return "\(progress.status)，\(percentText)"
-        }
-        return progress.status
+        let fraction = updateState?.overallFraction ?? progress.overallFraction
+        return "\(progress.status)，\(Int((fraction * 100).rounded(.down)))%"
     }
 }

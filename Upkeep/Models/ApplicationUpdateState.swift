@@ -10,6 +10,9 @@ final class ApplicationUpdateState {
 
     private(set) var isUpdating = false
     private(set) var progress: UpdateProgress?
+    /// Position on the overall bar. It only moves forward, so a retried download
+    /// or a provider that repeats a stage never makes the bar jump back.
+    private(set) var overallFraction: Double = 0
     /// The last finished attempt: success fades on its own, failure stays until retried.
     private(set) var outcome: Outcome?
     @ObservationIgnored private var outcomeExpiration: Task<Void, Never>?
@@ -18,6 +21,7 @@ final class ApplicationUpdateState {
 
     func begin() {
         clearOutcome()
+        overallFraction = 0
         progress = .indeterminate("正在更新…")
         isUpdating = true
     }
@@ -25,6 +29,8 @@ final class ApplicationUpdateState {
     func report(_ progress: UpdateProgress) {
         guard isUpdating, self.progress != progress else { return }
         self.progress = progress
+        let advanced = max(overallFraction, progress.overallFraction)
+        if advanced != overallFraction { overallFraction = advanced }
     }
 
     func finish() {

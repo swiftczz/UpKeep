@@ -724,7 +724,9 @@ private final class FileDownloadTask: NSObject, URLSessionDownloadDelegate, @unc
                 fractionCompleted: UpdateProgress.clamp(
                     Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
                 ),
-                status: "正在下载…"
+                status: "正在下载…",
+                completedBytes: totalBytesWritten,
+                totalBytes: totalBytesExpectedToWrite
             )
         )
     }
