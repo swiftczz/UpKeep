@@ -286,6 +286,9 @@ extension AppRecord {
         canInstall: Bool
     ) {
         latestVersion = version
+        // A build left from the installed release would be compared against the next
+        // install. Providers that publish a build set it after this call.
+        latestBuildVersion = nil
         self.releaseDate = releaseDate
         self.releaseNotes = releaseNotes
         self.releaseNotesURL = releaseNotesURL

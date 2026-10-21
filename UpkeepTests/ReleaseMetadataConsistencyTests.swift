@@ -40,6 +40,44 @@ final class ReleaseMetadataConsistencyTests: XCTestCase {
         }
     }
 
+    // Kero 2.0.8 shipped with build "53"; 2.0.9 uses its version as the build.
+    func testRemoteReleaseDropsTheInstalledBuildSoAnUpdatedAppSettles() throws {
+        var record = AppRecord(
+            name: "Kero",
+            bundleIdentifier: "sh.kero",
+            applicationURL: URL(fileURLWithPath: "/Applications/Kero.app"),
+            currentVersion: "2.0.8",
+            buildVersion: "53",
+            updateConfiguration: UpdateConfiguration(
+                mechanism: .githubReleases,
+                feedURL: URL(string: "https://api.github.com/repos/egoist/kero/releases/latest"),
+                identifier: "egoist/kero"),
+            status: .checking
+        )
+        record.applyInstalledRelease()
+        XCTAssertEqual(record.latestBuildVersion, "53")
+
+        record.applyRemoteRelease(version: "2.0.9", canInstall: true)
+        XCTAssertNil(record.latestBuildVersion)
+        XCTAssertEqual(record.latestVersionSummary, "2.0.9")
+        XCTAssertEqual(record.status, .updateAvailable)
+
+        let installed = AppRecord(
+            name: "Kero",
+            bundleIdentifier: "sh.kero",
+            applicationURL: record.applicationURL,
+            currentVersion: "2.0.9",
+            buildVersion: "2.0.9",
+            updateConfiguration: record.updateConfiguration,
+            status: .checking
+        )
+        let settled = try XCTUnwrap(
+            AppLibrary.mergeInstalledApplicationChanges([installed], previous: [record]).first)
+        XCTAssertEqual(settled.status, .upToDate)
+        XCTAssertFalse(settled.needsUpdate)
+        XCTAssertFalse(settled.canAutomaticallyUpdate)
+    }
+
     func testSameVersionDifferentBuildDoesNotReuseMetadata() {
         var previous = app()
         previous.latestBuildVersion = "100"
