@@ -137,6 +137,183 @@ final class UpdateSourceRuleTests: XCTestCase {
         XCTAssertEqual(store.current().rules.map(\.id), ["editor", "viewer"])
     }
 
+    func testUpdaterFeedRulesHandTheirFeedToTheNamedUpdater() throws {
+        for format in UpdateSourceRule.Format.allCases {
+            let rule = UpdateSourceRule(
+                id: "updater", kind: .updaterFeed,
+                match: .init(bundleIdentifier: "com.example.editor"), format: format,
+                feed: "https://example.com/{version}/feed",
+                homepage: "https://example.com/download")
+            let match = try XCTUnwrap(
+                UpdateSourceRuleSet(rules: [rule]).firstMatch(for: "com.example.editor"))
+
+            let configuration = try XCTUnwrap(
+                match.configuration(
+                    values: match.values(
+                        version: "1.2", build: nil, bundleIdentifier: "com.example.editor")))
+
+            XCTAssertEqual(configuration.mechanism, format.mechanism)
+            XCTAssertEqual(configuration.identifier, "rule:updater")
+            XCTAssertEqual(configuration.feedURL?.absoluteString, "https://example.com/1.2/feed")
+            XCTAssertEqual(configuration.homepageURL?.absoluteString, "https://example.com/download")
+            XCTAssertTrue(configuration.isRuleAssigned)
+        }
+
+        let missingFormat = UpdateSourceRule(
+            id: "no-format", kind: .updaterFeed,
+            match: .init(bundleIdentifier: "com.example.editor"),
+            feed: "https://example.com/latest-mac.yml")
+        var insecure = missingFormat
+        insecure.id = "insecure"
+        insecure.format = .electronBuilder
+        insecure.feed = "http://example.com/latest-mac.yml"
+        let rules = UpdateSourceRuleSet(rules: [missingFormat, insecure])
+        XCTAssertTrue(rules.rules.isEmpty)
+        XCTAssertEqual(rules.issues.count, 2)
+        XCTAssertTrue(rules.issues[0].message.contains("format"), rules.issues[0].message)
+    }
+
+    func testAiCoinUsesItsElectronBuilderFeedSetInCode() throws {
+        let url = try makeApplication(bundleIdentifier: "com.aicoin.desktop", version: "2.16.27")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let resources = url.appendingPathComponent("Contents/Resources")
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        try write(
+            "provider: custom\nupdaterCacheDirName: aicoin-updater\n",
+            to: resources.appendingPathComponent("app-update.yml"))
+
+        for record in [
+            ApplicationScanner.makeRecord(from: url),
+            ApplicationScanner.makeInstalledApplicationRecord(from: url),
+        ] {
+            let configuration = try XCTUnwrap(record).updateConfiguration
+            XCTAssertEqual(configuration.mechanism, .electronBuilder)
+            XCTAssertEqual(configuration.identifier, "rule:aicoin")
+            XCTAssertEqual(
+                configuration.feedURL?.absoluteString,
+                "https://pc-package-1326437257.cos.ap-hongkong.myqcloud.com/download/latest-mac.yml")
+            XCTAssertEqual(configuration.channel, .website)
+        }
+    }
+
+    func testAiCoinManifestSelectsThePackageForEachArchitecture() throws {
+        let feed = try XCTUnwrap(
+            URL(string: "https://pc-package-1326437257.cos.ap-hongkong.myqcloud.com/download/latest-mac.yml"))
+        let manifest = try XCTUnwrap(
+            ElectronBuilderYAML.parseManifest(
+                """
+                version: 2.16.28
+                files:
+                  - url: AiCoin-2.16.28-mac.zip
+                    sha512: x64zip
+                    size: 259854189
+                  - url: AiCoin-2.16.28-arm64-mac.zip
+                    sha512: arm64zip
+                    size: 256982598
+                  - url: AiCoin-2.16.28-arm64-mac.zip
+                    sha512: arm64zip
+                    size: 256982598
+                  - url: AiCoin-2.16.28.dmg
+                    sha512: x64dmg
+                    size: 265515893
+                  - url: AiCoin-2.16.28-arm64.dmg
+                    sha512: arm64dmg
+                    size: 262636508
+                path: AiCoin-2.16.28-mac.zip
+                sha512: x64zip
+                releaseDate: '2026-10-13T08:45:00.000Z'
+                """))
+
+        XCTAssertEqual(manifest.version, "2.16.28")
+        let arm64 = try XCTUnwrap(manifest.selectedPackage(relativeTo: feed, architecture: .arm64))
+        XCTAssertEqual(arm64.url.lastPathComponent, "AiCoin-2.16.28-arm64-mac.zip")
+        XCTAssertEqual(arm64.sha512, "arm64zip")
+        XCTAssertEqual(
+            arm64.url.deletingLastPathComponent().absoluteString,
+            "https://pc-package-1326437257.cos.ap-hongkong.myqcloud.com/download/")
+        let x64 = try XCTUnwrap(manifest.selectedPackage(relativeTo: feed, architecture: .x64))
+        XCTAssertEqual(x64.url.lastPathComponent, "AiCoin-2.16.28-mac.zip")
+    }
+
+    func testRulesOutrankAnEmbeddedSparkleFrameworkButNotADeclaredFeed() throws {
+        let url = try makeApplication(bundleIdentifier: "com.example.editor", version: "1.4")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(
+            at: url.appendingPathComponent("Contents/Frameworks/Sparkle.framework"),
+            withIntermediateDirectories: true)
+        let rule = UpdateSourceRule(
+            id: "editor", kind: .updaterFeed,
+            match: .init(bundleIdentifier: "com.example.editor"), format: .sparkle,
+            feed: "https://example.com/appcast.xml")
+        let rules = UpdateSourceRuleSet(rules: [rule])
+
+        let unassigned = try XCTUnwrap(ApplicationScanner.makeRecord(from: url, rules: .empty))
+        XCTAssertEqual(unassigned.updateConfiguration.mechanism, .sparkle)
+        XCTAssertNil(unassigned.updateConfiguration.feedURL)
+        XCTAssertEqual(unassigned.status, .selfManaged)
+
+        let assigned = try XCTUnwrap(ApplicationScanner.makeRecord(from: url, rules: rules))
+        XCTAssertEqual(assigned.updateConfiguration.identifier, "rule:editor")
+        XCTAssertEqual(
+            assigned.updateConfiguration.feedURL?.absoluteString, "https://example.com/appcast.xml")
+        XCTAssertEqual(assigned.status, .checking)
+        let reused = try XCTUnwrap(
+            ApplicationScanner.makeInstalledApplicationRecord(from: url, rules: rules))
+        XCTAssertEqual(reused.updateConfiguration, assigned.updateConfiguration)
+
+        // Once the vendor declares a feed in Info.plist, the cached rule route is replaced.
+        let infoURL = url.appendingPathComponent("Contents/Info.plist")
+        var info = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: Data(contentsOf: infoURL), format: nil)
+                as? [String: Any])
+        info["SUFeedURL"] = "https://vendor.example.com/appcast.xml"
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: infoURL)
+        let declared = try XCTUnwrap(
+            ApplicationScanner.makeRecord(from: url, reusing: assigned, rules: rules))
+        XCTAssertEqual(
+            declared.updateConfiguration.feedURL?.absoluteString,
+            "https://vendor.example.com/appcast.xml")
+        XCTAssertFalse(declared.updateConfiguration.isRuleAssigned)
+    }
+
+    func testInstallerRequiresASignedMatchingDeveloperForRuleSources() {
+        let ruleSource = UpdateConfiguration(
+            mechanism: .electronBuilder, feedURL: URL(string: "https://example.com/latest-mac.yml"),
+            identifier: "rule:editor")
+        let declaredSource = UpdateConfiguration(
+            mechanism: .electronBuilder, feedURL: URL(string: "https://example.com/latest-mac.yml"),
+            identifier: "https://example.com")
+
+        let signedInstall = ApplicationPackageInstaller.signatureRequirements(
+            for: ruleSource, requiresValidSignature: false, requiresTeamIdentifier: false,
+            installedTeamIdentifier: { "R4A6UKF8S5" })
+        XCTAssertTrue(signedInstall.requiresValidSignature)
+        XCTAssertTrue(signedInstall.requiresTeamIdentifier)
+
+        let unsignedInstall = ApplicationPackageInstaller.signatureRequirements(
+            for: ruleSource, requiresValidSignature: false, requiresTeamIdentifier: false,
+            installedTeamIdentifier: { nil })
+        XCTAssertTrue(unsignedInstall.requiresValidSignature)
+        XCTAssertFalse(unsignedInstall.requiresTeamIdentifier)
+
+        let declared = ApplicationPackageInstaller.signatureRequirements(
+            for: declaredSource, requiresValidSignature: false, requiresTeamIdentifier: false,
+            installedTeamIdentifier: {
+                XCTFail("Declared sources keep their provider's policy")
+                return nil
+            })
+        XCTAssertFalse(declared.requiresValidSignature)
+        XCTAssertFalse(declared.requiresTeamIdentifier)
+
+        // An installed copy signed by one developer never accepts another's build.
+        XCTAssertFalse(
+            ApplicationPackageInstaller.teamIdentifiersMatch(
+                installed: "R4A6UKF8S5", candidate: nil,
+                requiresTeamIdentifier: signedInstall.requiresTeamIdentifier,
+                hasVerifiedUpdateSignature: false))
+    }
+
     // MARK: - Parsing
 
     func testRuleParserReadsOnlyTheNamedFields() throws {

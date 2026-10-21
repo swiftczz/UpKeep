@@ -26,8 +26,14 @@ struct IOSAppStoreDetector: UpdateSourceDetector {
 }
 
 struct SparkleSourceDetector: UpdateSourceDetector {
+    /// A feed in Info.plist is the vendor's declaration and outranks rules; an
+    /// embedded framework alone does not, since such apps often set feeds in code.
+    var requiresDeclaredFeed = false
+
     func detect(_ context: UpdateSourceDetectionContext) -> DetectedUpdateSource? {
-        guard context.hasSparkleSource else { return nil }
+        guard context.hasSparkleSource,
+            !requiresDeclaredFeed || context.sparkleFeedURL != nil
+        else { return nil }
         return DetectedUpdateSource(
             UpdateConfiguration(mechanism: .sparkle, feedURL: context.sparkleFeedURL))
     }

@@ -223,7 +223,8 @@ struct ApplicationScanner: ApplicationScanning {
             !(sourceDetection == .full && previous.updateConfiguration.mechanism == .homebrew
                 && previous.alternateUpdateConfiguration == nil),
             previous.updateConfiguration.mechanism != .sparkle
-                || previous.updateConfiguration.feedURL == feedURL,
+                || previous.updateConfiguration.feedURL == feedURL
+                || previous.updateConfiguration.isRuleAssigned,
             !(previous.updateConfiguration.mechanism == .selfManaged
                 && (sourceDetection == .full
                     || hasSparkleSource
@@ -271,16 +272,20 @@ struct ApplicationScanner: ApplicationScanning {
         since previous: AppRecord, context: UpdateSourceDetectionContext
     ) -> Bool {
         let cached = previous.updateConfiguration
-        if UpdateSourceRule.ruleID(fromConfigurationIdentifier: cached.identifier) != nil,
-            context.rules.match(
-                configurationIdentifier: cached.identifier,
-                bundleIdentifier: context.bundleIdentifier) == nil
+        // Store receipts and Sparkle feeds declared in Info.plist outrank rules in the
+        // registry's detector order.
+        let bundleDeclaresSource =
+            context.hasAppStoreReceipt || context.iOSAppStoreMetadata != nil
+            || context.sparkleFeedURL != nil
+        if cached.isRuleAssigned,
+            bundleDeclaresSource
+                || context.rules.match(
+                    configurationIdentifier: cached.identifier,
+                    bundleIdentifier: context.bundleIdentifier) == nil
         {
             return true
         }
-        // Store receipts and Sparkle feeds outrank rules in the registry's detector order.
-        guard !context.hasAppStoreReceipt, context.iOSAppStoreMetadata == nil,
-            !context.hasSparkleSource,
+        guard !bundleDeclaresSource,
             let detected = RuleSourceDetector(precedence: .beforeHeuristics).detect(context)
         else { return false }
         return detected.configuration.mechanism != cached.mechanism

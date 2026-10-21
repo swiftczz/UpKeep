@@ -1,6 +1,7 @@
 import Foundation
 
-/// Only caches 404s from inferred Craft endpoints, never rate limits or network errors.
+/// Only caches 404s from repositories assigned by update rules, never rate limits or
+/// network errors. The file name predates rules and is kept so existing entries stay valid.
 actor GitHubMissingReleaseCache {
     static let shared = GitHubMissingReleaseCache(fileURL: cacheURL)
     static let lifetime: TimeInterval = 60 * 60

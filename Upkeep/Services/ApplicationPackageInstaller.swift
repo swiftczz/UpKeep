@@ -112,6 +112,14 @@ enum ApplicationPackageInstaller {
             }
         }
         progress(.indeterminate("正在解压…"))
+        let signature = signatureRequirements(
+            for: application.updateConfiguration,
+            requiresValidSignature: requiresValidSignature,
+            requiresTeamIdentifier: requiresTeamIdentifier,
+            installedTeamIdentifier: {
+                ApplicationCodeSigning.teamIdentifier(at: application.applicationURL)
+            }
+        )
         let extractedApplicationURL = try extractAndVerifyApplication(
             from: downloadedURL,
             into: workingDirectory.appendingPathComponent("extracted", isDirectory: true),
@@ -119,8 +127,8 @@ enum ApplicationPackageInstaller {
             expectedEd25519Signature: expectedEd25519Signature,
             ed25519PublicKey: ed25519PublicKey,
             allowsSparkleKeyRotation: allowsSparkleKeyRotation,
-            requiresValidSignature: requiresValidSignature,
-            requiresTeamIdentifier: requiresTeamIdentifier
+            requiresValidSignature: signature.requiresValidSignature,
+            requiresTeamIdentifier: signature.requiresTeamIdentifier
         )
 
         try await ApplicationProcess.quit(application)
@@ -135,6 +143,21 @@ enum ApplicationPackageInstaller {
             executableURL: URL(fileURLWithPath: "/usr/bin/xattr"),
             arguments: ["-dr", "com.apple.quarantine", application.applicationURL.path]
         )
+    }
+
+    /// Rules choose where a download comes from, never how far it is trusted.
+    /// Whichever provider installs it, a rule-assigned source needs a valid code
+    /// signature, and the installed developer's Team ID when the installed copy has one.
+    static func signatureRequirements(
+        for configuration: UpdateConfiguration,
+        requiresValidSignature: Bool,
+        requiresTeamIdentifier: Bool,
+        installedTeamIdentifier: () -> String?
+    ) -> (requiresValidSignature: Bool, requiresTeamIdentifier: Bool) {
+        guard configuration.isRuleAssigned else {
+            return (requiresValidSignature, requiresTeamIdentifier)
+        }
+        return (true, requiresTeamIdentifier || installedTeamIdentifier() != nil)
     }
 
     static func verifySHA512(of fileURL: URL, expected: String) throws {

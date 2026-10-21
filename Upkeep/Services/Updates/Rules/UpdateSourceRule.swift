@@ -9,6 +9,26 @@ struct UpdateSourceRule: Codable, Sendable, Equatable {
         case jsonFeed
         /// The latest release of a GitHub repository.
         case githubReleases
+        /// A feed in a known updater's format, handled by that updater's provider.
+        case updaterFeed
+    }
+
+    /// Updater formats whose providers need nothing but the feed URL.
+    enum Format: String, Codable, Sendable, CaseIterable {
+        /// electron-builder's `latest-mac.yml`.
+        case electronBuilder
+        /// A Sparkle appcast.
+        case sparkle
+        /// A Tauri updater manifest.
+        case tauri
+
+        var mechanism: UpdateMechanism {
+            switch self {
+            case .electronBuilder: .electronBuilder
+            case .sparkle: .sparkle
+            case .tauri: .tauri
+            }
+        }
     }
 
     enum Precedence: String, Codable, Sendable {
@@ -49,7 +69,9 @@ struct UpdateSourceRule: Codable, Sendable, Equatable {
     var kind: Kind
     var precedence: Precedence?
     var match: Match
-    /// `jsonFeed`: an HTTPS URL template.
+    /// `updaterFeed`: the format `feed` is published in.
+    var format: Format?
+    /// `jsonFeed` and `updaterFeed`: an HTTPS URL template.
     var feed: String?
     /// `githubReleases`: an `owner/name` template.
     var repository: String?
@@ -62,7 +84,7 @@ struct UpdateSourceRule: Codable, Sendable, Equatable {
 
     var effectivePrecedence: Precedence { precedence ?? .beforeHeuristics }
 
-    /// Stored in `UpdateConfiguration.identifier` for `jsonFeed` rules.
+    /// Stored in `UpdateConfiguration.identifier` for `jsonFeed` and `updaterFeed` rules.
     var configurationIdentifier: String { Self.identifierPrefix + id }
 
     static func ruleID(fromConfigurationIdentifier identifier: String?) -> String? {
@@ -180,13 +202,19 @@ extension UpdateSourceRule {
         }
 
         switch kind {
-        case .jsonFeed:
+        case .jsonFeed, .updaterFeed:
             guard let feed = feed?.nonBlankValue, feed.lowercased().hasPrefix("https://") else {
-                throw UpdateSourceRuleError(message: "jsonFeed 规则需要以 https:// 开头的 feed。")
+                throw UpdateSourceRuleError(
+                    message: "\(kind.rawValue) 规则需要以 https:// 开头的 feed。")
             }
             try checkPlaceholders(in: feed, field: "feed", allowed: placeholders)
-            guard let fields, !fields.version.paths.isEmpty else {
-                throw UpdateSourceRuleError(message: "jsonFeed 规则需要 fields.version。")
+            if kind == .jsonFeed {
+                guard let fields, !fields.version.paths.isEmpty else {
+                    throw UpdateSourceRuleError(message: "jsonFeed 规则需要 fields.version。")
+                }
+            } else if format == nil {
+                let formats = Format.allCases.map(\.rawValue).joined(separator: "、")
+                throw UpdateSourceRuleError(message: "updaterFeed 规则需要 format：\(formats)。")
             }
         case .githubReleases:
             guard let repository = repository?.nonBlankValue,
@@ -242,7 +270,7 @@ struct UpdateSourceRuleMatch: Sendable {
     }
 
     func feedURL(values: [String: String]) -> URL? {
-        guard rule.kind == .jsonFeed, let feed = rule.feed else { return nil }
+        guard rule.kind != .githubReleases, let feed = rule.feed else { return nil }
         return httpsURL(feed, values: values)
     }
 
@@ -288,6 +316,16 @@ struct UpdateSourceRuleMatch: Sendable {
             return UpdateConfiguration(
                 mechanism: .githubReleases, feedURL: metadata.apiURL,
                 homepageURL: metadata.homepageURL, identifier: metadata.identifier)
+        case .updaterFeed:
+            // The updater's provider reads the stored feed; placeholders are resolved
+            // again whenever the scanner sees a new version.
+            guard let format = rule.format, let feedURL = feedURL(values: values) else {
+                return nil
+            }
+            return UpdateConfiguration(
+                mechanism: format.mechanism, feedURL: feedURL,
+                homepageURL: homepageURL(values: values),
+                identifier: rule.configurationIdentifier)
         }
     }
 

@@ -13,11 +13,23 @@ extension UpdateSourceRuleSet {
         }
     }()
 
-    /// Storyteller's Craft apps publish to `storytold/<slug>` without an embedded
-    /// endpoint. They are only a fallback: anything the bundle declares wins, and
-    /// the provider must still read a valid release before offering an update.
+    /// - `storyteller-craft`: Storyteller's Craft apps publish to `storytold/<slug>`
+    ///   without an embedded endpoint. Only a fallback: anything the bundle declares
+    ///   wins, and the provider must still read a valid release.
+    /// - `aicoin`: AiCoin's `app-update.yml` says `provider: custom`; the app sets
+    ///   electron-builder's generic feed (`GENERIC_SERVER_URL`, channel `latest`)
+    ///   in its bundled JavaScript instead.
     static let builtInRulesJSON = #"""
         [
+          {
+            "id": "aicoin",
+            "name": "AiCoin",
+            "kind": "updaterFeed",
+            "format": "electronBuilder",
+            "match": { "bundleIdentifier": "com.aicoin.desktop" },
+            "feed": "https://pc-package-1326437257.cos.ap-hongkong.myqcloud.com/download/latest-mac.yml",
+            "homepage": "https://www.aicoin.com/download"
+          },
           {
             "id": "storyteller-craft",
             "name": "Storyteller Craft",

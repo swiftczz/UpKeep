@@ -181,7 +181,8 @@ private enum CustomAPIFeedProfile {
         let configuration = application.updateConfiguration
         if let match = rules.match(
             configurationIdentifier: configuration.identifier,
-            bundleIdentifier: application.bundleIdentifier)
+            bundleIdentifier: application.bundleIdentifier),
+            match.rule.kind == .jsonFeed
         {
             self = .rule(match)
         } else if ElectronCustomAPIUpdateDetector.usesVersionedFeed(configuration) {

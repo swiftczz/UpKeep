@@ -41,6 +41,11 @@ struct UpdateConfiguration: Hashable, Sendable, Codable {
         }
     }
 
+    /// Assigned by an `UpdateSourceRule` rather than declared by the application.
+    var isRuleAssigned: Bool {
+        UpdateSourceRule.ruleID(fromConfigurationIdentifier: identifier) != nil
+    }
+
     var isCheckable: Bool {
         switch mechanism.traits.checkability {
         case .always: true

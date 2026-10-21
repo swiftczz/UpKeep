@@ -48,10 +48,11 @@ struct UpdateSourceRegistry: Sendable {
             detectors: [
                 AppStoreReceiptDetector(),
                 IOSAppStoreDetector(),
-                SparkleSourceDetector(),
+                SparkleSourceDetector(requiresDeclaredFeed: true),
                 // Rules outrank heuristics, but not what the vendor declares in the
                 // bundle: a store receipt or a Sparkle feed in Info.plist.
                 RuleSourceDetector(precedence: .beforeHeuristics),
+                SparkleSourceDetector(),
                 ElectronBuilderSourceDetector(),
                 VSCodeSourceDetector(),
                 ElectronCustomAPISourceDetector(),

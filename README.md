@@ -50,6 +50,8 @@ Electron 应用除了标准更新配置，也支持从 `app.asar` 中按需读�
 
 Craft 套件通过内置的更新规则接入 GitHub Releases：完整 Bundle ID `ai.storyteller.<名称>craft` 对应 `storytold/<名称>craft` 仓库，不依赖应用显示名称。遵循此规则的新增应用会自动识别，无需逐个添加名单。该规则是兜底规则，应用已有的更新协议优先使用。
 
+AiCoin 的 `app-update.yml` 只声明 `provider: custom`，实际的 electron-builder 更新地址写在应用脚本中。内置规则将其指向官方的 `latest-mac.yml`，继续由 Electron Updater 读取版本、按架构选择安装包并校验 SHA-512。
+
 Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 Mac 桌面安装包，排除 CLI、网页及服务器附件；安装时仍校验 Bundle ID 和代码签名。检查结果沿用本地应用缓存；候选源返回 404 时缓存一小时，避免自动检查反复请求，手动刷新会重新验证。无需 ArtCraft Launcher 或其他应用清单接口。
 
 能否直接安装取决于更新源是否提供兼容的安装包。仅提供更新页面的条目会显示“查看更新”，没有可安装更新的条目可以直接打开应用。
@@ -60,7 +62,7 @@ Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 M
 
 ### 自定义更新规则
 
-只提供 JSON 更新接口或 GitHub 仓库的应用，可以用规则文件接入，无需修改代码。把 `.json` 文件放进 `~/Library/Application Support/Upkeep/UpdateSources/`（可在“设置”中打开），下次检查更新时生效。一个文件可以写一条规则，也可以写规则数组；文件按名称排序，同一 id 以靠前的文件为准，并覆盖同名的内置规则。
+没有被自动识别、但更新地址可以确定的应用，可以用规则文件接入，无需修改代码，例如只提供 JSON 接口或 GitHub 仓库的应用，或在代码中设置更新器地址的应用。把 `.json` 文件放进 `~/Library/Application Support/Upkeep/UpdateSources/`（可在“设置”中打开），下次检查更新时生效。一个文件可以写一条规则，也可以写规则数组；文件按名称排序，同一 id 以靠前的文件为准，并覆盖同名的内置规则。
 
 ```json
 {
@@ -81,13 +83,26 @@ Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 M
 }
 ```
 
-- `kind`：`jsonFeed` 读取 JSON 接口；`githubReleases` 读取 GitHub 仓库的最新发布，需填写 `repository`（如 `"example/{slug}"`），可用 `assetNamePrefix` 只选择指定前缀的安装包。
+- `kind`：
+  - `jsonFeed` 读取 JSON 接口，用 `fields` 指定字段位置。
+  - `githubReleases` 读取 GitHub 仓库的最新发布，需填写 `repository`（如 `"example/{slug}"`），可用 `assetNamePrefix` 只选择指定前缀的安装包。
+  - `updaterFeed` 把 `feed` 交给已支持的更新器处理，需填写 `format`：`electronBuilder`（`latest-mac.yml`）、`sparkle`（appcast）或 `tauri`（Tauri 更新清单）。版本解析、安装包选择和校验与自动识别到的同类更新源相同。
+
+  ```json
+  {
+    "id": "example-chat",
+    "kind": "updaterFeed",
+    "format": "electronBuilder",
+    "match": { "bundleIdentifier": "com.example.chat" },
+    "feed": "https://downloads.example.com/latest-mac.yml"
+  }
+  ```
 - `match`：`bundleIdentifier` 精确匹配；`bundleIdentifierPattern` 用正则匹配完整 Bundle ID，命名分组（如 `(?<slug>...)`）可在模板中使用。
 - 模板占位符：`{version}`、`{build}`、`{bundleIdentifier}`、`{arch}`（`arm64` 或 `x64`）及命名分组。URL 中的值会做百分号编码。
 - `fields`：用点号路径读取响应，如 `release.assets.0.url`，`$` 表示响应本身；每个字段可以列出多个候选路径，取第一个非空值。`assets` 可以指向数组、以名称为键的对象或单个安装包；省略时，响应本身就是唯一的安装包。
-- `precedence`：默认 `beforeHeuristics`，优先于从安装包推断的更新源，但不覆盖 App Store 收据和 Info.plist 中声明的 Sparkle 更新源；`fallback` 只在其他方式都无法识别时使用。
+- `precedence`：默认 `beforeHeuristics`，优先于从安装包推断的更新源，但不覆盖 App Store 收据和 Info.plist 中声明的 Sparkle 更新源；只内置 Sparkle 框架、未声明地址的应用可以用规则指定 appcast。`fallback` 只在其他方式都无法识别时使用。
 
-规则只决定从哪里读取、如何解析，不能放宽安装校验：下载必须使用 HTTPS，安装包的 Bundle ID 必须与已安装应用一致，代码签名必须有效；已安装应用有开发者签名时，新版本的 Team ID 也必须一致。规则有误时，“设置”中会列出文件名和原因，应用会显示对应规则的错误信息。
+规则只决定从哪里读取、如何解析，不能放宽安装校验：下载必须使用 HTTPS，安装包的 Bundle ID 必须与已安装应用一致，代码签名必须有效；已安装应用有开发者签名时，新版本的 Team ID 也必须一致。这些要求由安装器统一执行，无论更新最终由哪种更新器安装。规则文件有误时，“设置”中会列出文件名和原因；`jsonFeed` 规则的接口无法读取时，应用会显示规则名称和原因，其他类型显示对应更新器的错误信息。
 
 ## 日常使用
 
@@ -198,7 +213,7 @@ UpkeepPrivilegedHelperTests/        后台助手测试
 
 接入新的更新方式时，按需求选择：
 
-1. 只有 JSON 接口或 GitHub 仓库：写一条 `UpdateSourceRule`。内置规则放在 `BuiltInUpdateSourceRules.swift`，格式与用户规则文件相同。
+1. 只有 JSON 接口、GitHub 仓库，或已支持更新器的清单地址：写一条 `UpdateSourceRule`。内置规则放在 `BuiltInUpdateSourceRules.swift`，格式与用户规则文件相同。
 2. 已有协议的新识别方式：新增一个 `UpdateSourceDetector`，插入注册表中合适的位置。
 3. 全新的协议：在 `UpdateMechanism` 中新增一种机制并补充 `traits`，实现 `UpdateSourceProvider`（通常还需要识别器），再注册到 `UpdateSourceRegistry.standard`。
 
