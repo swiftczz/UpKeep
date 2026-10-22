@@ -2,7 +2,6 @@ import Foundation
 
 enum TauriUpdaterDetector {
     private static let latestNeedle = Data("latest.json".utf8)
-    private static let proxyNeedle = Data("update-proxy.json".utf8)
     private static let catalogNeedle = Data("versions.json".utf8)
     private static let gpuiNeedle = Data("gpui::".utf8)
     private static let tauriNeedles = [
@@ -42,7 +41,7 @@ enum TauriUpdaterDetector {
 
     static func updaterJSONURLs(in window: Data) -> [URL] {
         var urls: [URL] = []
-        for needle in [latestNeedle, proxyNeedle, catalogNeedle] {
+        for needle in [latestNeedle, catalogNeedle] {
             var searchStart = window.startIndex
             while let range = window[searchStart...].range(of: needle) {
                 if let url = url(endingAt: range, in: window) {
@@ -58,10 +57,6 @@ enum TauriUpdaterDetector {
         if let url = urls.first(where: {
             $0.lastPathComponent.lowercased() == "latest.json" && !isRepositoryLatestManifestURL($0)
         }) {
-            return url
-        }
-        if let url = urls.first(where: { $0.lastPathComponent.lowercased() == "update-proxy.json" })
-        {
             return url
         }
 
@@ -88,8 +83,7 @@ enum TauriUpdaterDetector {
 
     static func isDirectManifestURL(_ url: URL) -> Bool {
         let name = url.lastPathComponent.lowercased()
-        return (name == "latest.json" && !isRepositoryLatestManifestURL(url))
-            || name == "update-proxy.json"
+        return name == "latest.json" && !isRepositoryLatestManifestURL(url)
     }
 
     private static func url(
@@ -132,7 +126,7 @@ enum TauriUpdaterDetector {
 
     private static func isUpdaterJSON(_ url: URL) -> Bool {
         let name = url.lastPathComponent.lowercased()
-        return name == "latest.json" || name == "update-proxy.json" || name == "versions.json"
+        return name == "latest.json" || name == "versions.json"
     }
 
     static func evidence(in data: Data) -> (sawTauri: Bool, sawGPUI: Bool) {

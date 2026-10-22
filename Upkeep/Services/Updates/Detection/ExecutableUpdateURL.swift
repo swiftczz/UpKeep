@@ -1,7 +1,7 @@
 import Foundation
 
 /// Bounded URL extraction shared by binary updater detectors. Each protocol
-/// decides whether a candidate is valid or can be reconstructed.
+/// decides whether a candidate is valid.
 enum ExecutableUpdateURL {
     static let httpsNeedle = Data("https://".utf8)
     static let allowedCharacters = CharacterSet(

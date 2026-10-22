@@ -92,46 +92,27 @@ struct CustomAPIUpdateProvider: Sendable {
     private func fetchManifest(
         from url: URL, profile: CustomAPIFeedProfile
     ) async throws -> FetchResult {
-        var sawNotFound = false
-        var sawOtherFailure = false
-
-        for candidate in profile.candidateURLs(for: url) {
-            guard let response = try await fetchResponse(candidate) else {
-                sawOtherFailure = true
-                continue
-            }
-
-            if response.statusCode == 204 { return .upToDate }
-
-            if response.statusCode == 200 {
-                guard response.data.count <= 5_000_000,
-                    let manifest = profile.parse(response.data, sourceURL: candidate)
-                else {
-                    sawOtherFailure = true
-                    continue
-                }
-                if VersionComparator.isPrerelease(manifest.version) {
-                    return .upToDate
-                }
-                return .update(manifest)
-            }
-
-            if response.statusCode == 404 {
-                sawNotFound = true
-                continue
-            }
-            sawOtherFailure = true
+        guard let response = try await fetchResponse(url) else {
+            throw CustomAPIUpdateError.unreadableManifest
         }
-
-        if sawNotFound && !sawOtherFailure {
+        switch response.statusCode {
+        case 204:
+            return .upToDate
+        case 200:
+            guard response.data.count <= 5_000_000,
+                let manifest = profile.parse(response.data, sourceURL: url)
+            else { throw CustomAPIUpdateError.unreadableManifest }
+            return VersionComparator.isPrerelease(manifest.version) ? .upToDate : .update(manifest)
+        case 404:
             // A rule names its endpoint explicitly: a 404 means the rule is wrong,
             // not that the app uses another protocol.
             guard profile.allowsProtocolFallback else {
                 throw CustomAPIUpdateError.ruleEndpointNotFound
             }
             return .notThisProtocol
+        default:
+            throw CustomAPIUpdateError.unreadableManifest
         }
-        throw CustomAPIUpdateError.unreadableManifest
     }
 }
 
@@ -169,20 +150,13 @@ private enum CustomAPIFeedProfile {
         }
     }
 
-    func candidateURLs(for url: URL) -> [URL] {
-        guard case .discovered = self,
-            let stableURL = CustomAPIUpdateDetector.stableChannelURL(from: url)
-        else { return [url] }
-        return [url, stableURL]
-    }
-
     func parse(_ data: Data, sourceURL: URL) -> ReleaseCandidate? {
         switch self {
         case .rule(let match):
             guard let fields = match.rule.fields else { return nil }
             return RuleJSONReleaseParser(fields: fields).parse(data, sourceURL: sourceURL)
         case .discovered:
-            return HeuristicJSONReleaseParser.parse(data, sourceURL: sourceURL)
+            return HeuristicJSONReleaseParser.parse(data)
         }
     }
 

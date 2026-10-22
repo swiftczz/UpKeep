@@ -25,10 +25,21 @@ extension UpdateSourceRuleSet {
     ///   installed version is current, and otherwise describes one package.
     /// - `zcode`: ZCode's app-update.yml is a localhost placeholder; the app builds
     ///   its electron-builder manifest URL in code.
+    /// - `clash-verge-rev`: Clash Verge Rev publishes its Tauri manifest as
+    ///   `update-proxy.json` on a fixed `updater` release.
     /// - `gigamoney`: GigaMoney's app-update.yml is a localhost placeholder; its
     ///   bundled tenant feed map names the production feed.
     static let builtInRulesJSON = #"""
         [
+          {
+            "id": "clash-verge-rev",
+            "name": "Clash Verge Rev",
+            "kind": "updaterFeed",
+            "format": "tauri",
+            "match": { "bundleIdentifier": "io.github.clash-verge-rev.clash-verge-rev" },
+            "feed": "https://github.com/clash-verge-rev/clash-verge-rev/releases/download/updater/update-proxy.json",
+            "homepage": "https://github.com/clash-verge-rev/clash-verge-rev"
+          },
           {
             "id": "workbuddy",
             "name": "WorkBuddy",

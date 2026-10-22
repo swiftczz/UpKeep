@@ -466,7 +466,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
-        var data = Data("https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
+        var data = Data("https://downloads.example.com/editor/".utf8)
         data.append(contentsOf: [0xC0, 0x0C])
         data.append(contentsOf: "/latest.json".utf8)
         try data.write(to: fileURL)
@@ -630,43 +630,6 @@ final class ProtocolUpdateParserTests: XCTestCase {
                 against: "1.134.0",
                 currentCommit: "220a328ea54b42367b803ec53ee0bf52ef26b419",
                 currentBuildVersion: "110a328"
-            )
-        )
-    }
-
-    func testReconstructsStableCustomAPIUpdateURLSplitByBinaryBytes() throws {
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "Upkeep-website-update-\(UUID().uuidString)"
-        )
-        defer { try? FileManager.default.removeItem(at: fileURL) }
-
-        var data = Data("https://assets.lbkrs.com/github/release/longbridge-desktop/".utf8)
-        data.append(contentsOf: [0xC0, 0x0C])
-        data.append(contentsOf: "/latest.json".utf8)
-        try data.write(to: fileURL)
-
-        XCTAssertEqual(
-            CustomAPIUpdateDetector.endpoint(inFile: fileURL)?.absoluteString,
-            "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
-        )
-    }
-
-    func testInsertsStableChannelWhenLatestJSONIsMissing() throws {
-        let url = try XCTUnwrap(
-            URL(string: "https://assets.lbkrs.com/github/release/longbridge-desktop/latest.json")
-        )
-        XCTAssertEqual(
-            CustomAPIUpdateDetector.stableChannelURL(from: url)?.absoluteString,
-            "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
-        )
-        XCTAssertNil(
-            CustomAPIUpdateDetector.stableChannelURL(
-                from: try XCTUnwrap(
-                    URL(
-                        string:
-                            "https://assets.lbkrs.com/github/release/longbridge-desktop/stable/latest.json"
-                    )
-                )
             )
         )
     }

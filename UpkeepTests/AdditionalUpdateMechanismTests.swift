@@ -32,37 +32,14 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(manifest.selectedPackage(architecture: .x64))
     }
 
-    func testRelativeReleaseAssetsStayPinnedToThePublishedTag() throws {
-        let mechanism = URL(string: "https://example.com/api/release?channel=stable")!
-        let manifest = try XCTUnwrap(
-            HeuristicJSONReleaseParser.parse(
-                try json([
-                    "version": "1.2.0", "tag": "v1.2.0",
-                    "assets": [
-                        "macos_arm64": [
-                            "name": "Editor-macos-arm64.dmg",
-                            "download_url": "/api/download/Editor-macos-arm64.dmg",
-                        ]
-                    ],
-                    "server": [
-                        "version": "9.0",
-                        "assets": ["server": ["url": "https://example.com/server.dmg"]],
-                    ],
-                ]), sourceURL: mechanism))
-        let package = try XCTUnwrap(manifest.selectedPackage())
-        XCTAssertEqual(
-            package.url.absoluteString,
-            "https://example.com/api/download/Editor-macos-arm64.dmg?tag=v1.2.0")
-        XCTAssertEqual(manifest.assets.count, 1)
-        XCTAssertEqual(manifest.version, "1.2.0")
+    func testUnsafeAssetURLsAreRejected() throws {
         for download in [
-            "//evil.example.com/app.dmg", "http://example.com/app.dmg",
-            "https://user:secret@example.com/app.dmg",
+            "/api/download/Editor-macos-arm64.dmg", "//evil.example.com/app.dmg",
+            "http://example.com/app.dmg", "https://user:secret@example.com/app.dmg",
         ] {
             XCTAssertNil(
                 HeuristicJSONReleaseParser.parse(
-                    try json(["version": "1.0", "assets": [["url": download]]]),
-                    sourceURL: mechanism))
+                    try json(["version": "1.0", "assets": [["url": download]]])))
         }
     }
 
@@ -197,12 +174,16 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
             ("WorkBuddy AI", .customAPI, "www.workbuddy.ai"),
             ("ZCode", .electronBuilder, "zcode.z.ai"),
             ("GigaMoney", .electronBuilder, "download.longbridgewhale.com"),
+            ("Clash Verge Ninja", .tauri, "github.com"),
         ] {
             let url = URL(fileURLWithPath: "/Applications/\(name).app")
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
             XCTAssertEqual(detected.updateConfiguration.mechanism, mechanism, name)
             XCTAssertEqual(detected.updateConfiguration.feedURL?.host, host, name)
+            if name == "Clash Verge Ninja" {
+                XCTAssertEqual(detected.updateConfiguration.identifier, "rule:clash-verge-rev")
+            }
             if name == "Lorca" {
                 XCTAssertEqual(detected.updateConfiguration.githubReleaseTagPrefix, "desktop-v")
             }
