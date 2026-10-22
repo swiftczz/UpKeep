@@ -352,14 +352,63 @@ final class HomebrewUpdateProviderTests: XCTestCase {
         XCTAssertEqual(progress.fractionCompleted ?? 0, 0.5, accuracy: 0.0001)
     }
 
-    func testCapsDownloadProgressThenSwitchesToInstalling() {
+    func testCompletedDownloadSwitchesToInstalling() {
         let parser = HomebrewOutputProgressParser()
         let downloading = parser.consuming(
             "######################################################################## 100.0%\r")
-        XCTAssertEqual(downloading.fractionCompleted ?? 0, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(downloading.fractionCompleted ?? 0, 1, accuracy: 0.0001)
+        XCTAssertEqual(downloading.stage, .downloading)
 
         let installing = parser.consuming("\n==> Installing Cask token\n")
         XCTAssertEqual(installing.status, "正在安装…")
-        XCTAssertEqual(installing.fractionCompleted ?? 0, 0.92, accuracy: 0.0001)
+        XCTAssertEqual(installing.stage, .installing)
+        XCTAssertNil(installing.fractionCompleted)
+    }
+
+    func testDownloadFileIsNamedByTheURLHashLikeHomebrew() {
+        // Matches the file Homebrew 7 wrote for this cask's download.
+        let file = HomebrewDownloadFile(
+            downloadURL: "https://github.com/ollama/ollama/releases/download/v0.40.8/Ollama-darwin.zip",
+            cacheDirectory: URL(fileURLWithPath: "/tmp/cache"))
+        XCTAssertEqual(
+            file.namePrefix, "95ae0fac0063c7cd315d02c7822450d4c6e4467adb18e00b877eb128684c1bfc--")
+        XCTAssertEqual(file.directory.path, "/tmp/cache/downloads")
+    }
+
+    func testReadsOnlyThisDownloadsPartialFile() throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "HomebrewDownloadFile-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let downloads = cache.appendingPathComponent("downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let file = HomebrewDownloadFile(downloadURL: "https://example.com/App.zip", cacheDirectory: cache)
+        XCTAssertNil(file.partialBytes())
+
+        try Data(count: 10).write(to: downloads.appendingPathComponent("\(file.namePrefix)App.zip"))
+        try Data(count: 20).write(to: downloads.appendingPathComponent("0000--App.zip.incomplete"))
+        XCTAssertNil(file.partialBytes())
+
+        try Data(count: 4_096).write(
+            to: downloads.appendingPathComponent("\(file.namePrefix)App.zip.incomplete"))
+        XCTAssertEqual(file.partialBytes(), 4_096)
+    }
+
+    func testFileSizeDrivesDownloadProgressUntilBrewMovesOn() {
+        let tracker = HomebrewUpgradeProgress()
+        // Bytes before the size is known: downloading, but not yet measurable.
+        let early = tracker.observe(fileBytes: 50)
+        XCTAssertEqual(early.stage, .downloading)
+        XCTAssertNil(early.fractionCompleted)
+        XCTAssertEqual(early.completedBytes, 50)
+
+        tracker.setTotalBytes(200)
+        _ = tracker.consuming("==> Downloading https://example.com/App.zip\n")
+        let measured = tracker.observe(fileBytes: 100)
+        XCTAssertEqual(measured.fractionCompleted ?? 0, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(measured.totalBytes, 200)
+
+        let installing = tracker.consuming("==> Installing Cask app\n")
+        XCTAssertEqual(installing.stage, .installing)
+        XCTAssertNil(installing.completedBytes)
     }
 }

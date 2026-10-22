@@ -107,6 +107,17 @@ enum UpdateHTTP {
         return result.data
     }
 
+    /// A download's size from a HEAD request; nil when the server does not say.
+    static func contentLength(of url: URL) async -> Int64? {
+        guard SecureUpdateURL.https(url) != nil else { return nil }
+        var request = request(for: url)
+        request.httpMethod = "HEAD"
+        guard let (_, response) = try? await session.data(for: request),
+            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+        else { return nil }
+        return http.expectedContentLength > 0 ? http.expectedContentLength : nil
+    }
+
     static func request(for url: URL, githubToken: String? = nil) -> URLRequest {
         var request = URLRequest(
             url: url,

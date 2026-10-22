@@ -47,10 +47,10 @@ final class UpdateProgressTests: XCTestCase {
         XCTAssertEqual(fractions.first, 0)
         XCTAssertEqual(fractions.last, 1)
         XCTAssertEqual(sequence[2].overallFraction, 0.42, accuracy: 0.0001)
-        // Homebrew caps downloads at 90% and reports installs at 92%.
+        // Homebrew reports installation without a measurable fraction.
         XCTAssertLessThan(
-            UpdateProgress(fractionCompleted: 0.9, status: "正在下载…").overallFraction,
-            UpdateProgress(fractionCompleted: 0.92, status: "正在安装…").overallFraction)
+            UpdateProgress(fractionCompleted: 1, status: "正在下载…").overallFraction,
+            UpdateProgress.indeterminate("正在安装…").overallFraction)
     }
 
     func testRetriedDownloadDoesNotMoveTheBarBack() {

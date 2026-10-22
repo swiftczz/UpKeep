@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct HomebrewUpdateProvider: Sendable {
@@ -33,16 +34,55 @@ struct HomebrewUpdateProvider: Sendable {
         }
 
         progress(.indeterminate("正在更新…"))
-        let parser = HomebrewOutputProgressParser()
+        let tracker = HomebrewUpgradeProgress()
+        let knownURL = cache.snapshot()?.downloadURL(for: token)
+        let knownSize = application.packageByteCount.flatMap { $0 > 0 ? $0 : nil }
+        // brew relays a cask download's progress only once it finishes, so the size
+        // of the file it is writing is the live source while it downloads.
+        let monitor = Task {
+            guard let rawURL = await Self.resolvedDownloadURL(knownURL, token: token, brewURL: brewURL)
+            else { return }
+            let file = HomebrewDownloadFile(downloadURL: rawURL)
+            var total = knownSize
+            if total == nil, let url = URL(string: rawURL) {
+                total = await UpdateHTTP.contentLength(of: url)
+            }
+            tracker.setTotalBytes(total)
+            var sawFile = false
+            while !Task.isCancelled {
+                if let bytes = file.partialBytes() {
+                    sawFile = true
+                    progress(tracker.observe(fileBytes: bytes))
+                } else if sawFile, let total {
+                    // The partial file was renamed: the download is complete.
+                    sawFile = false
+                    progress(tracker.observe(fileBytes: total))
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+        }
+        defer { monitor.cancel() }
         _ = try await ProcessRunner.run(
             executableURL: brewURL,
             arguments: ["upgrade", "--cask", "--greedy-auto-updates", token],
             captureTTY: true,
             onOutput: { chunk in
-                progress(parser.consuming(chunk))
+                progress(tracker.consuming(chunk))
             }
         )
         progress(UpdateProgress(fractionCompleted: 1, status: "正在完成…"))
+    }
+
+    private static func resolvedDownloadURL(
+        _ known: String?, token: String, brewURL: URL
+    ) async -> String? {
+        if let known { return known }
+        guard
+            let output = try? await ProcessRunner.run(
+                executableURL: brewURL, arguments: ["info", "--json=v2", "--cask", token]),
+            let info = try? JSONDecoder().decode(BrewInfoResponse.self, from: output.data)
+        else { return nil }
+        return info.casks.first { $0.token == token }?.downloadURL
     }
 
     static func resolvedStatus(
@@ -331,6 +371,10 @@ struct HomebrewSnapshot {
         self.outdatedByToken = outdatedByToken
     }
 
+    func downloadURL(for token: String) -> String? {
+        downloadURLByToken[token]
+    }
+
     func gitHubReleaseDownload(for token: String) -> GitHubReleaseDownload? {
         downloadURLByToken[token].flatMap(GitHubReleaseDownload.parse)
     }
@@ -483,21 +527,16 @@ final class HomebrewOutputProgressParser: @unchecked Sendable {
             pending.removeFirst(pending.count - 4_096)
         }
 
+        // Fractions are within the stage; `UpdateProgress.Stage` places them on the bar.
         let text = Self.stripANSI(pending)
         if text.localizedCaseInsensitiveContains("==> Installing")
             || text.localizedCaseInsensitiveContains("==> Purging")
         {
-            progress = UpdateProgress(fractionCompleted: 0.92, status: "正在安装…")
+            progress = .indeterminate("正在安装…")
         } else if let percent = Self.lastPercent(in: text) {
-            progress = UpdateProgress(
-                fractionCompleted: min(percent / 100, 0.9),
-                status: "正在下载…"
-            )
+            progress = UpdateProgress(fractionCompleted: percent / 100, status: "正在下载…")
         } else if let ratio = Self.lastSizeRatio(in: text) {
-            progress = UpdateProgress(
-                fractionCompleted: min(ratio, 0.9),
-                status: "正在下载…"
-            )
+            progress = UpdateProgress(fractionCompleted: ratio, status: "正在下载…")
         } else if text.localizedCaseInsensitiveContains("==> Downloading")
             || text.localizedCaseInsensitiveContains("Downloading")
         {
@@ -550,6 +589,75 @@ final class HomebrewOutputProgressParser: @unchecked Sendable {
             return nil
         }
         return amount * multiplier
+    }
+}
+
+/// Combines brew's output, which marks stages, with the size of the file brew is
+/// writing, which is the only live measure of a cask download.
+final class HomebrewUpgradeProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private let parser = HomebrewOutputProgressParser()
+    private var parsed = UpdateProgress.indeterminate("正在更新…")
+    private var fileBytes: Int64?
+    private var totalBytes: Int64?
+
+    func consuming(_ chunk: String) -> UpdateProgress {
+        let progress = parser.consuming(chunk)
+        return lock.withLock {
+            parsed = progress
+            return current
+        }
+    }
+
+    func observe(fileBytes bytes: Int64) -> UpdateProgress {
+        lock.withLock {
+            fileBytes = bytes
+            return current
+        }
+    }
+
+    func setTotalBytes(_ bytes: Int64?) {
+        lock.withLock { totalBytes = bytes.flatMap { $0 > 0 ? $0 : nil } }
+    }
+
+    private var current: UpdateProgress {
+        guard parsed.stage <= .downloading, let fileBytes else { return parsed }
+        let fraction = totalBytes.map { min(Double(fileBytes) / Double($0), 1) }
+        return UpdateProgress(
+            fractionCompleted: fraction, status: "正在下载…",
+            completedBytes: fileBytes, totalBytes: totalBytes)
+    }
+}
+
+/// The file Homebrew writes while downloading a cask:
+/// `<cache>/downloads/<sha256 of the URL>--<file name>.incomplete`.
+struct HomebrewDownloadFile: Sendable {
+    let directory: URL
+    let namePrefix: String
+
+    init(downloadURL: String, cacheDirectory: URL = Self.defaultCacheDirectory) {
+        directory = cacheDirectory.appendingPathComponent("downloads", isDirectory: true)
+        namePrefix =
+            SHA256.hash(data: Data(downloadURL.utf8)).map { String(format: "%02x", $0) }.joined()
+            + "--"
+    }
+
+    static var defaultCacheDirectory: URL {
+        if let path = ProcessInfo.processInfo.environment["HOMEBREW_CACHE"]?.nonBlankValue {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/Homebrew", isDirectory: true)
+    }
+
+    /// Bytes written so far; nil when no download for this URL is in progress.
+    func partialBytes() -> Int64? {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path),
+            let name = names.first(where: { $0.hasPrefix(namePrefix) && $0.hasSuffix(".incomplete") }),
+            let attributes = try? FileManager.default.attributesOfItem(
+                atPath: directory.appendingPathComponent(name).path)
+        else { return nil }
+        return (attributes[.size] as? NSNumber)?.int64Value
     }
 }
 
