@@ -13,7 +13,6 @@ enum ElectronBuilderDetector {
             resourcesURL.appendingPathComponent("app-update.yml"),
             resourcesURL.appendingPathComponent("app-update.yaml"),
         ]
-        var hasPlaceholderGenericFeed = false
 
         for configurationURL in candidateURLs {
             guard let configuration = try? String(contentsOf: configurationURL, encoding: .utf8)
@@ -21,25 +20,8 @@ enum ElectronBuilderDetector {
                 continue
             }
             if let metadata = metadata(from: configuration) { return metadata }
-            if let values = ElectronBuilderYAML.flatValues(in: configuration),
-                values["provider"]?.lowercased() == "generic",
-                isPlaceholderFeed(values["url"]?.nonBlankYAMLValue), !isTruthy(values["private"])
-            {
-                hasPlaceholderGenericFeed = true
-            }
         }
-
-        guard hasPlaceholderGenericFeed else { return nil }
-        return ElectronFeedMapDetector.detect(in: bundleURL)
-            ?? ElectronServiceManifestDetector.detect(in: bundleURL)
-    }
-
-    private static func isPlaceholderFeed(_ value: String?) -> Bool {
-        guard let value else { return true }
-        guard let url = URL(string: value), url.scheme?.lowercased() == "http",
-            let host = url.host?.lowercased(), url.user == nil, url.password == nil
-        else { return false }
-        return ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host)
+        return nil
     }
 
     static func metadata(from configuration: String) -> ElectronBuilderMetadata? {

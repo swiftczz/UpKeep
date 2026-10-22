@@ -1,7 +1,7 @@
 import Foundation
 
-/// Checks JSON update endpoints: ones discovered in an app, vendor protocols with
-/// their own conventions, and endpoints described by `UpdateSourceRule`s.
+/// Checks JSON update endpoints: ones discovered in an app and ones described by
+/// `UpdateSourceRule`s.
 struct CustomAPIUpdateProvider: Sendable {
     var fetchResponse: @Sendable (URL) async throws -> (statusCode: Int, data: Data)? = {
         try await UpdateHTTP.response(from: $0)
@@ -105,7 +105,7 @@ struct CustomAPIUpdateProvider: Sendable {
 
             if response.statusCode == 200 {
                 guard response.data.count <= 5_000_000,
-                    var manifest = profile.parse(response.data, sourceURL: candidate)
+                    let manifest = profile.parse(response.data, sourceURL: candidate)
                 else {
                     sawOtherFailure = true
                     continue
@@ -113,10 +113,6 @@ struct CustomAPIUpdateProvider: Sendable {
                 if VersionComparator.isPrerelease(manifest.version) {
                     return .upToDate
                 }
-                if manifest.notes == nil, profile.supplementsChangelogNotes(from: candidate) {
-                    await supplementNotes(in: &manifest, from: candidate)
-                }
-                try Task.checkCancellation()
                 return .update(manifest)
             }
 
@@ -137,44 +133,14 @@ struct CustomAPIUpdateProvider: Sendable {
         }
         throw CustomAPIUpdateError.unreadableManifest
     }
-
-    /// Release APIs at `/api/release` publish their notes at `/api/changelog`.
-    private func supplementNotes(in manifest: inout ReleaseCandidate, from url: URL) async {
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return
-        }
-        let channel =
-            components.queryItems?.first(where: { $0.name == "channel" })?.value ?? "stable"
-        components.path = "/api/changelog"
-        components.queryItems = [
-            URLQueryItem(name: "per_page", value: "20"),
-            URLQueryItem(name: "channel", value: channel),
-        ]
-        guard let notesURL = components.url,
-            let response = try? await fetchResponse(notesURL), response.statusCode == 200,
-            response.data.count <= 2_000_000,
-            let json = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any],
-            let releases = json["releases"] as? [[String: Any]],
-            let release = releases.first(where: {
-                ($0["version"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
-                    == manifest.version
-            }), let body = (release["body"] as? String)?.nonBlankValue
-        else { return }
-        manifest.notes = body
-        components.path = "/changelog"
-        components.queryItems = nil
-        manifest.releaseURL = components.url
-    }
 }
 
-/// The conventions a custom API record follows. Vendor-specific behavior is
-/// decided here, once, instead of inside the generic check.
+/// The conventions a custom API record follows: a rule's own fields, or the
+/// heuristics used for discovered endpoints.
 private enum CustomAPIFeedProfile {
     /// Described by an `UpdateSourceRule`.
     case rule(UpdateSourceRuleMatch)
-    /// WorkBuddy's v2 endpoint: the query carries the installed version.
-    case versionedElectronFeed
-    /// Found in an executable: `latest.json` channels and `/api/release` APIs.
+    /// Found in an executable: `latest.json` channels and `/api/latest` APIs.
     case discovered
 
     init(application: AppRecord, rules: UpdateSourceRuleSet) {
@@ -185,8 +151,6 @@ private enum CustomAPIFeedProfile {
             match.rule.kind == .jsonFeed
         {
             self = .rule(match)
-        } else if ElectronCustomAPIUpdateDetector.usesVersionedFeed(configuration) {
-            self = .versionedElectronFeed
         } else {
             self = .discovered
         }
@@ -200,8 +164,8 @@ private enum CustomAPIFeedProfile {
                 values: match.values(
                     version: application.currentVersion, build: application.buildVersion,
                     bundleIdentifier: application.bundleIdentifier))
-        case .versionedElectronFeed, .discovered:
-            return ElectronCustomAPIUpdateDetector.currentFeedURL(for: application)
+        case .discovered:
+            return application.updateConfiguration.feedURL.flatMap(SecureUpdateURL.https)
         }
     }
 
@@ -217,19 +181,14 @@ private enum CustomAPIFeedProfile {
         case .rule(let match):
             guard let fields = match.rule.fields else { return nil }
             return RuleJSONReleaseParser(fields: fields).parse(data, sourceURL: sourceURL)
-        case .versionedElectronFeed, .discovered:
+        case .discovered:
             return HeuristicJSONReleaseParser.parse(data, sourceURL: sourceURL)
         }
     }
 
-    func supplementsChangelogNotes(from url: URL) -> Bool {
-        guard case .discovered = self else { return false }
-        return url.path == "/api/release"
-    }
-
     func requiresValidSignature(requestURL: URL) -> Bool {
         switch self {
-        case .rule, .versionedElectronFeed: true
+        case .rule: true
         case .discovered: requestURL.path.hasPrefix("/api/")
         }
     }

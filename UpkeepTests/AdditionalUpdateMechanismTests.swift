@@ -66,58 +66,6 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    func testWebsiteProviderUsesMatchingVersionNotesAndPreservesPrimaryVersion() async throws {
-        let feed = try json([
-            "version": "1.2.0",
-            "assets": [
-                "mac": [
-                    "name": "Editor-macos-arm64.dmg",
-                    "download_url": "/api/download/Editor-macos-arm64.dmg",
-                ]
-            ],
-        ])
-        let notes = try json([
-            "releases": [
-                ["version": "9.0", "body": "Wrong version"],
-                ["version": "1.2.0", "body": "Correct\nnotes"],
-            ]
-        ])
-        let provider = CustomAPIUpdateProvider(fetchResponse: { url in
-            switch url.path {
-            case "/api/release": return (200, feed)
-            case "/api/changelog": return (200, notes)
-            default:
-                XCTFail("Unexpected request: \(url)")
-                return nil
-            }
-        })
-        let checked = await provider.check(
-            record(
-                mechanism: .customAPI,
-                url: "https://example.com/api/release?channel=stable"))
-        XCTAssertEqual(checked.status, .updateAvailable)
-        XCTAssertEqual(checked.latestVersion, "1.2.0")
-        XCTAssertEqual(checked.releaseNotes, "Correct\nnotes")
-        XCTAssertEqual(checked.releaseNotesURL?.absoluteString, "https://example.com/changelog")
-        XCTAssertTrue(checked.canAutomaticallyUpdate)
-    }
-
-    func testNotesFailureDoesNotLoseAValidRelease() async throws {
-        let feed = try json([
-            "version": "1.2.0", "assets": [["url": "https://example.com/Editor-macos-arm64.dmg"]],
-        ])
-        let provider = CustomAPIUpdateProvider(fetchResponse: { url in
-            url.path == "/api/release" ? (200, feed) : (503, Data())
-        })
-        let checked = await provider.check(
-            record(
-                mechanism: .customAPI,
-                url: "https://example.com/api/release?channel=stable"))
-        XCTAssertEqual(checked.status, .updateAvailable)
-        XCTAssertNil(checked.releaseNotes)
-        XCTAssertTrue(checked.canAutomaticallyUpdate)
-    }
-
     func testLorcaTemplatePersistsDesktopChannelAcrossSnapshotAndAlternateSource() throws {
         let metadata = try XCTUnwrap(
             GitHubReleasesDetector.metadata(
@@ -216,7 +164,7 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
             detected.updateConfiguration.feedURL?.absoluteString, "https://example.com/api/latest")
     }
 
-    func testHelperReconstructsOnlyItsApplicationAPIAndIgnoresEscapingSymlinks() throws {
+    func testHelperEndpointIsFoundButEscapingSymlinksAreIgnored() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -225,14 +173,12 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
             content: "main")
         let helper = try bundle(
             at: app.appendingPathComponent("Contents/Helpers/EditorAgent.app"), executable: "agent",
-            content:
-                "https://other.example.comhttps://editor.example.com\0/api/release?channel=\0/api/changelog?per_page="
-        )
+            content: "go string https://editor.example.com/api/latest\0")
         var detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
         XCTAssertEqual(detected.updateConfiguration.mechanism, .customAPI)
         XCTAssertEqual(
             detected.updateConfiguration.feedURL?.absoluteString,
-            "https://editor.example.com/api/release?channel=stable")
+            "https://editor.example.com/api/latest")
         let executable = helper.appendingPathComponent("Contents/MacOS/agent")
         try FileManager.default.moveItem(
             at: executable, to: directory.appendingPathComponent("outside"))
@@ -246,7 +192,11 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
         for (name, mechanism, host) in [
             ("magpie", UpdateMechanism.customAPI, "usemagpie.ai"),
             ("Lorca", .githubReleases, "api.github.com"),
-            ("FluxDown", .customAPI, "fluxdown.zerx.dev"),
+            ("FluxDown", .customAPI, "fluxdown.com"),
+            ("WorkBuddy", .customAPI, "www.workbuddy.cn"),
+            ("WorkBuddy AI", .customAPI, "www.workbuddy.ai"),
+            ("ZCode", .electronBuilder, "zcode.z.ai"),
+            ("GigaMoney", .electronBuilder, "download.longbridgewhale.com"),
         ] {
             let url = URL(fileURLWithPath: "/Applications/\(name).app")
             guard FileManager.default.fileExists(atPath: url.path) else { continue }

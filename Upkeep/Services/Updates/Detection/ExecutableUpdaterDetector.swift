@@ -27,9 +27,7 @@ enum ExecutableUpdaterDetector {
         var githubReleases: [GitHubReleasesMetadata] = []
         var seenGitHubReleases = Set<String>()
         for fileURL in files {
-            let detection = detect(
-                fileURL: fileURL,
-                applicationName: bundleURL.deletingPathExtension().lastPathComponent)
+            let detection = detect(fileURL: fileURL)
             if let tauriEndpoint = detection.tauriEndpoint {
                 return ExecutableUpdaterDetection(
                     tauriEndpoint: tauriEndpoint,
@@ -53,7 +51,7 @@ enum ExecutableUpdaterDetector {
         )
     }
 
-    static func detect(fileURL: URL, applicationName: String? = nil) -> ExecutableUpdaterDetection {
+    static func detect(fileURL: URL) -> ExecutableUpdaterDetection {
         guard
             let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
             values.isRegularFile == true,
@@ -71,9 +69,6 @@ enum ExecutableUpdaterDetector {
         var seen = Set<String>()
         var sawTauri = false
         var sawGPUI = false
-        var sawReleaseAPI = false
-        var sawChangelogAPI = false
-        var apiOrigins: [URL] = []
         var customAPIUpdateEndpoint: URL?
         var githubReleases: [GitHubReleasesMetadata] = []
         var seenGitHubReleases = Set<String>()
@@ -85,13 +80,6 @@ enum ExecutableUpdaterDetector {
             }
 
             let window = previousTail + chunk
-            sawReleaseAPI =
-                sawReleaseAPI || window.range(of: Data("/api/release?channel=".utf8)) != nil
-            sawChangelogAPI =
-                sawChangelogAPI || window.range(of: Data("/api/changelog?".utf8)) != nil
-            if customAPIUpdateEndpoint == nil {
-                apiOrigins.append(contentsOf: CustomAPIUpdateDetector.apiOrigins(in: window))
-            }
             let evidence = TauriUpdaterDetector.evidence(in: window)
             sawTauri = sawTauri || evidence.sawTauri
             sawGPUI = sawGPUI || evidence.sawGPUI
@@ -114,11 +102,6 @@ enum ExecutableUpdaterDetector {
             previousTail = Data(window.suffix(overlapSize))
         }
 
-        if customAPIUpdateEndpoint == nil, sawReleaseAPI, sawChangelogAPI {
-            customAPIUpdateEndpoint = CustomAPIUpdateDetector.releaseAPIURL(
-                origins: apiOrigins,
-                applicationName: applicationName)
-        }
         let tauriEndpoint =
             sawGPUI && !sawTauri
             ? nil

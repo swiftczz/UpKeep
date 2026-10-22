@@ -316,6 +316,55 @@ final class UpdateSourceRuleTests: XCTestCase {
 
     // MARK: - Parsing
 
+    func testFluxDownReadsItsReleaseAPIWithTheBuiltInRule() throws {
+        let url = try makeApplication(bundleIdentifier: "com.fluxdown.app", version: "0.6.0")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let configuration = try XCTUnwrap(ApplicationScanner.makeRecord(from: url))
+            .updateConfiguration
+        XCTAssertEqual(configuration.mechanism, .customAPI)
+        XCTAssertEqual(configuration.identifier, "rule:fluxdown")
+        let feed = try XCTUnwrap(configuration.feedURL)
+        XCTAssertEqual(feed.absoluteString, "https://fluxdown.com/api/release?channel=stable")
+
+        let fields = try XCTUnwrap(
+            UpdateSourceRuleSet.builtIn.match(
+                configurationIdentifier: configuration.identifier,
+                bundleIdentifier: "com.fluxdown.app")?.rule.fields)
+
+        func asset(_ name: String) -> [String: Any] {
+            [
+                "name": name, "size": 42,
+                "github_download_url":
+                    "https://github.com/zerx-lab/FluxDown/releases/download/v0.6.1/\(name)",
+                "download_url": "/api/download/\(name)",
+            ]
+        }
+        let release = try XCTUnwrap(
+            RuleJSONReleaseParser(fields: fields).parse(
+                try json([
+                    "version": "0.6.1",
+                    "published_at": "2026-10-22T07:14:29Z",
+                    "assets": [
+                        "setup": asset("FluxDown-0.6.1-windows-x64-setup.exe"),
+                        "extension": asset("FluxDown-0.6.1-chrome.zip"),
+                        "macos_dmg_arm64": asset("FluxDown-0.6.1-macos-arm64.dmg"),
+                        "macos_dmg_x64": asset("FluxDown-0.6.1-macos-x64.dmg"),
+                        "macos_tarball_arm64": asset("FluxDown-0.6.1-macos-arm64.tar.gz"),
+                    ],
+                ]), sourceURL: feed))
+
+        XCTAssertEqual(release.version, "0.6.1")
+        XCTAssertNotNil(release.publicationDate)
+        let arm64 = try XCTUnwrap(release.selectedPackage(architecture: .arm64))
+        XCTAssertEqual(arm64.name, "FluxDown-0.6.1-macos-arm64.dmg")
+        XCTAssertEqual(
+            arm64.url.absoluteString,
+            "https://fluxdown.com/api/download/FluxDown-0.6.1-macos-arm64.dmg")
+        XCTAssertEqual(arm64.size, 42)
+        XCTAssertEqual(
+            release.selectedPackage(architecture: .x64)?.name, "FluxDown-0.6.1-macos-x64.dmg")
+    }
+
     func testRuleParserReadsOnlyTheNamedFields() throws {
         let fields = UpdateSourceRule.Fields(
             version: ["release.tag", "release.version"],
@@ -484,6 +533,42 @@ final class UpdateSourceRuleTests: XCTestCase {
         XCTAssertEqual(checked.releaseNotes, "New editor")
         XCTAssertEqual(checked.status, .updateAvailable)
         XCTAssertTrue(checked.canAutomaticallyUpdate)
+    }
+
+    func testWorkBuddyRuleSendsTheInstalledVersionAndReadsItsOnePackage() async throws {
+        let response = try json([
+            "version": "5.8.4.41366630",
+            "url":
+                "https://download.codebuddy.cn/workbuddy/saas/darwin-arm64/WorkBuddy-darwin-arm64-5.8.4.41366630-73952edb.zip",
+            "sha256hash": "8404d7ee", "timestamp": 1_792_089_830, "name": "",
+        ])
+        let requested = RequestLog()
+        let provider = CustomAPIUpdateProvider(
+            fetchResponse: { url in
+                await requested.append(url)
+                return url.query?.contains("version=5.8.4") == true ? (204, Data()) : (200, response)
+            },
+            rules: { .builtIn })
+        var application = AppRecord(
+            name: "WorkBuddy",
+            bundleIdentifier: "com.tencent.workbuddy.mac",
+            applicationURL: URL(fileURLWithPath: "/nonexistent/WorkBuddy.app"),
+            currentVersion: "5.8.3",
+            updateConfiguration: UpdateConfiguration(
+                mechanism: .customAPI, identifier: "rule:workbuddy"))
+
+        let checked = await provider.check(application)
+        let urls = await requested.urls
+        XCTAssertEqual(urls.first?.host, "www.workbuddy.cn")
+        XCTAssertTrue(urls.first?.query?.hasSuffix("version=5.8.3") ?? false)
+        XCTAssertTrue(urls.first?.query?.hasPrefix("platform=workbuddy-darwin-") ?? false)
+        XCTAssertEqual(checked.latestVersion, "5.8.4.41366630")
+        XCTAssertEqual(checked.status, .updateAvailable)
+        XCTAssertTrue(checked.canAutomaticallyUpdate)
+
+        application.currentVersion = "5.8.4"
+        let current = await provider.check(application)
+        XCTAssertEqual(current.status, .upToDate)
     }
 
     func testMissingRuleEndpointIsReportedWithoutChangingProtocol() async throws {

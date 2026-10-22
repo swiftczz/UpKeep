@@ -55,7 +55,6 @@ struct UpdateSourceRegistry: Sendable {
                 SparkleSourceDetector(),
                 ElectronBuilderSourceDetector(),
                 VSCodeSourceDetector(),
-                ElectronCustomAPISourceDetector(),
                 ExecutableEndpointSourceDetector(),
                 RuleSourceDetector(precedence: .fallback),
             ]

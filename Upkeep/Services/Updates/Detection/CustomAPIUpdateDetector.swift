@@ -109,39 +109,6 @@ enum CustomAPIUpdateDetector {
         return url
     }
 
-    // Rust/Go can store a base URL separately from the update API path.
-    // Reconstruct only with both API markers and an origin belonging to the app.
-    static func apiOrigins(in data: Data) -> [URL] {
-        guard data.range(of: ExecutableUpdateURL.httpsNeedle) != nil else { return [] }
-        let text = String(decoding: data, as: UTF8.self)
-        guard
-            let expression = try? NSRegularExpression(
-                pattern: #"https://[A-Za-z0-9.-]+?(?=https://|[\x00-\x20\"'<>]|$)"#)
-        else { return [] }
-        return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap
-        {
-            match in
-            guard let range = Range(match.range, in: text),
-                let url = SecureUpdateURL.https(string: String(text[range])),
-                url.user == nil, url.password == nil, url.port == nil,
-                url.host?.contains(".") == true
-            else { return nil }
-            return url
-        }
-    }
-
-    static func releaseAPIURL(origins: [URL], applicationName: String?) -> URL? {
-        guard let name = applicationName?.lowercased().filter({ $0.isLetter || $0.isNumber }),
-            name.count >= 3,
-            let origin = origins.first(where: { origin in
-                origin.host?.lowercased().split(separator: ".").contains { $0 == name } == true
-            }), var components = URLComponents(url: origin, resolvingAgainstBaseURL: false)
-        else { return nil }
-        components.path = "/api/release"
-        components.queryItems = [URLQueryItem(name: "channel", value: "stable")]
-        return components.url
-    }
-
     static func hasTauriConfiguration(in bundleURL: URL) -> Bool {
         [
             bundleURL.appendingPathComponent("Contents/Resources/tauri.conf.json"),

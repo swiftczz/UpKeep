@@ -87,16 +87,6 @@ struct VSCodeSourceDetector: UpdateSourceDetector {
     }
 }
 
-struct ElectronCustomAPISourceDetector: UpdateSourceDetector {
-    func detect(_ context: UpdateSourceDetectionContext) -> DetectedUpdateSource? {
-        guard context.depth == .full,
-            let configuration = ElectronCustomAPIUpdateDetector.detect(
-                in: context.bundleURL, currentVersion: context.currentVersion)
-        else { return nil }
-        return DetectedUpdateSource(configuration)
-    }
-}
-
 /// Endpoints embedded in executables: Tauri manifests, website APIs and GitHub
 /// repositories, in that order. Installed-only scans never read binaries.
 struct ExecutableEndpointSourceDetector: UpdateSourceDetector {
