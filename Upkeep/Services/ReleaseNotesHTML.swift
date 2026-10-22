@@ -1,26 +1,21 @@
 import Foundation
 
 enum ReleaseNotesHTML {
-    static func text(_ html: String, preferredLanguages: [String] = Locale.preferredLanguages)
-        -> String?
-    {
-        text(html, preferredLanguages: preferredLanguages, requiredRootXPath: nil)
+    static func text(_ html: String) -> String? {
+        text(html, requiredRootXPath: nil)
     }
 
     static func githubReleaseText(_ html: String) -> String? {
         // GitHub pages contain navigation, other releases and repository content.
         // If the release body is absent, never fall back to the whole page.
         text(
-            html, preferredLanguages: Locale.preferredLanguages,
+            html,
             requiredRootXPath:
                 "//*[@data-test-selector='body-content' and contains(concat(' ', normalize-space(@class), ' '), ' markdown-body ')]"
         )
     }
 
-    private static func text(
-        _ html: String, preferredLanguages: [String],
-        requiredRootXPath: String?
-    ) -> String? {
+    private static func text(_ html: String, requiredRootXPath: String?) -> String? {
         // Foundation's HTML tidy predates HTML5 and otherwise discards semantic containers.
         var compatibleHTML = html
         for tag in ["article", "main", "section", "header", "footer", "nav", "aside", "template"] {
@@ -43,28 +38,12 @@ enum ReleaseNotesHTML {
             root = matched
         } else {
             root =
-                first(
-                    "//*[@data-upkeep-element='article'][contains(concat(' ', normalize-space(@class), ' '), ' release-paper ')]"
-                )
-                ?? first("//*[@data-upkeep-element='article'][.//h1]") ?? first(
-                    "//*[@data-upkeep-element='main']") ?? first("//body") ?? document
+                first("//*[@data-upkeep-element='article'][.//h1]")
+                ?? first("//*[@data-upkeep-element='main']") ?? first("//body") ?? document
         }
-        let chinese = preferredLanguages.first?.lowercased().hasPrefix("zh") == true
-        let preferredClass = chinese ? "l-zh" : "l-en"
-        let alternateClass = chinese ? "l-en" : "l-zh"
-        let preferredNodes = try? root.nodes(
-            forXPath:
-                ".//*[contains(concat(' ', normalize-space(@class), ' '), ' \(preferredClass) ')]")
-        let hasPreferred = !(preferredNodes?.isEmpty ?? true)
         let omittedTags: Set<String> = [
             "head", "script", "style", "noscript", "nav", "aside",
             "footer", "select", "button", "svg", "template",
-        ]
-        let omittedClasses: Set<String> = [
-            "release-surfaces", "release-builds", "release-target-summary",
-            "release-item-targets", "release-refs", "release-guide__arrow", "release-download",
-            "release-guides", "release-highlight__index", "release-highlight__kind",
-            "release-notice__icon",
         ]
         func render(_ node: XMLNode) -> String {
             if node.kind == .text {
@@ -77,20 +56,9 @@ enum ReleaseNotesHTML {
                 element?.attribute(forName: "data-upkeep-element")?.stringValue ?? node.name?
                 .lowercased()
                 ?? ""
-            let classes = Set(
-                (element?.attribute(forName: "class")?.stringValue ?? "").split(separator: " ").map(
-                    String.init))
-            if omittedTags.contains(tag) || !classes.isDisjoint(with: omittedClasses)
-                || (hasPreferred && classes.contains(alternateClass))
+            if omittedTags.contains(tag)
                 || element?.attribute(forName: "hidden") != nil
                 || element?.attribute(forName: "aria-hidden")?.stringValue == "true"
-            {
-                return ""
-            }
-            if tag == "span", let parent = node.parent as? XMLElement,
-                (parent.attribute(forName: "class")?.stringValue ?? "").split(separator: " ")
-                    .contains(
-                        "release-section__head")
             {
                 return ""
             }

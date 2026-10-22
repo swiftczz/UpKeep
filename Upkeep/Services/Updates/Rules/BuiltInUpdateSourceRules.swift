@@ -29,6 +29,8 @@ extension UpdateSourceRuleSet {
     ///   `update-proxy.json` on a fixed `updater` release.
     /// - `reasonix`: Reasonix's Electron shell leaves updates to a native service
     ///   in its resources, which embeds this manifest.
+    ///   Its manifest links notes to a bilingual web page; the GitHub release for the
+    ///   same version carries them as Markdown.
     /// - `reasonix-studio`: Reasonix Studio publishes a `versions.json` catalog; the
     ///   Tauri provider follows it to the newest stable release's manifest.
     /// - `lorca`: egoist/lorca also releases the CLI and mobile apps; only
@@ -43,7 +45,8 @@ extension UpdateSourceRuleSet {
             "kind": "updaterFeed",
             "format": "tauri",
             "match": { "bundleIdentifier": "com.wails.reasonix-desktop" },
-            "feed": "https://dl.reasonix.io/latest/latest.json"
+            "feed": "https://dl.reasonix.io/latest/latest.json",
+            "releaseNotes": "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/desktop-v{latestVersion}"
           },
           {
             "id": "reasonix-studio",

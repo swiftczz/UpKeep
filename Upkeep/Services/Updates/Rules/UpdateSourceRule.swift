@@ -81,6 +81,9 @@ struct UpdateSourceRule: Codable, Sendable, Equatable {
     /// releases whose tags start with this template, such as `desktop-v`.
     var tagPrefix: String?
     var homepage: String?
+    /// `jsonFeed` and `updaterFeed`: an HTTPS URL template for notes published apart
+    /// from the feed. `{latestVersion}` is the version the check found.
+    var releaseNotes: String?
     var fields: Fields?
 
     static let identifierPrefix = "rule:"
@@ -238,6 +241,18 @@ extension UpdateSourceRule {
             }
         }
 
+        if let releaseNotes = releaseNotes?.nonBlankValue {
+            guard kind != .githubReleases else {
+                throw UpdateSourceRuleError(message: "releaseNotes 只适用于 jsonFeed 和 updaterFeed 规则。")
+            }
+            guard releaseNotes.lowercased().hasPrefix("https://") else {
+                throw UpdateSourceRuleError(message: "releaseNotes 必须以 https:// 开头。")
+            }
+            try checkPlaceholders(
+                in: releaseNotes, field: "releaseNotes",
+                allowed: placeholders.union(["latestVersion"]))
+        }
+
         if let homepage = homepage?.nonBlankValue {
             guard homepage.lowercased().hasPrefix("https://") else {
                 throw UpdateSourceRuleError(message: "homepage 必须以 https:// 开头。")
@@ -285,6 +300,12 @@ struct UpdateSourceRuleMatch: Sendable {
 
     func homepageURL(values: [String: String]) -> URL? {
         rule.homepage.flatMap { httpsURL($0, values: values) }
+    }
+
+    func releaseNotesURL(values: [String: String], latestVersion: String) -> URL? {
+        var values = values
+        values["latestVersion"] = latestVersion
+        return rule.releaseNotes.flatMap { httpsURL($0, values: values) }
     }
 
     func gitHubRepository(values: [String: String]) -> GitHubRepository? {

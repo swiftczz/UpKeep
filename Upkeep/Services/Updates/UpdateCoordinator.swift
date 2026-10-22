@@ -37,10 +37,22 @@ enum UpdateCachePolicy: Sendable {
 struct UpdateCoordinator: UpdateCoordinating, Sendable {
     private let registry: UpdateSourceRegistry
     private let process: ApplicationProcessClient
+    private let rules: @Sendable () -> UpdateSourceRuleSet
+    private let fetchData: ReleaseNotesFetcher.FetchData
 
-    init(registry: UpdateSourceRegistry = .standard, process: ApplicationProcessClient = .live) {
+    init(
+        registry: UpdateSourceRegistry = .standard, process: ApplicationProcessClient = .live,
+        rules: @escaping @Sendable () -> UpdateSourceRuleSet = {
+            UpdateSourceRuleStore.shared.current()
+        },
+        fetchData: @escaping ReleaseNotesFetcher.FetchData = {
+            try await UpdateHTTP.successfulData(from: $0)
+        }
+    ) {
         self.registry = registry
         self.process = process
+        self.rules = rules
+        self.fetchData = fetchData
     }
 
     func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
@@ -69,13 +81,37 @@ struct UpdateCoordinator: UpdateCoordinating, Sendable {
             let checked = await registry.provider(for: alternate.updateConfiguration.mechanism)
                 .check(alternate, fallbackNotes: application)
             return HomebrewUpdateProvider.mergeAlternateCheckResult(
-                checked,
+                await applyingRuleReleaseNotes(to: checked),
                 intoHomebrew: application
             )
         }
 
-        return await registry.provider(for: application.updateConfiguration.mechanism)
-            .check(application, fallbackNotes: nil)
+        return await applyingRuleReleaseNotes(
+            to: await registry.provider(for: application.updateConfiguration.mechanism)
+                .check(application, fallbackNotes: nil))
+    }
+
+    /// A rule can name where notes are published apart from its feed, such as the
+    /// GitHub release for the version the check found.
+    private func applyingRuleReleaseNotes(to application: AppRecord) async -> AppRecord {
+        guard
+            let latestVersion = application.latestVersion?.split(separator: ",").first
+                .map(String.init),
+            let match = rules().match(
+                configurationIdentifier: application.updateConfiguration.identifier,
+                bundleIdentifier: application.bundleIdentifier),
+            let url = match.releaseNotesURL(
+                values: match.values(
+                    version: application.currentVersion, build: application.buildVersion,
+                    bundleIdentifier: application.bundleIdentifier),
+                latestVersion: latestVersion),
+            url != application.releaseNotesURL,
+            let notes = await ReleaseNotesFetcher.fetch(from: url, fetchData: fetchData)
+        else { return application }
+        var application = application
+        application.releaseNotes = notes
+        application.releaseNotesURL = url
+        return application
     }
 
     func update(

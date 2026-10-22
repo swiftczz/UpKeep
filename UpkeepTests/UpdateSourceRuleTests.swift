@@ -615,6 +615,60 @@ final class UpdateSourceRuleTests: XCTestCase {
         } catch UpdateSourceError.noInstallableSource {}
     }
 
+    func testRuleReleaseNotesFollowTheVersionTheCheckFound() async throws {
+        let calls = RequestLog()
+        let requested = RequestLog()
+        let coordinator = UpdateCoordinator(
+            registry: UpdateSourceRegistry(
+                providers: [RecordingProvider(mechanism: .tauri, calls: calls)]),
+            rules: { .builtIn },
+            fetchData: { url in
+                await requested.append(url)
+                return try JSONSerialization.data(withJSONObject: ["body": "GitHub notes"])
+            })
+        let reasonix = AppRecord(
+            name: "Reasonix",
+            bundleIdentifier: "com.wails.reasonix-desktop",
+            applicationURL: URL(fileURLWithPath: "/nonexistent/Reasonix.app"),
+            currentVersion: "1.0",
+            updateConfiguration: UpdateConfiguration(
+                mechanism: .tauri, feedURL: URL(string: "https://dl.reasonix.io/latest/latest.json"),
+                identifier: "rule:reasonix"),
+            status: .upToDate)
+
+        let checked = await coordinator.check(reasonix)
+        XCTAssertEqual(checked.releaseNotes, "GitHub notes")
+        XCTAssertEqual(
+            checked.releaseNotesURL?.absoluteString,
+            "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/desktop-v9.0")
+        let urls = await requested.urls
+        XCTAssertEqual(
+            urls.map(\.absoluteString),
+            ["https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/desktop-v9.0"])
+
+        var unassigned = reasonix
+        unassigned.updateConfiguration.identifier = nil
+        let plain = await coordinator.check(unassigned)
+        XCTAssertNil(plain.releaseNotes)
+        let afterPlain = await requested.urls
+        XCTAssertEqual(afterPlain.count, 1)
+    }
+
+    func testReleaseNotesTemplateIsValidatedPerKind() throws {
+        var rule = jsonRule(id: "editor")
+        rule.releaseNotes = "https://example.com/notes/{latestVersion}.md"
+        XCTAssertNoThrow(try rule.validate())
+        rule.releaseNotes = "http://example.com/notes.md"
+        XCTAssertThrowsError(try rule.validate())
+        rule.releaseNotes = "https://example.com/notes/{unknown}.md"
+        XCTAssertThrowsError(try rule.validate())
+
+        let github = try decodeRule(
+            #"{"id": "repo", "kind": "githubReleases", "match": {"bundleIdentifier": "com.example.app"}, "repository": "example/app", "releaseNotes": "https://example.com/notes.md"}"#
+        )
+        XCTAssertThrowsError(try github.validate())
+    }
+
     func testEveryMechanismDescribesItself() {
         for mechanism in UpdateMechanism.allCases {
             XCTAssertFalse(mechanism.title.isEmpty, mechanism.rawValue)
