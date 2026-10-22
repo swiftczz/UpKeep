@@ -187,7 +187,7 @@ final class HomebrewMetadataMergeTests: XCTestCase {
             mechanism: .homebrew, identifier: "example")
         cached.status = .upToDate
         XCTAssertEqual(
-            ApplicationScanner.makeInstalledApplicationRecord(from: app)?.updateConfiguration
+            ApplicationScanner.makeRecord(from: app, sourceDetection: .installedOnly)?.updateConfiguration
                 .mechanism,
             .selfManaged)
         let scanned = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))

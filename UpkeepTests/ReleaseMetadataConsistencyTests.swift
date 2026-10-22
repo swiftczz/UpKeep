@@ -135,20 +135,4 @@ final class ReleaseMetadataConsistencyTests: XCTestCase {
         XCTAssertNil(result.packageByteCount)
         XCTAssertNil(result.latestBuildVersion)
     }
-
-    func testOldSnapshotsInvalidateNotesOnce() throws {
-        let snapshot = ApplicationLibrarySnapshot(applications: [app()])
-        let data = try JSONEncoder().encode(snapshot)
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        json.removeValue(forKey: "releaseMetadataRevision")
-        var old = try JSONDecoder().decode(
-            ApplicationLibrarySnapshot.self,
-            from: JSONSerialization.data(withJSONObject: json))
-        old.migrateReleaseMetadataIfNeeded()
-        XCTAssertNil(old.applications[0].releaseNotes)
-        XCTAssertEqual(old.applications[0].latestVersion, "1.14.0")
-        var current = try JSONDecoder().decode(ApplicationLibrarySnapshot.self, from: data)
-        current.migrateReleaseMetadataIfNeeded()
-        XCTAssertEqual(current.applications[0].releaseNotes, "Old notes")
-    }
 }

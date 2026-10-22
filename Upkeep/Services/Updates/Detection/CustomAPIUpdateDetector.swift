@@ -7,10 +7,6 @@ enum CustomAPIUpdateDetector {
         "alpha", "beta", "canary", "dev", "nightly", "preview", "rc",
     ]
 
-    static func endpoint(inFile fileURL: URL) -> URL? {
-        ExecutableUpdaterDetector.detect(fileURL: fileURL).customAPIUpdateEndpoint
-    }
-
     static func firstEndpoint(in window: Data) -> URL? {
         var searchStart = window.startIndex
         while let range = window[searchStart...].range(of: apiLatestNeedle) {

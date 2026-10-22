@@ -25,76 +25,10 @@ extension AppRecord: Codable {
         case canAutomaticallyUpdate
         case lastInstalledAt
         case installedUpdateConfiguration
-        // Legacy flat records, decoded but never written again.
-        case source
-        case sourceURL
-        case homepageURL
-        case sourceIdentifier
-        case githubReleaseTagPrefix
-        case alternateUpdateSource
-        case alternateSourceURL
-        case alternateSourceIdentifier
-        case alternateHomepageURL
-        case installedSource
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let configuration: UpdateConfiguration
-        if container.contains(.updateConfiguration) {
-            configuration = try container.decode(
-                UpdateConfiguration.self, forKey: .updateConfiguration)
-        } else {
-            let mechanism = try container.decode(UpdateMechanism.self, forKey: .source)
-            configuration = UpdateConfiguration(
-                mechanism: mechanism,
-                feedURL: try container.decodeIfPresent(URL.self, forKey: .sourceURL),
-                homepageURL: try container.decodeIfPresent(URL.self, forKey: .homepageURL),
-                identifier: try container.decodeIfPresent(String.self, forKey: .sourceIdentifier),
-                githubReleaseTagPrefix: mechanism == .githubReleases
-                    ? try container.decodeIfPresent(String.self, forKey: .githubReleaseTagPrefix)
-                    : nil
-            )
-        }
-        let alternate: UpdateConfiguration?
-        if container.contains(.alternateUpdateConfiguration) {
-            alternate = try container.decodeIfPresent(
-                UpdateConfiguration.self, forKey: .alternateUpdateConfiguration)
-        } else if let mechanism = try container.decodeIfPresent(
-            UpdateMechanism.self, forKey: .alternateUpdateSource)
-        {
-            alternate = UpdateConfiguration(
-                mechanism: mechanism,
-                feedURL: try container.decodeIfPresent(URL.self, forKey: .alternateSourceURL),
-                homepageURL: try container.decodeIfPresent(URL.self, forKey: .alternateHomepageURL),
-                identifier: try container.decodeIfPresent(
-                    String.self, forKey: .alternateSourceIdentifier),
-                githubReleaseTagPrefix: mechanism == .githubReleases
-                    ? try container.decodeIfPresent(String.self, forKey: .githubReleaseTagPrefix)
-                    : nil
-            )
-        } else {
-            alternate = nil
-        }
-        let installed: UpdateConfiguration?
-        if container.contains(.installedUpdateConfiguration) {
-            installed = try container.decodeIfPresent(
-                UpdateConfiguration.self, forKey: .installedUpdateConfiguration)
-        } else if let mechanism = try container.decodeIfPresent(
-            UpdateMechanism.self, forKey: .installedSource)
-        {
-            // Old records stored only the mechanism. Reuse endpoint details only when
-            // an existing route describes that same mechanism.
-            if configuration.mechanism == mechanism {
-                installed = configuration
-            } else if alternate?.mechanism == mechanism {
-                installed = alternate
-            } else {
-                installed = UpdateConfiguration(mechanism: mechanism)
-            }
-        } else {
-            installed = nil
-        }
         self.init(
             name: try container.decode(String.self, forKey: .name),
             bundleIdentifier: try container.decode(String.self, forKey: .bundleIdentifier),
@@ -103,7 +37,8 @@ extension AppRecord: Codable {
             buildVersion: try container.decodeIfPresent(String.self, forKey: .buildVersion),
             applicationModificationDate: try container.decodeIfPresent(
                 Date.self, forKey: .applicationModificationDate),
-            updateConfiguration: configuration,
+            updateConfiguration: try container.decode(
+                UpdateConfiguration.self, forKey: .updateConfiguration),
             appStorePlatform: try container.decodeIfPresent(
                 AppStorePlatform.self, forKey: .appStorePlatform),
             appStoreCountryCode: try container.decodeIfPresent(
@@ -118,14 +53,16 @@ extension AppRecord: Codable {
             releaseDate: try container.decodeIfPresent(Date.self, forKey: .releaseDate),
             releaseNotesURL: try container.decodeIfPresent(URL.self, forKey: .releaseNotesURL),
             updatePageURL: try container.decodeIfPresent(URL.self, forKey: .updatePageURL),
-            alternateUpdateConfiguration: alternate,
+            alternateUpdateConfiguration: try container.decodeIfPresent(
+                UpdateConfiguration.self, forKey: .alternateUpdateConfiguration),
             homebrewCaskToken: try container.decodeIfPresent(
                 String.self, forKey: .homebrewCaskToken),
             packageByteCount: try container.decodeIfPresent(Int64.self, forKey: .packageByteCount),
             canAutomaticallyUpdate: try container.decodeIfPresent(
                 Bool.self, forKey: .canAutomaticallyUpdate) ?? false,
             lastInstalledAt: try container.decodeIfPresent(Date.self, forKey: .lastInstalledAt),
-            installedUpdateConfiguration: installed
+            installedUpdateConfiguration: try container.decodeIfPresent(
+                UpdateConfiguration.self, forKey: .installedUpdateConfiguration)
         )
     }
 

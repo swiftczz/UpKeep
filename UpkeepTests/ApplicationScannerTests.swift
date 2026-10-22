@@ -453,7 +453,7 @@ final class ApplicationScannerTests: XCTestCase {
         try Data("receipt".utf8).write(to: receiptURL)
 
         let application = try XCTUnwrap(
-            ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
+            ApplicationScanner.makeRecord(from: applicationURL, sourceDetection: .installedOnly)
         )
 
         XCTAssertEqual(application.updateConfiguration.mechanism, .appStore)
@@ -601,7 +601,7 @@ final class ApplicationScannerTests: XCTestCase {
             ApplicationScanner.makeRecord(from: applicationURL, reusing: application)
         )
         let installed = try XCTUnwrap(
-            ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
+            ApplicationScanner.makeRecord(from: applicationURL, sourceDetection: .installedOnly)
         )
         for record in [updated, installed] {
             XCTAssertEqual(record.currentVersion, "2.0")
@@ -928,7 +928,7 @@ final class ApplicationScannerTests: XCTestCase {
         ).write(to: resourcesURL.appendingPathComponent("app-update.yml"))
 
         let installed = try XCTUnwrap(
-            ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
+            ApplicationScanner.makeRecord(from: applicationURL, sourceDetection: .installedOnly)
         )
         let fullyScanned = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
 
@@ -1112,7 +1112,7 @@ final class ApplicationScannerTests: XCTestCase {
             "https://code.visualstudio.com")
         XCTAssertEqual(application.buildVersion, "110a328")
         let installed = try XCTUnwrap(
-            ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL))
+            ApplicationScanner.makeRecord(from: applicationURL, sourceDetection: .installedOnly))
         XCTAssertEqual(installed.updateConfiguration.mechanism, .vscodeUpdater)
         XCTAssertEqual(installed.buildVersion, application.buildVersion)
         XCTAssertEqual(

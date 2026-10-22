@@ -97,25 +97,6 @@ enum UpdateMechanism: String, Hashable, Sendable, Codable, CaseIterable {
 
     private static let packageInstallHelp = "下载并安装此更新"
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-        // Previous snapshot schemas used these names for custom API updates.
-        if value == "releaseJSON" || value == "website" {
-            self = .customAPI
-        } else if let mechanism = Self(rawValue: value) {
-            self = mechanism
-        } else {
-            throw DecodingError.dataCorruptedError(
-                in: container, debugDescription: "Unknown update mechanism: \(value)")
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
-
     var title: String { traits.title }
 
     var searchTerms: [String] { traits.searchTerms }

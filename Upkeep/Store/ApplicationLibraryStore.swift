@@ -3,14 +3,8 @@ import Foundation
 struct ApplicationLibrarySnapshot: Codable, Sendable {
     var lastCheckedAt: Date?
     var applications: [AppRecord]
-    var releaseMetadataRevision: Int? = 1
 
-    mutating func migrateReleaseMetadataIfNeeded() {
-        if releaseMetadataRevision != 1 {
-            // Older snapshots may pair a new version with notes copied from an older release.
-            for index in applications.indices { applications[index].clearReleaseMetadata() }
-            releaseMetadataRevision = 1
-        }
+    mutating func discardUnverifiableReleases() {
         // A lost updater cannot substantiate a pending release from an older app edition.
         for index in applications.indices
         where applications[index].updateConfiguration.mechanism == .selfManaged {
@@ -32,7 +26,7 @@ struct ApplicationLibraryStore: Sendable {
                     var snapshot = try? JSONDecoder().decode(
                         ApplicationLibrarySnapshot.self, from: data)
                 else { return nil }
-                snapshot.migrateReleaseMetadataIfNeeded()
+                snapshot.discardUnverifiableReleases()
                 return snapshot
             },
             save: { snapshot in

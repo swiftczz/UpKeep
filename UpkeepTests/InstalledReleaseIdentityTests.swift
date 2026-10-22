@@ -42,7 +42,7 @@ final class InstalledReleaseIdentityTests: XCTestCase {
     }
 
     func
-        testCurrentSnapshotMigrationClearsUnverifiableRemoteReleaseWithoutChangingInstalledVersion()
+        testLoadedSnapshotClearsUnverifiableRemoteReleaseWithoutChangingInstalledVersion()
         throws
     {
         var orphan = newEdition()
@@ -52,7 +52,7 @@ final class InstalledReleaseIdentityTests: XCTestCase {
         var snapshot = ApplicationLibrarySnapshot(applications: [orphan, oldEdition()])
         snapshot = try JSONDecoder().decode(
             ApplicationLibrarySnapshot.self, from: JSONEncoder().encode(snapshot))
-        snapshot.migrateReleaseMetadataIfNeeded()
+        snapshot.discardUnverifiableReleases()
         assertNoOldRelease(snapshot.applications[0])
         XCTAssertEqual(snapshot.applications[0].currentVersion, "0.1.16")
         XCTAssertEqual(snapshot.applications[1].latestVersion, "1.0.17")

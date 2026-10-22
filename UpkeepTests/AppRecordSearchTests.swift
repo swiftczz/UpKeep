@@ -163,15 +163,11 @@ final class AppRecordSearchTests: XCTestCase {
         XCTAssertFalse(application.matchesSearch("Homebrew"))
     }
 
-    func testOldSnapshotDoesNotInferUpdateChannelFromInstallationDate() throws {
+    func testRecordWithoutInstalledRouteDoesNotInferChannelFromInstallationDate() throws {
         var application = makeApplication(mechanism: .sparkle)
         application.lastInstalledAt = .now
-        var object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: JSONEncoder().encode(application)) as? [String: Any]
-        )
-        object.removeValue(forKey: "installedSource")
         let restored = try JSONDecoder().decode(
-            AppRecord.self, from: JSONSerialization.data(withJSONObject: object)
+            AppRecord.self, from: JSONEncoder().encode(application)
         )
 
         XCTAssertNil(restored.installedUpdateConfiguration?.mechanism)

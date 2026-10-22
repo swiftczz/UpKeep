@@ -61,7 +61,7 @@ final class AppLibraryUpdateTests: XCTestCase {
 
         let requiresConfirmation = await library.requiresRelaunchConfirmation(for: application)
         XCTAssertTrue(requiresConfirmation)
-        let runningApplications = await library.automaticUpdatesRequiringRelaunch()
+        let runningApplications = await library.prepareUpdateAll().runningApplications
         XCTAssertEqual(runningApplications.map(\.id), [application.id])
     }
 
@@ -75,7 +75,7 @@ final class AppLibraryUpdateTests: XCTestCase {
 
         let requiresConfirmation = await library.requiresRelaunchConfirmation(for: application)
         XCTAssertFalse(requiresConfirmation)
-        let runningApplications = await library.automaticUpdatesRequiringRelaunch()
+        let runningApplications = await library.prepareUpdateAll().runningApplications
         XCTAssertTrue(runningApplications.isEmpty)
     }
 
@@ -109,7 +109,7 @@ final class AppLibraryUpdateTests: XCTestCase {
         )
         library.ignoreUpdates(for: ignored.id)
 
-        let runningApplications = await library.automaticUpdatesRequiringRelaunch()
+        let runningApplications = await library.prepareUpdateAll().runningApplications
         XCTAssertEqual(runningApplications.map(\.name), ["Running"])
     }
 

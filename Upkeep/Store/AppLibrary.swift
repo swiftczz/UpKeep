@@ -136,10 +136,6 @@ final class AppLibrary {
         )
     }
 
-    func automaticUpdatesRequiringRelaunch() async -> [AppRecord] {
-        await prepareUpdateAll().runningApplications
-    }
-
     var isRefreshing: Bool {
         phase != .idle
     }

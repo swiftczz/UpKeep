@@ -418,10 +418,6 @@ struct SparkleCandidate: Hashable, Sendable {
                 }
     }
 
-    func hasSecureDownload(relativeTo feedURL: URL) -> Bool {
-        resolvedDownloadURL(relativeTo: feedURL) != nil
-    }
-
     func manualUpdateURL(relativeTo feedURL: URL) -> URL? {
         // Sparkle items without an enclosure use their item link for a web handoff.
         guard downloadURL == nil, let updatePageURL,

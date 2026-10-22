@@ -16,7 +16,6 @@ final class SparkleAppcastParserTests: XCTestCase {
             """
         let candidate = try XCTUnwrap(SparkleAppcastParser(data: Data(xml.utf8)).parse().first)
         XCTAssertEqual(candidate.installationType, "package")
-        XCTAssertTrue(candidate.hasSecureDownload(relativeTo: feed))
         XCTAssertNil(candidate.supportedPackageURL(relativeTo: feed))
         let provider = SparkleUpdateProvider(fetchData: { _ in Data(xml.utf8) })
         let result = await provider.check(
@@ -299,14 +298,13 @@ final class SparkleAppcastParserTests: XCTestCase {
         )
         let informationOnlyCandidate = SparkleCandidate()
 
-        XCTAssertTrue(relativeCandidate.hasSecureDownload(relativeTo: feedURL))
         XCTAssertEqual(
             relativeCandidate.supportedPackageURL(relativeTo: feedURL)?.absoluteString,
             "https://example.com/releases/App.zip"
         )
-        XCTAssertFalse(insecureCandidate.hasSecureDownload(relativeTo: feedURL))
+        XCTAssertNil(insecureCandidate.supportedPackageURL(relativeTo: feedURL))
         XCTAssertNil(unsupportedCandidate.supportedPackageURL(relativeTo: feedURL))
-        XCTAssertFalse(informationOnlyCandidate.hasSecureDownload(relativeTo: feedURL))
+        XCTAssertNil(informationOnlyCandidate.supportedPackageURL(relativeTo: feedURL))
     }
 
     func testIgnoresDeltaEnclosuresWhenSelectingInstallablePackage() throws {

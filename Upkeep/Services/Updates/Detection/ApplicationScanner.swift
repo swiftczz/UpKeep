@@ -120,59 +120,11 @@ struct ApplicationScanner: ApplicationScanning {
 
     static func makeRecord(
         from applicationURL: URL,
+        reusing previous: AppRecord? = nil,
         preferredLanguages: [String] = Locale.preferredLanguages,
+        sourceDetection: UpdateSourceDetectionContext.Depth = .full,
         rules: UpdateSourceRuleSet = .builtIn,
         registry: UpdateSourceRegistry = .standard
-    ) -> AppRecord? {
-        makeRecord(
-            from: applicationURL,
-            reusing: nil,
-            preferredLanguages: preferredLanguages,
-            rules: rules,
-            registry: registry
-        )
-    }
-
-    static func makeInstalledApplicationRecord(
-        from applicationURL: URL,
-        preferredLanguages: [String] = Locale.preferredLanguages,
-        rules: UpdateSourceRuleSet = .builtIn,
-        registry: UpdateSourceRegistry = .standard
-    ) -> AppRecord? {
-        makeRecord(
-            from: applicationURL,
-            reusing: nil,
-            preferredLanguages: preferredLanguages,
-            sourceDetection: .installedOnly,
-            rules: rules,
-            registry: registry
-        )
-    }
-
-    static func makeRecord(
-        from applicationURL: URL,
-        reusing previous: AppRecord?,
-        preferredLanguages: [String] = Locale.preferredLanguages,
-        rules: UpdateSourceRuleSet = .builtIn,
-        registry: UpdateSourceRegistry = .standard
-    ) -> AppRecord? {
-        makeRecord(
-            from: applicationURL,
-            reusing: previous,
-            preferredLanguages: preferredLanguages,
-            sourceDetection: .full,
-            rules: rules,
-            registry: registry
-        )
-    }
-
-    private static func makeRecord(
-        from applicationURL: URL,
-        reusing previous: AppRecord?,
-        preferredLanguages: [String],
-        sourceDetection: SourceDetectionMode,
-        rules: UpdateSourceRuleSet,
-        registry: UpdateSourceRegistry
     ) -> AppRecord? {
         guard let bundle = resolvedBundle(from: applicationURL) else {
             return nil

@@ -184,7 +184,7 @@ final class UpdateSourceRuleTests: XCTestCase {
 
         for record in [
             ApplicationScanner.makeRecord(from: url),
-            ApplicationScanner.makeInstalledApplicationRecord(from: url),
+            ApplicationScanner.makeRecord(from: url, sourceDetection: .installedOnly),
         ] {
             let configuration = try XCTUnwrap(record).updateConfiguration
             XCTAssertEqual(configuration.mechanism, .electronBuilder)
@@ -258,7 +258,7 @@ final class UpdateSourceRuleTests: XCTestCase {
             assigned.updateConfiguration.feedURL?.absoluteString, "https://example.com/appcast.xml")
         XCTAssertEqual(assigned.status, .checking)
         let reused = try XCTUnwrap(
-            ApplicationScanner.makeInstalledApplicationRecord(from: url, rules: rules))
+            ApplicationScanner.makeRecord(from: url, sourceDetection: .installedOnly, rules: rules))
         XCTAssertEqual(reused.updateConfiguration, assigned.updateConfiguration)
 
         // Once the vendor declares a feed in Info.plist, the cached rule route is replaced.
@@ -442,7 +442,7 @@ final class UpdateSourceRuleTests: XCTestCase {
 
         for record in [
             ApplicationScanner.makeRecord(from: url, rules: rules),
-            ApplicationScanner.makeInstalledApplicationRecord(from: url, rules: rules),
+            ApplicationScanner.makeRecord(from: url, sourceDetection: .installedOnly, rules: rules),
         ] {
             let record = try XCTUnwrap(record)
             XCTAssertEqual(record.updateConfiguration.mechanism, .customAPI)
@@ -468,7 +468,7 @@ final class UpdateSourceRuleTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let rules = UpdateSourceRuleSet(rules: [jsonRule(id: "editor")])
         let unknown = try XCTUnwrap(
-            ApplicationScanner.makeInstalledApplicationRecord(from: url, rules: .empty))
+            ApplicationScanner.makeRecord(from: url, sourceDetection: .installedOnly, rules: .empty))
         XCTAssertEqual(unknown.updateConfiguration.mechanism, .selfManaged)
 
         let added = try XCTUnwrap(

@@ -33,7 +33,7 @@ final class SparkleDetectionTests: XCTestCase, @unchecked Sendable {
         }
 
         let application = try XCTUnwrap(
-            ApplicationScanner.makeInstalledApplicationRecord(from: applicationURL)
+            ApplicationScanner.makeRecord(from: applicationURL, sourceDetection: .installedOnly)
         )
 
         XCTAssertEqual(application.updateConfiguration.mechanism, .sparkle)

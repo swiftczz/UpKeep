@@ -48,7 +48,7 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
     func testInstalledScanIdentifiesKnownRepositoryWithoutReadingExecutable() throws {
         let url = try makeApplication(bundleIdentifier: "ai.storyteller.futurecraft")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let record = try XCTUnwrap(ApplicationScanner.makeInstalledApplicationRecord(from: url))
+        let record = try XCTUnwrap(ApplicationScanner.makeRecord(from: url, sourceDetection: .installedOnly))
 
         XCTAssertEqual(record.updateConfiguration.mechanism, .githubReleases)
         XCTAssertEqual(record.updateConfiguration.identifier, "storytold/futurecraft")
@@ -93,7 +93,7 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
 
         for record in [
             ApplicationScanner.makeRecord(from: url),
-            ApplicationScanner.makeInstalledApplicationRecord(from: url),
+            ApplicationScanner.makeRecord(from: url, sourceDetection: .installedOnly),
         ] {
             let record = try XCTUnwrap(record)
             XCTAssertEqual(record.updateConfiguration.mechanism, .sparkle)
@@ -111,7 +111,7 @@ final class KnownGitHubReleaseSourcesTests: XCTestCase {
 
         for record in [
             ApplicationScanner.makeRecord(from: url),
-            ApplicationScanner.makeInstalledApplicationRecord(from: url),
+            ApplicationScanner.makeRecord(from: url, sourceDetection: .installedOnly),
         ] {
             XCTAssertEqual(try XCTUnwrap(record).updateConfiguration.mechanism, .appStore)
         }

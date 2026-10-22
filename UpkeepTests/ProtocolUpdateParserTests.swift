@@ -335,7 +335,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         ).write(to: fileURL)
 
         XCTAssertEqual(
-            TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+            ExecutableUpdaterDetector.detect(fileURL: fileURL).tauriEndpoint?.absoluteString,
             "https://dl.reasonix.io/latest/latest.json"
         )
     }
@@ -351,7 +351,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         try data.write(to: fileURL)
 
         XCTAssertEqual(
-            TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+            ExecutableUpdaterDetector.detect(fileURL: fileURL).tauriEndpoint?.absoluteString,
             "https://dl.reasonix.io/latest/latest.json"
         )
     }
@@ -363,7 +363,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
         try Data("https://example.com/%s/%s/latest.json".utf8).write(to: fileURL)
-        XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
+        XCTAssertNil(ExecutableUpdaterDetector.detect(fileURL: fileURL).tauriEndpoint)
     }
 
     func testExtractsTauriJSONURLFromConcatenatedBinaryText() throws {
@@ -377,7 +377,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         ).write(to: fileURL)
 
         XCTAssertEqual(
-            TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
+            ExecutableUpdaterDetector.detect(fileURL: fileURL).tauriEndpoint?.absoluteString,
             "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
         )
     }
@@ -393,7 +393,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         data.append(contentsOf: "/latest.json".utf8)
         try data.write(to: fileURL)
 
-        XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
+        XCTAssertNil(ExecutableUpdaterDetector.detect(fileURL: fileURL).tauriEndpoint)
     }
 
     func testVerifiesElectronBuilderSHA512() throws {
@@ -563,7 +563,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
         try Data("https://example.com/updates/beta/latest.json".utf8).write(to: fileURL)
-        XCTAssertNil(CustomAPIUpdateDetector.endpoint(inFile: fileURL))
+        XCTAssertNil(ExecutableUpdaterDetector.detect(fileURL: fileURL).customAPIUpdateEndpoint)
     }
 
     func testParsesCustomAPIUpdateAssetsAndPrefersAppleSiliconDMG() throws {

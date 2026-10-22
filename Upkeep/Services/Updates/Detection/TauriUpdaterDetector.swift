@@ -9,10 +9,6 @@ enum TauriUpdaterDetector {
         Data("tauri.conf.json".utf8),
     ]
 
-    static func updaterJSONURL(inFile fileURL: URL) -> URL? {
-        ExecutableUpdaterDetector.detect(fileURL: fileURL).tauriEndpoint
-    }
-
     static func endpointFromConfiguration(in bundleURL: URL) -> URL? {
         let candidateURLs = [
             bundleURL.appendingPathComponent("Contents/Resources/tauri.conf.json"),
