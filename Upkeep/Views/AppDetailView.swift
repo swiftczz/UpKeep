@@ -200,15 +200,11 @@ struct AppDetailView: View {
 
     @ViewBuilder
     private var secondaryActions: some View {
+        // "在 Finder 中显示" lives on the Location item in the information grid.
         if usesUpdatePrimaryAction {
             Button("打开", systemImage: "arrow.up.forward.app", action: openApplication)
+            Divider()
         }
-
-        if application.applicationURL.isFileURL {
-            Button("在 Finder 中显示", systemImage: "folder", action: showInFinder)
-        }
-
-        Divider()
 
         Button("卸载", systemImage: "trash", role: .destructive, action: uninstallApplication)
     }
