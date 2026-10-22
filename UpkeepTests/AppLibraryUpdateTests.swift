@@ -229,6 +229,34 @@ final class AppLibraryUpdateTests: XCTestCase {
             library.selectedApplication?.installedUpdateConfiguration?.mechanism, .homebrew)
     }
 
+    func testDownloadProgressRecordsThePackageSize() async throws {
+        let application = makeUpdateApplication(
+            name: "Sized", bundleIdentifier: "com.example.sized")
+        XCTAssertNil(application.packageByteCount)
+        let suiteName = "UpkeepTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let library = AppLibrary(
+            applications: [application],
+            scanner: UpdateSelectionScanner(applications: [application]),
+            coordinator: FailingUpdateCoordinator(progress: [
+                UpdateProgress(fractionCompleted: nil, status: "正在下载…", totalBytes: 0),
+                UpdateProgress(
+                    fractionCompleted: 0.5, status: "正在下载…", completedBytes: 1_000,
+                    totalBytes: 2_000),
+                UpdateProgress.indeterminate("正在安装…"),
+            ]),
+            userDefaults: defaults,
+            libraryStore: .memory()
+        )
+
+        _ = await library.performPrimaryAction(for: application.id)
+
+        let record = try XCTUnwrap(library.applications.first { $0.id == application.id })
+        XCTAssertEqual(record.packageByteCount, 2_000)
+        XCTAssertEqual(record.packageSizeDescription, "2 KB")
+    }
+
     func testSuccessfulUpdateDoesNotSettleBeforeInstalledVersionAppears() async throws {
         let application = makeUpdateApplication(
             name: "Settled",
@@ -443,6 +471,8 @@ private struct UpdateSelectionScanner: ApplicationScanning {
 }
 
 private struct FailingUpdateCoordinator: UpdateCoordinating {
+    var progress: [UpdateProgress] = []
+
     func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
         applications
     }
@@ -455,6 +485,11 @@ private struct FailingUpdateCoordinator: UpdateCoordinating {
         _ application: AppRecord,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) async throws {
+        for frame in self.progress {
+            progress(frame)
+            // Real downloads report over time; the relay coalesces bursts.
+            try await Task.sleep(for: .milliseconds(150))
+        }
         throw ProcessRunnerError.failed(status: 1, message: "模拟更新失败")
     }
 }

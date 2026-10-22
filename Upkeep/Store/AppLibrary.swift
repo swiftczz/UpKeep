@@ -996,6 +996,7 @@ final class AppLibrary {
         let consumeProgress = Task { @MainActor in
             for await progress in relay.stream {
                 state.report(progress)
+                recordPackageSize(from: progress, for: application)
             }
         }
 
@@ -1010,6 +1011,17 @@ final class AppLibrary {
             await consumeProgress.value
             throw error
         }
+    }
+
+    /// Only downloads report a total, which is the package size even when the check
+    /// could not learn it, e.g. for a Homebrew cask hosted outside GitHub.
+    private func recordPackageSize(from progress: UpdateProgress, for application: AppRecord) {
+        guard let total = progress.totalBytes, total > 0,
+            let index = applications.firstIndex(where: { $0.id == application.id }),
+            applications[index].packageByteCount != total
+        else { return }
+        applications[index].packageByteCount = total
+        persistSnapshot()
     }
 
     private func waitForInstalledDiskRecord(_ application: AppRecord) async -> AppRecord? {
