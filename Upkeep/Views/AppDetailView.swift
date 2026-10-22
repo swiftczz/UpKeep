@@ -17,6 +17,7 @@ struct AppDetailView: View {
     @State private var isConfirmingRelaunch = false
     @State private var preparationTask: Task<Void, Never>?
     @State private var preparationID: UUID?
+    @State private var isShowingMoreActions = false
 
     var body: some View {
         ScrollView {
@@ -48,9 +49,17 @@ struct AppDetailView: View {
         .id(application.id)
         .navigationTitle(application.name)
         .background(.background)
+        // Drawn above the scroll view so the panel is never clipped or covered.
+        .overlayPreferenceValue(MoreActionsAnchorKey.self) { anchor in
+            moreActionsOverlay(below: anchor)
+        }
         .onChange(of: application.id) { _, _ in
             cancelPreparation()
             isConfirmingRelaunch = false
+            isShowingMoreActions = false
+        }
+        .onChange(of: primaryActionPhase) { _, _ in
+            isShowingMoreActions = false
         }
         .onDisappear { cancelPreparation() }
         .alert(
@@ -152,7 +161,7 @@ struct AppDetailView: View {
         HStack(spacing: 0) {
             Button(action: handlePrimaryAction) {
                 primaryActionLabel
-                    .padding(.leading, 14)
+                    .padding(.leading, ActionRowMetrics.leadingInset)
                     .padding(.trailing, 12)
                     .padding(.vertical, 7)
                     .contentShape(.rect)
@@ -165,25 +174,71 @@ struct AppDetailView: View {
                 .frame(width: 1, height: 18)
                 .accessibilityHidden(true)
 
-            Menu {
-                secondaryActions
+            Button {
+                setMoreActionsShown(!isShowingMoreActions)
             } label: {
                 Image(systemName: "chevron.down")
-                    .symbolRenderingMode(.palette)
                     .foregroundStyle(primaryActionForeground)
                     .font(.system(size: 11, weight: .semibold))
+                    .rotationEffect(.degrees(isShowingMoreActions ? 180 : 0))
                     .frame(width: 30)
                     .padding(.vertical, 6)
                     .contentShape(.rect)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
             .help("更多操作")
             .accessibilityLabel("更多操作")
+            .accessibilityValue(isShowingMoreActions ? "已展开" : "已收起")
         }
         .glassEffect(primaryActionGlass, in: .rect(cornerRadius: 8))
         .glassEffectID(PrimaryActionGlassID.shape, in: primaryActionNamespace)
+        .anchorPreference(key: MoreActionsAnchorKey.self, value: .bounds) { $0 }
         .disabled(preparationID != nil)
+    }
+
+    /// The panel drops down from the action control, matching its width and left edge
+    /// so its icons and titles line up with the primary action's.
+    @ViewBuilder
+    private func moreActionsOverlay(below anchor: Anchor<CGRect>?) -> some View {
+        GeometryReader { proxy in
+            if let anchor {
+                let control = proxy[anchor]
+                ZStack(alignment: .topLeading) {
+                    if isShowingMoreActions {
+                        // Clicking anywhere else closes the panel, like a menu.
+                        Color.clear
+                            .contentShape(.rect)
+                            .onTapGesture { setMoreActionsShown(false) }
+                            .accessibilityHidden(true)
+
+                        Button("关闭", action: { setMoreActionsShown(false) })
+                            .keyboardShortcut(.cancelAction)
+                            .frame(width: 0, height: 0)
+                            .opacity(0)
+                            .accessibilityHidden(true)
+                    }
+
+                    // Stays in place while closed so opening can pull it out of the button.
+                    MoreActionsPanel(
+                        items: moreActionItems, progress: isShowingMoreActions ? 1 : 0
+                    ) { item in
+                        setMoreActionsShown(false)
+                        item.action()
+                    }
+                    .frame(width: control.width)
+                    .offset(x: control.minX, y: control.maxY + 6)
+                    .allowsHitTesting(isShowingMoreActions)
+                    .accessibilityHidden(!isShowingMoreActions)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    private func setMoreActionsShown(_ shown: Bool) {
+        withAnimation(reduceMotion ? nil : .smooth(duration: shown ? 0.3 : 0.2)) {
+            isShowingMoreActions = shown
+        }
     }
 
     private var primaryActionGlass: Glass {
@@ -198,24 +253,31 @@ struct AppDetailView: View {
         usesUpdatePrimaryAction ? .white : .primary
     }
 
-    @ViewBuilder
-    private var secondaryActions: some View {
-        // "在 Finder 中显示" lives on the Location item in the information grid.
+    /// "在 Finder 中显示" lives on the Location item in the information grid.
+    private var moreActionItems: [MoreActionsPanel.Item] {
+        var items: [MoreActionsPanel.Item] = []
         if usesUpdatePrimaryAction {
-            Button("打开", systemImage: "arrow.up.forward.app", action: openApplication)
-            Divider()
+            items.append(
+                .init(title: "打开", systemImage: "arrow.up.forward.app", action: openApplication))
         }
-
-        Button("卸载", systemImage: "trash", role: .destructive, action: uninstallApplication)
+        items.append(
+            .init(
+                title: "卸载", systemImage: "trash", isDestructive: true,
+                action: uninstallApplication))
+        return items
     }
 
     private var primaryActionLabel: some View {
-        HStack(spacing: 6) {
+        // The same icon column as the drop-down rows, so their titles line up.
+        HStack(spacing: ActionRowMetrics.iconSpacing) {
             if preparationID != nil {
                 ProgressView().controlSize(.small)
+                    .frame(width: ActionRowMetrics.iconWidth)
                 Text("正在准备…")
             } else {
-                Label(primaryActionTitle, systemImage: primaryActionSystemImage)
+                Image(systemName: primaryActionSystemImage)
+                    .frame(width: ActionRowMetrics.iconWidth)
+                Text(primaryActionTitle)
             }
         }
         .foregroundStyle(primaryActionForeground)
@@ -522,6 +584,104 @@ struct AppDetailView: View {
 
 private enum PrimaryActionGlassID: Hashable {
     case shape
+}
+
+/// Shared by the primary action and the drop-down rows so icons and titles align.
+private enum ActionRowMetrics {
+    static let leadingInset: CGFloat = 14
+    static let iconWidth: CGFloat = 16
+    static let iconSpacing: CGFloat = 8
+    static let panelPadding: CGFloat = 4
+}
+
+private struct MoreActionsAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+/// Secondary actions that drop down beneath the primary action.
+private struct MoreActionsPanel: View, Animatable {
+    struct Item: Identifiable {
+        var id: String { title }
+        let title: String
+        let systemImage: String
+        var isDestructive = false
+        let action: () -> Void
+    }
+
+    let items: [Item]
+    /// How far the panel is pulled out, from 0 (closed) to 1 (open).
+    var progress: Double
+    let perform: (Item) -> Void
+    @State private var fullHeight: CGFloat = 0
+
+    nonisolated var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    var body: some View {
+        rows
+            .padding(ActionRowMetrics.panelPadding)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+            // The rows slide down a little behind the growing edge.
+            .offset(y: -8 * (1 - progress))
+            // The glass grows from the top edge, so its bottom edge is pulled down.
+            .frame(height: progress < 1 ? fullHeight * progress : nil, alignment: .top)
+            .clipped()
+            .glassEffect(.regular, in: .rect(cornerRadius: 12))
+            .shadow(color: .black.opacity(0.12 * progress), radius: 12, y: 6)
+            .opacity(progress > 0 ? 1 : 0)
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                // Destructive actions sit in their own group.
+                if item.isDestructive, index > 0, !items[index - 1].isDestructive {
+                    Divider().padding(.horizontal, 8).padding(.vertical, 2)
+                }
+                MoreActionRow(item: item) { perform(item) }
+            }
+        }
+    }
+}
+
+private struct MoreActionRow: View {
+    let item: MoreActionsPanel.Item
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: ActionRowMetrics.iconSpacing) {
+                Image(systemName: item.systemImage)
+                    .frame(width: ActionRowMetrics.iconWidth)
+                Text(item.title)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(item.isDestructive ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+            // Panel padding plus row padding equals the primary action's inset.
+            .padding(.leading, ActionRowMetrics.leadingInset - ActionRowMetrics.panelPadding)
+            .padding(.trailing, 10)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(highlight, in: .rect(cornerRadius: 8))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(item.title)
+    }
+
+    private var highlight: AnyShapeStyle {
+        guard isHovered else { return AnyShapeStyle(.clear) }
+        return item.isDestructive
+            ? AnyShapeStyle(.red.opacity(0.12)) : AnyShapeStyle(.primary.opacity(0.08))
+    }
 }
 
 private struct UpdateSucceededBadge: View {
