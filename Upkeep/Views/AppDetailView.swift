@@ -242,14 +242,10 @@ struct AppDetailView: View {
                 spacing: 12
             ) {
                 ForEach(informationItems, id: \.label) { item in
-                    informationRow(item.label, value: item.value, action: item.action)
+                    informationRow(item)
                 }
             }
 
-            Text(application.applicationURL.path)
-                .font(.caption.monospaced())
-                .foregroundStyle(.tertiary)
-                .textSelection(.enabled)
             if usesApplicationUpdaterHandoff {
                 Text("此更新需使用应用自带的安装程序，请打开应用后检查更新。")
                     .font(.callout)
@@ -268,30 +264,54 @@ struct AppDetailView: View {
         return application.status.title
     }
 
-    private var informationItems: [(label: String, value: String, action: (() -> Void)?)] {
-        var items: [(label: String, value: String, action: (() -> Void)?)] = [
-            ("状态", isUpdateIgnored ? "已忽略更新" : statusTitle, nil),
-            ("当前版本", application.versionSummary, nil),
-            ("更新来源", application.channelTitle, nil),
-            ("更新机制", application.mechanismTitle, nil),
+    private struct InformationItem {
+        let label: String
+        let value: String
+        var action: (() -> Void)? = nil
+        /// Tooltip for a linked value.
+        var help: String? = nil
+        /// Paths stay on one line and are shortened in the middle.
+        var truncatesMiddle = false
+    }
+
+    private var informationItems: [InformationItem] {
+        var items = [
+            InformationItem(label: "状态", value: isUpdateIgnored ? "已忽略更新" : statusTitle),
+            InformationItem(label: "当前版本", value: application.versionSummary),
+            InformationItem(label: "更新来源", value: application.channelTitle),
+            InformationItem(label: "更新机制", value: application.mechanismTitle),
         ]
         if application.updateConfiguration.mechanism == .appStore,
             let platform = application.appStorePlatform
         {
-            items.append(("商店平台", platform.title, nil))
+            items.append(InformationItem(label: "商店平台", value: platform.title))
         }
         if let latestVersionSummary = application.latestVersionSummary {
-            items.append(("最新版本", latestVersionSummary, nil))
+            items.append(InformationItem(label: "最新版本", value: latestVersionSummary))
         }
         if let releaseDate = application.releaseDate {
-            items.append(("发布日期", releaseDate.formatted(date: .abbreviated, time: .omitted), nil))
+            items.append(
+                InformationItem(
+                    label: "发布日期",
+                    value: releaseDate.formatted(date: .abbreviated, time: .omitted)))
         }
-        items.append(("Bundle ID", application.bundleIdentifier, nil))
+        items.append(InformationItem(label: "Bundle ID", value: application.bundleIdentifier))
         if let packageSize = application.packageSizeDescription {
-            items.append(("更新包", packageSize, nil))
+            items.append(InformationItem(label: "更新包", value: packageSize))
         }
         if let homepageURL = application.updateConfiguration.homepageURL {
-            items.append(("主页", homepageDisplay(from: homepageURL), openHomepage))
+            items.append(
+                InformationItem(
+                    label: "主页", value: homepageDisplay(from: homepageURL),
+                    action: openHomepage, help: "打开主页"))
+        }
+        if application.applicationURL.isFileURL {
+            let path = application.applicationURL.path
+            items.append(
+                InformationItem(
+                    label: "位置", value: (path as NSString).abbreviatingWithTildeInPath,
+                    action: showInFinder, help: "在 Finder 中显示 \(path)",
+                    truncatesMiddle: true))
         }
         return items
     }
@@ -328,33 +348,39 @@ struct AppDetailView: View {
         }
     }
 
-    private func informationRow(
-        _ label: String,
-        value: String,
-        action: (() -> Void)? = nil
-    ) -> some View {
+    private func informationRow(_ item: InformationItem) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(label)
+            Text(item.label)
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 64, alignment: .leading)
-            if let action {
+            if let action = item.action {
                 Button(action: action) {
-                    Text(value)
-                        .fixedSize(horizontal: false, vertical: true)
+                    informationValue(item)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.link)
-                .accessibilityLabel("\(label) \(value)")
-                .help("打开主页")
+                .accessibilityLabel("\(item.label) \(item.value)")
+                .help(item.help ?? "")
             } else {
-                Text(value)
-                    .fixedSize(horizontal: false, vertical: true)
+                informationValue(item)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func informationValue(_ item: InformationItem) -> some View {
+        if item.truncatesMiddle {
+            Text(item.value)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        } else {
+            Text(item.value)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func homepageDisplay(from url: URL) -> String {
