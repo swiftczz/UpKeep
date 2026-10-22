@@ -1062,39 +1062,6 @@ final class ApplicationScannerTests: XCTestCase {
         XCTAssertEqual(application.channelTitle, "GitHub")
     }
 
-    func testDoesNotTreatGPUIAppAsTauriUpdater() throws {
-        let fileManager = FileManager.default
-        let temporaryDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("UpkeepTests-\(UUID().uuidString)", isDirectory: true)
-        let applicationURL = temporaryDirectory.appendingPathComponent(
-            "Editor.app",
-            isDirectory: true
-        )
-        let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
-        let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
-        defer { try? fileManager.removeItem(at: temporaryDirectory) }
-
-        try fileManager.createDirectory(at: macOSURL, withIntermediateDirectories: true)
-        try writePropertyList(
-            basicInfo(bundleIdentifier: "com.example.editor"),
-            to: contentsURL.appendingPathComponent("Info.plist")
-        )
-        try Data(
-            """
-            gpui::app https://downloads.example.com/editor/latest.json
-            """.utf8
-        ).write(to: macOSURL.appendingPathComponent("Example"))
-
-        let application = try XCTUnwrap(ApplicationScanner.makeRecord(from: applicationURL))
-        XCTAssertNotEqual(application.updateConfiguration.mechanism, .tauri)
-        XCTAssertEqual(application.updateConfiguration.mechanism, .customAPI)
-        XCTAssertEqual(
-            application.updateConfiguration.feedURL?.absoluteString,
-            "https://downloads.example.com/editor/latest.json"
-        )
-        XCTAssertEqual(application.channelTitle, "Website")
-    }
-
     func testDetectsVSCodeUpdaterProductJSON() throws {
         let fileManager = FileManager.default
         let temporaryDirectory = fileManager.temporaryDirectory
@@ -1231,76 +1198,6 @@ final class ApplicationScannerTests: XCTestCase {
         XCTAssertEqual(application.updateConfiguration.mechanism, .electronBuilder)
     }
 
-    func testElectronNativeServiceDetectionAndOldSnapshotRecovery() throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("ServiceTest-\(UUID().uuidString)")
-        let app = root.appendingPathComponent("Example.app")
-        let contents = app.appendingPathComponent("Contents")
-        defer { try? fm.removeItem(at: root) }
-        for path in ["MacOS", "Resources/service", "Frameworks/Electron Framework.framework"] {
-            try fm.createDirectory(
-                at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
-        }
-        try writePropertyList(
-            basicInfo(bundleIdentifier: "com.example.service"),
-            to: contents.appendingPathComponent("Info.plist"))
-        let launcher = contents.appendingPathComponent("MacOS/Example")
-        try Data("https://runtime.example.com/latest.json".utf8).write(to: launcher)
-        XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
-        let old = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
-        let service = contents.appendingPathComponent("Resources/service/example-desktop")
-        try Data("prefixhttps://updates.example.com/latest/latest.jsonsuffix".utf8).write(
-            to: service)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: service.path)
-        var cached = old
-        let detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
-        XCTAssertEqual(detected.updateConfiguration.mechanism, .tauri)
-        XCTAssertEqual(
-            detected.updateConfiguration.feedURL?.absoluteString,
-            "https://updates.example.com/latest/latest.json")
-        // A legacy self-managed snapshot with exactly the current timestamp must be re-probed.
-        cached = detected
-        cached.updateConfiguration.mechanism = .selfManaged
-        cached.updateConfiguration.feedURL = nil
-        XCTAssertEqual(
-            ApplicationScanner.makeRecord(from: app, reusing: cached)?.updateConfiguration
-                .mechanism,
-            .tauri)
-        try fm.removeItem(at: service)
-        try fm.createSymbolicLink(
-            at: service, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
-        XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
-    }
-
-    func testElectronHostDetectionIgnoresExampleVersionsAndEscapingSymlinks() throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("HostTest-\(UUID().uuidString)")
-        let app = root.appendingPathComponent("Example Studio.app")
-        let contents = app.appendingPathComponent("Contents")
-        defer { try? fm.removeItem(at: root) }
-        for path in ["MacOS", "Resources/bin", "Frameworks/Electron Framework.framework"] {
-            try fm.createDirectory(
-                at: contents.appendingPathComponent(path), withIntermediateDirectories: true)
-        }
-        var info = basicInfo(bundleIdentifier: "com.example.studio")
-        info["CFBundleExecutable"] = "Example Studio"
-        try writePropertyList(info, to: contents.appendingPathComponent("Info.plist"))
-        try Data().write(to: contents.appendingPathComponent("MacOS/Example Studio"))
-        let host = contents.appendingPathComponent("Resources/bin/example-studio-host")
-        try Data(
-            "tauri_plugin_updater https://example.com/studio-vX.Y.Z/latest.json https://example.com/studio/versions.json"
-                .utf8
-        ).write(to: host)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: host.path)
-        XCTAssertEqual(
-            ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint?.absoluteString,
-            "https://example.com/studio/versions.json")
-        try fm.removeItem(at: host)
-        try fm.createSymbolicLink(
-            at: host, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
-        XCTAssertNil(ExecutableUpdaterDetector.detect(bundleURL: app).tauriEndpoint)
-    }
-
     func testDetectsInstalledReasonixUpdaterWhenPresent() throws {
         let applicationURL = URL(fileURLWithPath: "/Applications/Reasonix.app")
         guard FileManager.default.fileExists(atPath: applicationURL.path) else {
@@ -1372,45 +1269,6 @@ final class ApplicationScannerTests: XCTestCase {
             application.updateConfiguration.feedURL?.absoluteString,
             "https://dl.reasonix.io/studio/versions.json"
         )
-    }
-
-    func testRedetectsFailedRepositoryPointerForUnchangedApplication() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let app = root.appendingPathComponent("Studio.app")
-        let contents = app.appendingPathComponent("Contents")
-        let executable = contents.appendingPathComponent("MacOS/Studio")
-        try FileManager.default.createDirectory(
-            at: executable.deletingLastPathComponent(),
-            withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try writePropertyList(
-            basicInfo(
-                bundleIdentifier: "com.example.studio",
-                extraValues: ["CFBundleExecutable": "Studio"]),
-            to: contents.appendingPathComponent("Info.plist"))
-        try Data(
-            """
-            tauri_plugin_updater
-            https://github.com/example/repo/releases/latest/download/latest.json
-            https://dl.example.com/studio/versions.json
-            """.utf8
-        ).write(to: executable)
-        var cached = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
-        cached.updateConfiguration.feedURL = URL(
-            string: "https://github.com/example/repo/releases/latest/download/latest.json")
-        cached.updateConfiguration.identifier = cached.updateConfiguration.feedURL?.absoluteString
-        cached.status = .unavailable("Update feed not found")
-        cached.latestVersion = "1.0"
-        cached.releaseNotes = "Stale notes"
-        let recovered = try XCTUnwrap(ApplicationScanner.makeRecord(from: app, reusing: cached))
-        XCTAssertEqual(recovered.updateConfiguration.mechanism, .tauri)
-        XCTAssertEqual(
-            recovered.updateConfiguration.feedURL?.absoluteString,
-            "https://dl.example.com/studio/versions.json")
-        XCTAssertEqual(recovered.applicationModificationDate, cached.applicationModificationDate)
-        XCTAssertEqual(recovered.status, .checking)
-        XCTAssertNil(recovered.latestVersion)
-        XCTAssertNil(recovered.releaseNotes)
     }
 
     func testUsesNewestInnerFileModificationDate() throws {

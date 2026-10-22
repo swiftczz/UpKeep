@@ -228,8 +228,7 @@ struct ApplicationScanner: ApplicationScanning {
             !(previous.updateConfiguration.mechanism == .selfManaged
                 && (sourceDetection == .full
                     || hasSparkleSource
-                    || rules.firstMatch(for: bundleIdentifier) != nil
-                    || ExecutableUpdaterDetector.hasApplicationService(in: bundle.bundleURL))),
+                    || rules.firstMatch(for: bundleIdentifier) != nil)),
             !ruleRouteChanged(since: previous, context: context),
             canReuse(
                 previous,
@@ -326,15 +325,6 @@ struct ApplicationScanner: ApplicationScanning {
         hasAppStoreReceipt: Bool,
         iOSAppStoreMetadata: IOSAppStoreMetadata?
     ) -> Bool {
-        if previous.updateConfiguration.mechanism == .tauri, case .unavailable = previous.status,
-            previous.updateConfiguration.feedURL.map(
-                TauriUpdaterDetector.isRepositoryLatestManifestURL)
-                == true
-        {
-            // A failed inferred repository pointer may have hidden a specific endpoint.
-            // Rescan unchanged apps so old snapshots can recover after detector fixes.
-            return false
-        }
         guard previous.bundleIdentifier == bundleIdentifier,
             previous.currentVersion == currentVersion,
             let previousDate = previous.applicationModificationDate,

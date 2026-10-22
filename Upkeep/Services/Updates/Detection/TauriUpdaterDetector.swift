@@ -2,8 +2,6 @@ import Foundation
 
 enum TauriUpdaterDetector {
     private static let latestNeedle = Data("latest.json".utf8)
-    private static let catalogNeedle = Data("versions.json".utf8)
-    private static let gpuiNeedle = Data("gpui::".utf8)
     private static let tauriNeedles = [
         Data("tauri_plugin_updater".utf8),
         Data("tauri://localhost".utf8),
@@ -41,35 +39,20 @@ enum TauriUpdaterDetector {
 
     static func updaterJSONURLs(in window: Data) -> [URL] {
         var urls: [URL] = []
-        for needle in [latestNeedle, catalogNeedle] {
-            var searchStart = window.startIndex
-            while let range = window[searchStart...].range(of: needle) {
-                if let url = url(endingAt: range, in: window) {
-                    urls.append(url)
-                }
-                searchStart = range.upperBound
+        var searchStart = window.startIndex
+        while let range = window[searchStart...].range(of: latestNeedle) {
+            if let url = url(endingAt: range, in: window) {
+                urls.append(url)
             }
+            searchStart = range.upperBound
         }
         return urls
     }
 
     static func preferredUpdaterJSONURL(_ urls: [URL]) -> URL? {
-        if let url = urls.first(where: {
-            $0.lastPathComponent.lowercased() == "latest.json" && !isRepositoryLatestManifestURL($0)
-        }) {
-            return url
-        }
-
-        let catalogs = urls.filter { $0.lastPathComponent.lowercased() == "versions.json" }
-        let catalog = catalogs.max { lhs, rhs in
-            if lhs.pathComponents.count != rhs.pathComponents.count {
-                return lhs.pathComponents.count < rhs.pathComponents.count
-            }
-            return lhs.absoluteString.count < rhs.absoluteString.count
-        }
         // Repository-wide pointers can be documentation strings or belong to another
-        // product in a shared repo. Prefer an embedded application-specific catalog.
-        return catalog ?? urls.first(where: isRepositoryLatestManifestURL)
+        // product in a shared repo, so an application-specific manifest wins.
+        urls.first(where: isDirectManifestURL) ?? urls.first(where: isRepositoryLatestManifestURL)
     }
 
     static func isRepositoryLatestManifestURL(_ url: URL) -> Bool {
@@ -125,15 +108,11 @@ enum TauriUpdaterDetector {
     }
 
     private static func isUpdaterJSON(_ url: URL) -> Bool {
-        let name = url.lastPathComponent.lowercased()
-        return name == "latest.json" || name == "versions.json"
+        url.lastPathComponent.lowercased() == "latest.json"
     }
 
-    static func evidence(in data: Data) -> (sawTauri: Bool, sawGPUI: Bool) {
-        (
-            sawTauri: tauriNeedles.contains { data.range(of: $0) != nil },
-            sawGPUI: data.range(of: gpuiNeedle) != nil
-        )
+    static func hasTauriEvidence(in data: Data) -> Bool {
+        tauriNeedles.contains { data.range(of: $0) != nil }
     }
 
     private static func stringValues(in json: Any, keys: Set<String>) -> [String] {

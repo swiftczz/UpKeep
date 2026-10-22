@@ -107,12 +107,10 @@ struct ExecutableEndpointSourceDetector: UpdateSourceDetector {
             GitHubReleasesDetector.matchesApplication(
                 $0, name: context.name, bundleIdentifier: context.bundleIdentifier)
         }
-        guard let metadata = matching.first(where: { $0.tagPrefix != nil }) ?? matching.first
-        else { return nil }
+        guard let metadata = matching.first else { return nil }
         return DetectedUpdateSource(
             UpdateConfiguration(
                 mechanism: .githubReleases, feedURL: metadata.apiURL,
-                homepageURL: metadata.homepageURL, identifier: metadata.identifier,
-                githubReleaseTagPrefix: metadata.tagPrefix))
+                homepageURL: metadata.homepageURL, identifier: metadata.identifier))
     }
 }

@@ -321,23 +321,6 @@ final class ProtocolUpdateParserTests: XCTestCase {
         )
     }
 
-    func testFindsVersionsJSONURLInExecutable() throws {
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "Upkeep-versions-\(UUID().uuidString)"
-        )
-        defer { try? FileManager.default.removeItem(at: fileURL) }
-
-        try Data(
-            "https://dl.reasonix.io/versions.jsonhttps://dl.reasonix.io/studio/versions.json"
-                .utf8
-        ).write(to: fileURL)
-
-        XCTAssertEqual(
-            TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
-            "https://dl.reasonix.io/studio/versions.json"
-        )
-    }
-
     func testPrefersLatestJSONOverVersionsJSON() throws {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "Upkeep-latest-over-versions-\(UUID().uuidString)"
@@ -355,34 +338,6 @@ final class ProtocolUpdateParserTests: XCTestCase {
             TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
             "https://dl.reasonix.io/latest/latest.json"
         )
-    }
-
-    func testPrefersSpecificCatalogOverRepositoryWideLatestPointer() throws {
-        let generic =
-            "https://github.com/example/shared-repository/releases/latest/download/latest.json"
-        let catalog = "https://dl.example.com/studio/versions.json"
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: file) }
-        for urls in [[generic, catalog], [catalog, generic], [generic]] {
-            try Data(urls.joined(separator: "\n").utf8).write(to: file)
-            XCTAssertEqual(
-                TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
-                urls.count == 1 ? generic : catalog)
-        }
-    }
-
-    func testContinuesScanningAfterRepositoryPointerToFindLaterCatalog() throws {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: file) }
-        var bytes = Data(
-            "tauri_plugin_updater https://github.com/example/repo/releases/latest/download/latest.json\n"
-                .utf8)
-        bytes.append(Data(repeating: 0, count: 1024 * 1024 + 512))
-        bytes.append(Data("https://dl.example.com/studio/versions.json\n".utf8))
-        try bytes.write(to: file)
-        XCTAssertEqual(
-            TauriUpdaterDetector.updaterJSONURL(inFile: file)?.absoluteString,
-            "https://dl.example.com/studio/versions.json")
     }
 
     func testFindsUpdaterJSONURLAfterFirstMegabyte() throws {
@@ -424,39 +379,6 @@ final class ProtocolUpdateParserTests: XCTestCase {
         XCTAssertEqual(
             TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
             "https://github.com/RongleCat/grok-app/releases/download/grok-desktop-latest/latest.json"
-        )
-    }
-
-    func testIgnoresGPUIExecutableWithLatestJSON() throws {
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "Upkeep-gpui-\(UUID().uuidString)"
-        )
-        defer { try? FileManager.default.removeItem(at: fileURL) }
-
-        try Data(
-            """
-            gpui::app https://assets.example.com/github/release/desktop/latest.json crates/auto_update
-            """.utf8
-        ).write(to: fileURL)
-
-        XCTAssertNil(TauriUpdaterDetector.updaterJSONURL(inFile: fileURL))
-    }
-
-    func testStillDetectsTauriWhenGPUIStringsAreAlsoPresent() throws {
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "Upkeep-tauri-gpui-\(UUID().uuidString)"
-        )
-        defer { try? FileManager.default.removeItem(at: fileURL) }
-
-        try Data(
-            """
-            gpui::app tauri_plugin_updater https://example.com/updates/latest.json
-            """.utf8
-        ).write(to: fileURL)
-
-        XCTAssertEqual(
-            TauriUpdaterDetector.updaterJSONURL(inFile: fileURL)?.absoluteString,
-            "https://example.com/updates/latest.json"
         )
     }
 

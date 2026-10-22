@@ -77,6 +77,9 @@ struct UpdateSourceRule: Codable, Sendable, Equatable {
     var repository: String?
     /// `githubReleases`: installs only assets whose names start with this template.
     var assetNamePrefix: String?
+    /// `githubReleases`: for repositories that publish several products, only
+    /// releases whose tags start with this template, such as `desktop-v`.
+    var tagPrefix: String?
     var homepage: String?
     var fields: Fields?
 
@@ -227,6 +230,12 @@ extension UpdateSourceRule {
                 try checkPlaceholders(
                     in: assetNamePrefix, field: "assetNamePrefix", allowed: placeholders)
             }
+            if let tagPrefix {
+                guard tagPrefix.nonBlankValue != nil, tagPrefix.count <= 80 else {
+                    throw UpdateSourceRuleError(message: "tagPrefix 不能为空，最长 80 个字符。")
+                }
+                try checkPlaceholders(in: tagPrefix, field: "tagPrefix", allowed: placeholders)
+            }
         }
 
         if let homepage = homepage?.nonBlankValue {
@@ -294,13 +303,28 @@ struct UpdateSourceRuleMatch: Sendable {
         }
     }
 
+    func tagPrefix(values: [String: String]) -> String? {
+        rule.tagPrefix.flatMap {
+            UpdateSourceTemplate.expand($0, values: values, percentEncoded: false)?.nonBlankValue
+        }
+    }
+
     func gitHubReleasesMetadata(values: [String: String]) -> GitHubReleasesMetadata? {
+        let tagPrefix = tagPrefix(values: values)
         guard let repository = gitHubRepository(values: values),
-            let apiURL = repository.apiURL(path: ["releases", "latest"]),
+            let endpoint = repository.apiURL(
+                path: tagPrefix == nil ? ["releases", "latest"] : ["releases"]),
+            var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
             let homepageURL = homepageURL(values: values) ?? repository.homepageURL
         else { return nil }
+        // A channel is the newest release with a matching tag, not the repository's latest.
+        if tagPrefix != nil {
+            components.queryItems = [URLQueryItem(name: "per_page", value: "100")]
+        }
+        guard let apiURL = components.url else { return nil }
         return GitHubReleasesMetadata(
-            identifier: repository.identifier, apiURL: apiURL, homepageURL: homepageURL)
+            identifier: repository.identifier, apiURL: apiURL, homepageURL: homepageURL,
+            tagPrefix: tagPrefix)
     }
 
     func configuration(values: [String: String]) -> UpdateConfiguration? {
@@ -315,7 +339,8 @@ struct UpdateSourceRuleMatch: Sendable {
             guard let metadata = gitHubReleasesMetadata(values: values) else { return nil }
             return UpdateConfiguration(
                 mechanism: .githubReleases, feedURL: metadata.apiURL,
-                homepageURL: metadata.homepageURL, identifier: metadata.identifier)
+                homepageURL: metadata.homepageURL, identifier: metadata.identifier,
+                githubReleaseTagPrefix: metadata.tagPrefix)
         case .updaterFeed:
             // The updater's provider reads the stored feed; placeholders are resolved
             // again whenever the scanner sees a new version.

@@ -15,12 +15,11 @@ enum ExecutableUpdaterDetector {
         if let endpoint = TauriUpdaterDetector.endpointFromConfiguration(in: bundleURL) {
             return ExecutableUpdaterDetection(tauriEndpoint: endpoint, customAPIUpdateEndpoint: nil)
         }
-        // Electron can delegate updates to its own native service. Never inspect the
-        // shared Electron runtime for application-specific endpoints.
-        let files =
-            TauriUpdaterDetector.hasElectronFramework(in: bundleURL)
-            ? applicationServiceExecutables(in: bundleURL) + helperExecutables(in: bundleURL)
-            : executableFiles(in: bundleURL)
+        // Never inspect the shared Electron runtime for application-specific endpoints.
+        guard !TauriUpdaterDetector.hasElectronFramework(in: bundleURL) else {
+            return ExecutableUpdaterDetection(tauriEndpoint: nil, customAPIUpdateEndpoint: nil)
+        }
+        let files = executableFiles(in: bundleURL)
 
         let suppressCustomAPIUpdate = CustomAPIUpdateDetector.hasTauriConfiguration(in: bundleURL)
         var customAPIUpdateEndpoint: URL?
@@ -38,9 +37,7 @@ enum ExecutableUpdaterDetector {
                 customAPIUpdateEndpoint = detection.customAPIUpdateEndpoint
             }
             for candidate in detection.githubReleases
-            where seenGitHubReleases.insert(
-                candidate.apiURL.absoluteString + "|" + (candidate.tagPrefix ?? "")
-            ).inserted {
+            where seenGitHubReleases.insert(candidate.apiURL.absoluteString).inserted {
                 githubReleases.append(candidate)
             }
         }
@@ -68,7 +65,6 @@ enum ExecutableUpdaterDetector {
         var foundURLs: [URL] = []
         var seen = Set<String>()
         var sawTauri = false
-        var sawGPUI = false
         var customAPIUpdateEndpoint: URL?
         var githubReleases: [GitHubReleasesMetadata] = []
         var seenGitHubReleases = Set<String>()
@@ -80,9 +76,7 @@ enum ExecutableUpdaterDetector {
             }
 
             let window = previousTail + chunk
-            let evidence = TauriUpdaterDetector.evidence(in: window)
-            sawTauri = sawTauri || evidence.sawTauri
-            sawGPUI = sawGPUI || evidence.sawGPUI
+            sawTauri = sawTauri || TauriUpdaterDetector.hasTauriEvidence(in: window)
             for url in TauriUpdaterDetector.updaterJSONURLs(in: window)
             where seen.insert(url.absoluteString).inserted {
                 foundURLs.append(url)
@@ -91,9 +85,7 @@ enum ExecutableUpdaterDetector {
                 customAPIUpdateEndpoint = CustomAPIUpdateDetector.firstEndpoint(in: window)
             }
             for candidate in GitHubReleasesDetector.metadataCandidates(in: window)
-            where seenGitHubReleases.insert(
-                candidate.apiURL.absoluteString + "|" + (candidate.tagPrefix ?? "")
-            ).inserted {
+            where seenGitHubReleases.insert(candidate.apiURL.absoluteString).inserted {
                 githubReleases.append(candidate)
             }
             if sawTauri, foundURLs.contains(where: TauriUpdaterDetector.isDirectManifestURL) {
@@ -102,36 +94,11 @@ enum ExecutableUpdaterDetector {
             previousTail = Data(window.suffix(overlapSize))
         }
 
-        let tauriEndpoint =
-            sawGPUI && !sawTauri
-            ? nil
-            : TauriUpdaterDetector.preferredUpdaterJSONURL(foundURLs)
         return ExecutableUpdaterDetection(
-            tauriEndpoint: tauriEndpoint,
+            tauriEndpoint: TauriUpdaterDetector.preferredUpdaterJSONURL(foundURLs),
             customAPIUpdateEndpoint: customAPIUpdateEndpoint,
             githubReleases: githubReleases
         )
-    }
-
-    static func hasApplicationService(in bundleURL: URL) -> Bool {
-        !applicationServiceExecutables(in: bundleURL).isEmpty
-    }
-
-    private static func applicationServiceExecutables(in bundleURL: URL) -> [URL] {
-        guard let name = Bundle(url: bundleURL)?.executableURL?.lastPathComponent.lowercased(),
-            !name.isEmpty
-        else { return [] }
-        let root = bundleURL.resolvingSymlinksInPath().standardizedFileURL
-        let slug = name.split(whereSeparator: \.isWhitespace).joined(separator: "-")
-        let candidates = ["service/\(name)-desktop", "service/\(name)", "bin/\(slug)-host"]
-        return candidates.compactMap { path in
-            let url = root.appendingPathComponent("Contents/Resources").appendingPathComponent(path)
-                .resolvingSymlinksInPath().standardizedFileURL
-            guard url.path.hasPrefix(root.path + "/"), isRegularFile(url),
-                FileManager.default.isExecutableFile(atPath: url.path)
-            else { return nil }
-            return url
-        }
     }
 
     private static func executableFiles(in bundleURL: URL) -> [URL] {
@@ -152,35 +119,10 @@ enum ExecutableUpdaterDetector {
 
         var seen = Set(files.map(\.standardizedFileURL.path))
         for file in applicationPayloadExecutables(in: bundleURL, preferredName: preferredName)
-            + helperExecutables(in: bundleURL)
         where seen.insert(file.standardizedFileURL.path).inserted {
             files.append(file)
         }
         return files
-    }
-
-    private static func helperExecutables(in bundleURL: URL) -> [URL] {
-        let root = bundleURL.resolvingSymlinksInPath().standardizedFileURL
-        let directory = root.appendingPathComponent("Contents/Helpers")
-        let appName = bundleURL.deletingPathExtension().lastPathComponent.lowercased()
-            .filter { $0.isLetter || $0.isNumber }
-        guard !appName.isEmpty else { return [] }
-        let helpers =
-            ((try? FileManager.default.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: nil)) ?? []).sorted { $0.path < $1.path }
-        return helpers.filter { helper in
-            helper.pathExtension.lowercased() == "app"
-                && helper.deletingPathExtension().lastPathComponent.lowercased()
-                    .filter { $0.isLetter || $0.isNumber }.hasPrefix(appName)
-        }.prefix(8).compactMap { helper in
-            guard let executable = Bundle(url: helper)?.executableURL else { return nil }
-            let resolved = executable.resolvingSymlinksInPath().standardizedFileURL
-            guard resolved.path.hasPrefix(root.path + "/"), isRegularFile(resolved),
-                FileManager.default.isExecutableFile(atPath: resolved.path)
-            else { return nil }
-            return resolved
-        }
     }
 
     private static func applicationPayloadExecutables(

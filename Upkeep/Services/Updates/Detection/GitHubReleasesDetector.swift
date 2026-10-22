@@ -42,7 +42,6 @@ enum GitHubReleasesDetector {
         #"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/latest"#,
         #"https://api\.github\.com/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/latest"#,
         #"https://api\.github\.com/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases(?!/)"#,
-        #"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/releases/download/([A-Za-z0-9_-]*v)\{version\}/update-(?:darwin|macos)-[A-Za-z0-9_-]+\.json"#,
     ].compactMap { try? NSRegularExpression(pattern: $0) }
 
     static func metadata(in data: Data) -> GitHubReleasesMetadata? {
@@ -76,19 +75,10 @@ enum GitHubReleasesDetector {
 
                 let owner = String(text[ownerRange])
                 let repository = String(text[repositoryRange])
-                let prefix =
-                    match.numberOfRanges > 3
-                    ? Range(match.range(at: 3), in: text).map { String(text[$0]) } : nil
                 guard let repository = GitHubRepository(owner: owner, name: repository),
                     let homepageURL = repository.homepageURL,
-                    let endpoint = repository.apiURL(
-                        path: prefix == nil ? ["releases", "latest"] : ["releases"]),
-                    var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+                    let apiURL = repository.apiURL(path: ["releases", "latest"])
                 else { return }
-                if prefix != nil {
-                    components.queryItems = [URLQueryItem(name: "per_page", value: "100")]
-                }
-                guard let apiURL = components.url else { return }
 
                 matches.append(
                     (
@@ -96,8 +86,7 @@ enum GitHubReleasesDetector {
                         GitHubReleasesMetadata(
                             identifier: repository.identifier,
                             apiURL: apiURL,
-                            homepageURL: homepageURL,
-                            tagPrefix: prefix
+                            homepageURL: homepageURL
                         )
                     )
                 )
@@ -106,12 +95,7 @@ enum GitHubReleasesDetector {
 
         var seen = Set<String>()
         return matches.sorted { $0.location < $1.location }.compactMap { match in
-            guard
-                seen.insert(
-                    match.metadata.apiURL.absoluteString + "|" + (match.metadata.tagPrefix ?? "")
-                )
-                .inserted
-            else { return nil }
+            guard seen.insert(match.metadata.apiURL.absoluteString).inserted else { return nil }
             return match.metadata
         }
     }

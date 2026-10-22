@@ -27,10 +27,40 @@ extension UpdateSourceRuleSet {
     ///   its electron-builder manifest URL in code.
     /// - `clash-verge-rev`: Clash Verge Rev publishes its Tauri manifest as
     ///   `update-proxy.json` on a fixed `updater` release.
+    /// - `reasonix`: Reasonix's Electron shell leaves updates to a native service
+    ///   in its resources, which embeds this manifest.
+    /// - `reasonix-studio`: Reasonix Studio publishes a `versions.json` catalog; the
+    ///   Tauri provider follows it to the newest stable release's manifest.
+    /// - `lorca`: egoist/lorca also releases the CLI and mobile apps; only
+    ///   `desktop-v` tags are the Mac app.
     /// - `gigamoney`: GigaMoney's app-update.yml is a localhost placeholder; its
     ///   bundled tenant feed map names the production feed.
     static let builtInRulesJSON = #"""
         [
+          {
+            "id": "reasonix",
+            "name": "Reasonix",
+            "kind": "updaterFeed",
+            "format": "tauri",
+            "match": { "bundleIdentifier": "com.wails.reasonix-desktop" },
+            "feed": "https://dl.reasonix.io/latest/latest.json"
+          },
+          {
+            "id": "reasonix-studio",
+            "name": "Reasonix Studio",
+            "kind": "updaterFeed",
+            "format": "tauri",
+            "match": { "bundleIdentifier": "io.reasonix.studio" },
+            "feed": "https://dl.reasonix.io/studio/versions.json"
+          },
+          {
+            "id": "lorca",
+            "name": "Lorca",
+            "kind": "githubReleases",
+            "match": { "bundleIdentifier": "app.lorca" },
+            "repository": "egoist/lorca",
+            "tagPrefix": "desktop-v"
+          },
           {
             "id": "clash-verge-rev",
             "name": "Clash Verge Rev",

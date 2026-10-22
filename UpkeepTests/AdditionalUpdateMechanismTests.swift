@@ -43,15 +43,12 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    func testLorcaTemplatePersistsDesktopChannelAcrossSnapshotAndAlternateSource() throws {
-        let metadata = try XCTUnwrap(
-            GitHubReleasesDetector.metadata(
-                in:
-                    "https://github.com/egoist/lorca/releases/download/desktop-v{version}/update-darwin-arm64.json"
-            ))
+    func testLorcaRulePersistsDesktopChannelAcrossSnapshotAndAlternateSource() throws {
+        let metadata = try XCTUnwrap(UpdateSourceRuleSet.builtIn.gitHubReleasesMetadata(for: "app.lorca"))
         XCTAssertEqual(metadata.identifier, "egoist/lorca")
         XCTAssertEqual(metadata.tagPrefix, "desktop-v")
         XCTAssertEqual(metadata.apiURL.path, "/repos/egoist/lorca/releases")
+        XCTAssertEqual(metadata.apiURL.query, "per_page=100")
         var application = record(mechanism: .githubReleases, url: metadata.apiURL.absoluteString)
         application.updateConfiguration.githubReleaseTagPrefix = metadata.tagPrefix
         let decoded = try JSONDecoder().decode(
@@ -63,11 +60,6 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(
             brew.alternateUpdateCheckRecord?.updateConfiguration.githubReleaseTagPrefix, "desktop-v"
         )
-        XCTAssertNil(
-            GitHubReleasesDetector.metadata(
-                in:
-                    "https://github.com/egoist/lorca/releases/download/desktop-v0.1.16/update-darwin-arm64.json"
-            ))
     }
 
     func testChannelLookupIgnoresCLIAndMobileAndChoosesNewestStableDesktop() async throws {
@@ -141,30 +133,6 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
             detected.updateConfiguration.feedURL?.absoluteString, "https://example.com/api/latest")
     }
 
-    func testHelperEndpointIsFoundButEscapingSymlinksAreIgnored() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let app = try bundle(
-            at: directory.appendingPathComponent("Editor.app"), executable: "editor-desktop",
-            content: "main")
-        let helper = try bundle(
-            at: app.appendingPathComponent("Contents/Helpers/EditorAgent.app"), executable: "agent",
-            content: "go string https://editor.example.com/api/latest\0")
-        var detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
-        XCTAssertEqual(detected.updateConfiguration.mechanism, .customAPI)
-        XCTAssertEqual(
-            detected.updateConfiguration.feedURL?.absoluteString,
-            "https://editor.example.com/api/latest")
-        let executable = helper.appendingPathComponent("Contents/MacOS/agent")
-        try FileManager.default.moveItem(
-            at: executable, to: directory.appendingPathComponent("outside"))
-        try FileManager.default.createSymbolicLink(
-            at: executable, withDestinationURL: directory.appendingPathComponent("outside"))
-        detected = try XCTUnwrap(ApplicationScanner.makeRecord(from: app))
-        XCTAssertEqual(detected.updateConfiguration.mechanism, .selfManaged)
-    }
-
     func testInstalledApplicationsUseExpectedUpdateProtocolsWhenPresent() throws {
         for (name, mechanism, host) in [
             ("magpie", UpdateMechanism.customAPI, "usemagpie.ai"),
@@ -175,6 +143,8 @@ final class AdditionalUpdateMechanismTests: XCTestCase, @unchecked Sendable {
             ("ZCode", .electronBuilder, "zcode.z.ai"),
             ("GigaMoney", .electronBuilder, "download.longbridgewhale.com"),
             ("Clash Verge Ninja", .tauri, "github.com"),
+            ("ReasonixStudio", .tauri, "dl.reasonix.io"),
+            ("Reasonix", .tauri, "dl.reasonix.io"),
         ] {
             let url = URL(fileURLWithPath: "/Applications/\(name).app")
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
