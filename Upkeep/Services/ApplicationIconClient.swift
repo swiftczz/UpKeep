@@ -1,6 +1,6 @@
+import AppKit
 import CoreGraphics
 import Foundation
-import QuickLookThumbnailing
 import SwiftUI
 import Synchronization
 
@@ -52,7 +52,7 @@ private actor ApplicationIconCache {
         }
 
         let task = Task.detached(priority: .utility) {
-            await Self.generateIcon(for: applicationURL, displayScale: displayScale)
+            Self.generateIcon(for: applicationURL, displayScale: displayScale)
         }
         pendingIcons[key] = task
 
@@ -64,24 +64,15 @@ private actor ApplicationIconCache {
         return icon
     }
 
-    private static func generateIcon(
-        for applicationURL: URL,
-        displayScale: CGFloat
-    ) async -> CGImage? {
-        let request = QLThumbnailGenerator.Request(
-            fileAt: applicationURL,
-            size: CGSize(width: 128, height: 128),
-            scale: max(displayScale, 1),
-            representationTypes: .icon
-        )
-
-        do {
-            return try await QLThumbnailGenerator.shared
-                .generateBestRepresentation(for: request)
-                .cgImage
-        } catch {
-            return nil
-        }
+    /// Reads the bundle's icon through Launch Services. Quick Look thumbnails were
+    /// used before, but its agent can stall and leave icons missing indefinitely.
+    static func generateIcon(for applicationURL: URL, displayScale: CGFloat) -> CGImage? {
+        let image = NSWorkspace.shared.icon(forFile: applicationURL.path)
+        var rect = CGRect(x: 0, y: 0, width: 128, height: 128)
+        // The rect is in points; the transform picks the representation for this scale.
+        let scale = NSAffineTransform()
+        scale.scale(by: max(displayScale, 1))
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: scale])
     }
 }
 
