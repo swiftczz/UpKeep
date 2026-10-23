@@ -142,16 +142,25 @@ struct HomebrewUpdateProvider: Sendable {
     /// Prefer Homebrew when brew itself has an update. Otherwise keep a known
     /// first-party update that is already available. For installed apps, show
     /// Homebrew while retaining first-party metadata for release notes and checks.
+    /// Compares release versions without a cask's `,build` suffix.
+    static func isNewerRelease(_ candidate: String?, than other: String?) -> Bool {
+        guard let candidate = candidate?.split(separator: ",").first.map(String.init),
+            let other = other?.split(separator: ",").first.map(String.init)
+        else { return false }
+        return VersionComparator.isNewer(candidate, than: other)
+    }
+
     static func shouldClaimInstalledCask(
         mechanism: UpdateMechanism,
         status: UpdateStatus,
         hasCheckableFeed: Bool,
-        brewHasUpdate: Bool
+        brewHasUpdate: Bool,
+        alternateHasNewerRelease: Bool = false
     ) -> Bool {
         if mechanism == .appStore {
             return false
         }
-        if brewHasUpdate {
+        if brewHasUpdate && !alternateHasNewerRelease {
             return true
         }
 
@@ -170,7 +179,11 @@ struct HomebrewUpdateProvider: Sendable {
         var merged = application
         merged.rememberAlternateUpdateConfiguration(from: checked)
 
-        if checked.needsUpdate && !application.needsUpdate {
+        // The newer release wins; the same version stays with Homebrew.
+        if checked.needsUpdate
+            && (!application.needsUpdate
+                || isNewerRelease(checked.latestVersion, than: application.latestVersion))
+        {
             var alternate = checked
             alternate.homebrewCaskToken = application.homebrewManagedCaskToken
             alternate.lastInstalledAt = application.lastInstalledAt
@@ -445,7 +458,11 @@ struct HomebrewSnapshot {
                 mechanism: application.updateConfiguration.mechanism,
                 status: application.status,
                 hasCheckableFeed: application.updateConfiguration.feedURL != nil,
-                brewHasUpdate: brewHasUpdate
+                brewHasUpdate: brewHasUpdate,
+                alternateHasNewerRelease: application.needsUpdate
+                    && application.updateConfiguration.mechanism.canBeAlternateUpdateMechanism
+                    && HomebrewUpdateProvider.isNewerRelease(
+                        application.latestVersion, than: remoteVersion)
             )
         else {
             return application

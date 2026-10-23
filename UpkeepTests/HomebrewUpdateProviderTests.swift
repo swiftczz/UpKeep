@@ -278,6 +278,63 @@ final class HomebrewUpdateProviderTests: XCTestCase {
         XCTAssertEqual(merged.channelSystemImage, UpdateChannel.website.systemImage)
     }
 
+    func testNewerReleaseWinsWhenBothSourcesHaveAnUpdate() {
+        func merged(brew: String, alternate: String) -> AppRecord {
+            let homebrew = AppRecord(
+                name: "Termio",
+                bundleIdentifier: "sh.termio.app",
+                applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+                currentVersion: "0.48.0",
+                updateConfiguration: UpdateConfiguration(mechanism: .homebrew, identifier: "termio"),
+                status: .updateAvailable,
+                latestVersion: brew,
+                homebrewCaskToken: "termio"
+            )
+            let checked = AppRecord(
+                name: "Termio",
+                bundleIdentifier: "sh.termio.app",
+                applicationURL: URL(fileURLWithPath: "/Applications/termio.app"),
+                currentVersion: "0.48.0",
+                updateConfiguration: UpdateConfiguration(
+                    mechanism: .sparkle,
+                    feedURL: URL(string: "https://downloads.termio.sh/appcast.xml")),
+                status: .updateAvailable,
+                latestVersion: alternate,
+                canAutomaticallyUpdate: true
+            )
+            return HomebrewUpdateProvider.mergeAlternateCheckResult(
+                checked, intoHomebrew: homebrew)
+        }
+
+        let newer = merged(brew: "0.49.0", alternate: "0.50.0")
+        XCTAssertEqual(newer.updateConfiguration.mechanism, .sparkle)
+        XCTAssertEqual(newer.latestVersion, "0.50.0")
+        XCTAssertEqual(newer.homebrewCaskToken, "termio")
+
+        let same = merged(brew: "0.49.0,123", alternate: "0.49.0")
+        XCTAssertEqual(same.updateConfiguration.mechanism, .homebrew)
+        XCTAssertEqual(same.latestVersion, "0.49.0,123")
+
+        let older = merged(brew: "0.50.0", alternate: "0.49.0")
+        XCTAssertEqual(older.updateConfiguration.mechanism, .homebrew)
+        XCTAssertEqual(older.latestVersion, "0.50.0")
+    }
+
+    func testHomebrewDoesNotTakeOverANewerFirstPartyRelease() {
+        XCTAssertFalse(
+            HomebrewUpdateProvider.shouldClaimInstalledCask(
+                mechanism: .githubReleases, status: .updateAvailable, hasCheckableFeed: true,
+                brewHasUpdate: true, alternateHasNewerRelease: true))
+        XCTAssertTrue(
+            HomebrewUpdateProvider.shouldClaimInstalledCask(
+                mechanism: .githubReleases, status: .updateAvailable, hasCheckableFeed: true,
+                brewHasUpdate: true, alternateHasNewerRelease: false))
+
+        XCTAssertTrue(HomebrewUpdateProvider.isNewerRelease("2.1", than: "2.0,456"))
+        XCTAssertFalse(HomebrewUpdateProvider.isNewerRelease("2.0", than: "2.0,456"))
+        XCTAssertFalse(HomebrewUpdateProvider.isNewerRelease(nil, than: "2.0"))
+    }
+
     func testFallsBackToHomebrewWhenFirstPartyCheckFails() {
         XCTAssertTrue(claim(.vscodeUpdater, .selfManaged, feed: true, brew: false))
         XCTAssertTrue(claim(.electronBuilder, .unavailable("更新源暂时无法访问。"), feed: true, brew: false))
