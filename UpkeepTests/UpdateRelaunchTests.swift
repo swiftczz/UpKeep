@@ -63,11 +63,10 @@ final class UpdateRelaunchTests: XCTestCase {
             "Contents/Resources", isDirectory: true)
         let helperURL = resourcesURL.appendingPathComponent("DemoHelper")
         try fileManager.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
-        try fileManager.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: helperURL)
+        try makeIdleExecutable(at: helperURL)
 
         let helper = Process()
         helper.executableURL = helperURL
-        helper.arguments = ["30"]
         helper.standardOutput = FileHandle.nullDevice
         helper.standardError = FileHandle.nullDevice
         try helper.run()
@@ -117,7 +116,7 @@ final class UpdateRelaunchTests: XCTestCase {
         try FileManager.default.createDirectory(
             at: executable.deletingLastPathComponent(),
             withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: executable)
+        try makeIdleExecutable(at: executable)
         let info: [String: Any] = [
             "CFBundleIdentifier": "com.example.main",
             "CFBundleExecutable": "ActualExecutable", "CFBundlePackageType": "APPL",
@@ -126,7 +125,6 @@ final class UpdateRelaunchTests: XCTestCase {
             .write(to: applicationURL.appendingPathComponent("Contents/Info.plist"))
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["30"]
         try process.run()
         defer {
             if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
@@ -199,6 +197,25 @@ final class UpdateRelaunchTests: XCTestCase {
         try await UpdateRelaunch.perform(
             application, process: process, progress: { _ in }, operation: {})
         XCTAssertEqual(recorder.events(), [.quit(application.bundleIdentifier)])
+    }
+
+    /// macOS kills copies of system binaries such as /bin/sleep shortly after they
+    /// start from another location, so these tests build their own idle helper.
+    private func makeIdleExecutable(at url: URL) throws {
+        let source = url.deletingLastPathComponent().appendingPathComponent("idle.c")
+        try Data("#include <unistd.h>\nint main(void) { for (;;) pause(); }\n".utf8)
+            .write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let compiler = Process()
+        compiler.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
+        compiler.arguments = ["-o", url.path, source.path]
+        compiler.standardOutput = FileHandle.nullDevice
+        compiler.standardError = FileHandle.nullDevice
+        try compiler.run()
+        compiler.waitUntilExit()
+        guard compiler.terminationStatus == 0 else {
+            throw XCTSkip("A C compiler is needed to build the helper process")
+        }
     }
 
     private func makeApplication(mechanism: UpdateMechanism) -> AppRecord {
