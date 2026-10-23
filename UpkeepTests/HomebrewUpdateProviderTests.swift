@@ -152,8 +152,10 @@ final class HomebrewUpdateProviderTests: XCTestCase {
             installed.installedUpdateConfiguration = UpdateConfiguration(mechanism: mechanism)
             let checked = snapshot.applying(to: installed)
             XCTAssertEqual(checked.updateConfiguration.mechanism, .homebrew)
-            XCTAssertEqual(checked.channelTitle, "Homebrew")
-            XCTAssertEqual(checked.channelSystemImage, UpdateChannel.homebrew.systemImage)
+            // An update Upkeep installed keeps showing its own route.
+            XCTAssertEqual(checked.installedUpdateConfiguration?.mechanism, mechanism)
+            XCTAssertEqual(
+                checked.channelTitle, installed.installedUpdateConfiguration?.channel.title)
         }
     }
 

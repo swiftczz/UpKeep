@@ -40,18 +40,22 @@ final class UpdateConfigurationPresentationTests: XCTestCase {
         }
     }
 
-    func testSourceAndMechanismDoNotChangeWithUpdateStateOrInstallationHistory() {
+    func testPendingUpdateShowsItsRouteAndInstalledCopyShowsHowItWasInstalled() {
         var application = makeApplication(
             .vscodeUpdater, feed: "https://update.code.visualstudio.com")
         application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
         application.latestVersion = "2.0"
-        for status in [UpdateStatus.upToDate, .updateAvailable, .checking, .unavailable("Offline")]
-        {
+        for status in [UpdateStatus.updateAvailable, .checking, .unavailable("Offline")] {
             application.status = status
+            XCTAssertTrue(application.needsUpdate)
             XCTAssertEqual(application.channelTitle, "Website")
             XCTAssertEqual(application.mechanismTitle, "VS Code Updater")
-            XCTAssertEqual(application.installedUpdateConfiguration?.mechanism, .homebrew)
         }
+
+        application.status = .upToDate
+        XCTAssertEqual(application.channelTitle, "Homebrew")
+        XCTAssertEqual(application.mechanismTitle, UpdateMechanism.homebrew.title)
+        XCTAssertEqual(application.installedUpdateConfiguration?.mechanism, .homebrew)
     }
 
     func testRecognizingAFrameworkWithoutAFeedDoesNotInventAChannel() {

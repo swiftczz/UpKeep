@@ -188,7 +188,8 @@ final class HomebrewInstallationSnapshotTests: XCTestCase {
         await library.refreshInstalledApplications()
 
         XCTAssertEqual(library.applications.first?.currentVersion, "2.0")
-        XCTAssertEqual(library.applications.first?.channelTitle, "Website")
+        // A brew upgrade outside Upkeep shows Homebrew as the source.
+        XCTAssertEqual(library.applications.first?.channelTitle, "Homebrew")
         XCTAssertEqual(
             library.applications.first?.installedUpdateConfiguration?.mechanism, .homebrew)
         XCTAssertTrue(library.availableUpdates.isEmpty)

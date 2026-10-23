@@ -472,12 +472,11 @@ final class AppLibraryUpdateTests: XCTestCase {
             XCTAssertEqual(installed.currentVersion, "2.0", mechanism.rawValue)
             XCTAssertEqual(
                 installed.installedUpdateConfiguration?.mechanism, mechanism, mechanism.rawValue)
+            // The source shown is the route that installed it, not the one detected later.
+            let route = UpdateConfiguration(mechanism: mechanism)
+            XCTAssertEqual(installed.channelTitle, route.channel.title, mechanism.rawValue)
             XCTAssertEqual(
-                installed.channelTitle, installed.updateConfiguration.channel.title,
-                mechanism.rawValue)
-            XCTAssertEqual(
-                installed.channelSystemImage, installed.updateConfiguration.channel.systemImage,
-                mechanism.rawValue)
+                installed.channelSystemImage, route.channel.systemImage, mechanism.rawValue)
             let restored = try JSONDecoder().decode(
                 AppRecord.self, from: JSONEncoder().encode(installed))
             XCTAssertEqual(
@@ -490,9 +489,7 @@ final class AppLibraryUpdateTests: XCTestCase {
             )
             XCTAssertEqual(
                 refreshed.installedUpdateConfiguration?.mechanism, mechanism, mechanism.rawValue)
-            XCTAssertEqual(
-                refreshed.channelTitle, refreshed.updateConfiguration.channel.title,
-                mechanism.rawValue)
+            XCTAssertEqual(refreshed.channelTitle, route.channel.title, mechanism.rawValue)
         }
     }
 

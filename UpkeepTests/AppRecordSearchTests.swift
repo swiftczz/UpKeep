@@ -73,7 +73,6 @@ final class AppRecordSearchTests: XCTestCase {
     func testUnknownSearchMatchesCurrentUnknownChannelWithKnownMechanism() {
         var application = makeApplication(mechanism: .sparkle)
         application.updateConfiguration.feedURL = nil
-        application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
         application.alternateUpdateConfiguration = UpdateConfiguration(mechanism: .githubReleases)
         for query in ["未知", "unknown", "unknow", "  UNKNOWN  "] {
             XCTAssertTrue(application.matchesSearch(query), query)
@@ -113,13 +112,16 @@ final class AppRecordSearchTests: XCTestCase {
         XCTAssertFalse(application.matchesSearch("Sparkle"))
     }
 
-    func testInstallationHistoryDoesNotChangeTheDisplayedUpdateSource() {
+    func testUpToDateApplicationShowsTheRouteThatInstalledIt() {
         var application = makeApplication(mechanism: .sparkle)
-        application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
-
         XCTAssertEqual(application.channelTitle, "Website")
-        XCTAssertEqual(application.channelSystemImage, UpdateChannel.website.systemImage)
-        XCTAssertFalse(application.matchesSearch("homebrew"))
+
+        application.installedUpdateConfiguration = UpdateConfiguration(mechanism: .homebrew)
+        XCTAssertEqual(application.channelTitle, "Homebrew")
+        XCTAssertEqual(application.channelSystemImage, UpdateChannel.homebrew.systemImage)
+        XCTAssertEqual(application.mechanismTitle, UpdateMechanism.homebrew.title)
+        XCTAssertTrue(application.matchesSearch("homebrew"))
+        XCTAssertFalse(application.matchesSearch("Sparkle"))
     }
 
     func testAvailableUpdateDisplaysTheCurrentChannelInsteadOfTheInstalledChannel() {
@@ -159,8 +161,8 @@ final class AppRecordSearchTests: XCTestCase {
         XCTAssertTrue(application.matchesSearch("Sparkle"))
         XCTAssertFalse(application.matchesSearch("Homebrew"))
         application.applyInstalledRelease()
-        XCTAssertEqual(application.channelTitle, "Website")
-        XCTAssertFalse(application.matchesSearch("Homebrew"))
+        XCTAssertEqual(application.channelTitle, "Homebrew")
+        XCTAssertTrue(application.matchesSearch("Homebrew"))
     }
 
     func testRecordWithoutInstalledRouteDoesNotInferChannelFromInstallationDate() throws {

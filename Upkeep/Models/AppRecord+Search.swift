@@ -26,7 +26,7 @@ extension AppRecord {
 
         // Channel names filter the same channel shown in the list and detail.
         if let channel = query.channel {
-            return updateConfiguration.channel == channel
+            return displayedUpdateConfiguration.channel == channel
         }
         if query.isMechanismQuery {
             return matchesMechanismSearch(query.text)
@@ -38,13 +38,13 @@ extension AppRecord {
     }
 
     private func matchesMechanismSearch(_ query: String) -> Bool {
+        let mechanism = displayedUpdateConfiguration.mechanism
         let primaryTerms: [String]
-        if updateConfiguration.mechanism == .appStore {
+        if mechanism == .appStore {
             primaryTerms =
-                [updateConfiguration.mechanism.title, channelTitle]
-                + [appStorePlatform?.title].compactMap { $0 }
+                [mechanism.title, channelTitle] + [appStorePlatform?.title].compactMap { $0 }
         } else {
-            primaryTerms = updateConfiguration.mechanism.searchTerms
+            primaryTerms = mechanism.searchTerms
         }
         return primaryTerms.contains { UpdateMechanism.searchTerm($0, matches: query) }
     }
