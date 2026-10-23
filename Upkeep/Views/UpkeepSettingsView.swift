@@ -5,9 +5,38 @@ struct UpkeepSettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var connectionSheet: GitHubConnectionMethod?
     @State private var errorMessage: String?
+    @AppStorage(UpdateAllConcurrency.defaultsKey)
+    private var concurrentUpdates = UpdateAllConcurrency.defaultLimit
 
     var body: some View {
         Form {
+            Section {
+                LabeledContent("同时更新的应用数") {
+                    HStack(spacing: 4) {
+                        TextField("同时更新的应用数", value: $concurrentUpdates, format: .number)
+                            .labelsHidden()
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 44)
+                            .accessibilityIdentifier("settings.concurrentUpdates")
+                        Stepper(
+                            "同时更新的应用数", value: $concurrentUpdates,
+                            in: UpdateAllConcurrency.range
+                        )
+                        .labelsHidden()
+                    }
+                }
+                // Typed values outside the range snap back to the nearest allowed one.
+                .onChange(of: concurrentUpdates) { _, value in
+                    let range = UpdateAllConcurrency.range
+                    let clamped = min(max(value, range.lowerBound), range.upperBound)
+                    if clamped != value { concurrentUpdates = clamped }
+                }
+            } header: {
+                Text("更新")
+            } footer: {
+                Text("用于“更新全部”。Homebrew 应用和需要管理员权限的安装包仍会逐个安装。")
+            }
+
             Section {
                 HStack(spacing: 14) {
                     Image(systemName: "shippingbox")

@@ -35,10 +35,9 @@ struct LibraryStatusBar: View {
     private var activity: Activity? {
         if let updateAllProgress {
             let total = max(updateAllProgress.totalCount, 1)
-            let position = min(updateAllProgress.completedCount + 1, total)
-            var text = "正在更新 \(position)/\(total)"
-            if let name = updateAllProgress.currentApplicationName {
-                text += " · \(name)"
+            var text = "正在更新 \(updateAllProgress.completedCount)/\(total)"
+            if let names = updateAllProgress.activeSummary {
+                text += " · \(names)"
             }
             return Activity(
                 fraction: Double(updateAllProgress.completedCount) / Double(total), text: text)

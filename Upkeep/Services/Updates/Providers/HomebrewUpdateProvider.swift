@@ -1,6 +1,27 @@
 import CryptoKit
 import Foundation
 
+/// brew holds a global lock while it upgrades, so casks upgrade one at a time even
+/// when several applications update in parallel.
+actor HomebrewUpgradeQueue {
+    static let shared = HomebrewUpgradeQueue()
+
+    private var isRunning = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func run<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
+        if isRunning {
+            await withCheckedContinuation { waiters.append($0) }
+        } else {
+            isRunning = true
+        }
+        defer {
+            if waiters.isEmpty { isRunning = false } else { waiters.removeFirst().resume() }
+        }
+        return try await operation()
+    }
+}
+
 struct HomebrewUpdateProvider: Sendable {
     private let cache = SnapshotCache()
     var fetchData: @Sendable (URL) async throws -> Data? = {
@@ -23,6 +44,16 @@ struct HomebrewUpdateProvider: Sendable {
     }
 
     func upgrade(
+        _ application: AppRecord,
+        progress: @escaping @Sendable (UpdateProgress) -> Void
+    ) async throws {
+        progress(.indeterminate("等待 Homebrew 空闲…"))
+        try await HomebrewUpgradeQueue.shared.run {
+            try await upgradeNow(application, progress: progress)
+        }
+    }
+
+    private func upgradeNow(
         _ application: AppRecord,
         progress: @escaping @Sendable (UpdateProgress) -> Void
     ) async throws {

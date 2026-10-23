@@ -127,8 +127,13 @@ final class AppLibrary {
         return await process.isRunning(application)
     }
 
+    /// Automatic updates not already running, e.g. ones the user started one by one.
+    var remainingAutomaticUpdates: [AppRecord] {
+        automaticUpdates.filter { !updatingApplicationIDs.contains($0.id) }
+    }
+
     func prepareUpdateAll() async -> UpdateAllPlan {
-        let updates = automaticUpdates
+        let updates = remainingAutomaticUpdates
         let runningIDs = await process.runningApplicationIDs(updates)
         return UpdateAllPlan(
             applicationIDs: updates.map(\.id),
@@ -856,8 +861,8 @@ final class AppLibrary {
     }
 
     func updateAll(applicationIDs: [AppRecord.ID]? = nil) async {
-        guard !automaticUpdates.isEmpty else { return }
-        let ids = applicationIDs ?? automaticUpdates.map(\.id)
+        guard !remainingAutomaticUpdates.isEmpty else { return }
+        let ids = applicationIDs ?? remainingAutomaticUpdates.map(\.id)
         var failures: [String] = []
         var updatedNames: [String] = []
         var failedNames: [String] = []
@@ -865,28 +870,63 @@ final class AppLibrary {
         updateAllProgress = UpdateAllProgress(totalCount: ids.count)
         defer { updateAllProgress = nil }
 
-        for id in ids {
-            guard !Task.isCancelled else { break }
-            guard let application = automaticUpdates.first(where: { $0.id == id }) else {
-                updateAllProgress?.completedCount += 1
-                continue
-            }
-            updateAllProgress?.currentApplicationName = application.name
-            do {
-                if try await performVisibleUpdate(application) != nil {
-                    updatedNames.append(application.name)
+        var pending = ids.makeIterator()
+        let limit = UpdateAllConcurrency.limit(in: userDefaults)
+        await withTaskGroup(of: UpdateAllResult.self) { group in
+            var running = 0
+            while true {
+                while running < limit, !Task.isCancelled,
+                    let application = nextUpdateAllApplication(from: &pending)
+                {
+                    updateAllProgress?.activeApplicationNames.append(application.name)
+                    running += 1
+                    group.addTask { await self.updateAllResult(for: application) }
                 }
-            } catch {
-                failures.append("\(application.name)：\(error.localizedDescription)")
-                failedNames.append(application.name)
+                guard let result = await group.next() else { break }
+                running -= 1
+                updateAllProgress?.activeApplicationNames.removeAll { $0 == result.name }
+                updateAllProgress?.completedCount += 1
+                if let failure = result.failure {
+                    failures.append("\(result.name)：\(failure)")
+                    failedNames.append(result.name)
+                } else if result.updated {
+                    updatedNames.append(result.name)
+                }
             }
-            updateAllProgress?.completedCount += 1
         }
 
         if !failures.isEmpty {
             alertMessage = failures.joined(separator: "\n")
         }
         notifyUpdateAllFinished(updated: updatedNames, failed: failedNames)
+    }
+
+    private struct UpdateAllResult: Sendable {
+        let name: String
+        var failure: String?
+        var updated = false
+    }
+
+    private func updateAllResult(for application: AppRecord) async -> UpdateAllResult {
+        do {
+            let installed = try await performVisibleUpdate(application)
+            return UpdateAllResult(name: application.name, updated: installed != nil)
+        } catch {
+            return UpdateAllResult(name: application.name, failure: error.localizedDescription)
+        }
+    }
+
+    /// The next queued application that can still update; skipped ones count as done.
+    private func nextUpdateAllApplication(
+        from pending: inout IndexingIterator<[AppRecord.ID]>
+    ) -> AppRecord? {
+        while let id = pending.next() {
+            if let application = automaticUpdates.first(where: { $0.id == id }) {
+                return application
+            }
+            updateAllProgress?.completedCount += 1
+        }
+        return nil
     }
 
     private func notifyUpdateAllFinished(updated: [String], failed: [String]) {

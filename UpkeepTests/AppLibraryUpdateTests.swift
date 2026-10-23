@@ -229,6 +229,106 @@ final class AppLibraryUpdateTests: XCTestCase {
             library.selectedApplication?.installedUpdateConfiguration?.mechanism, .homebrew)
     }
 
+    func testUpdateAllPlansOnlyUpdatesNotAlreadyRunning() async throws {
+        let first = makeUpdateApplication(name: "First", bundleIdentifier: "com.example.first")
+        let second = makeUpdateApplication(name: "Second", bundleIdentifier: "com.example.second")
+        let gate = UpdateGate()
+        let library = try makeLibrary(
+            applications: [first, second], coordinator: GatedUpdateCoordinator(gate: gate),
+            runningBundleIdentifiers: [])
+
+        let single = Task { await library.performPrimaryAction(for: first.id) }
+        while !library.updatingApplicationIDs.contains(first.id) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(library.remainingAutomaticUpdates.map(\.id), [second.id])
+        let plan = await library.prepareUpdateAll()
+        XCTAssertEqual(plan.applicationIDs, [second.id])
+
+        await gate.open()
+        _ = await single.value
+        XCTAssertEqual(library.remainingAutomaticUpdates.count, 2)
+    }
+
+    func testUpdateAllRunsAtMostFiveUpdatesAtOnce() async throws {
+        let applications = (1...7).map {
+            makeUpdateApplication(name: "App\($0)", bundleIdentifier: "com.example.app\($0)")
+        }
+        let tracker = ConcurrencyTracker()
+        let library = try makeLibrary(
+            applications: applications,
+            coordinator: ConcurrencyTrackingCoordinator(tracker: tracker),
+            runningBundleIdentifiers: [])
+
+        await library.updateAll()
+
+        let peak = await tracker.peak
+        let finished = await tracker.finished
+        XCTAssertEqual(peak, 5)
+        XCTAssertEqual(finished, 7)
+        XCTAssertNil(library.updateAllProgress)
+    }
+
+    func testUpdateAllFollowsTheConcurrencySetting() async throws {
+        let applications = (1...4).map {
+            makeUpdateApplication(name: "App\($0)", bundleIdentifier: "com.example.app\($0)")
+        }
+        let suiteName = "UpkeepTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(2, forKey: UpdateAllConcurrency.defaultsKey)
+        let tracker = ConcurrencyTracker()
+        let library = AppLibrary(
+            applications: applications,
+            scanner: UpdateSelectionScanner(applications: applications),
+            coordinator: ConcurrencyTrackingCoordinator(tracker: tracker),
+            userDefaults: defaults,
+            libraryStore: .memory()
+        )
+
+        await library.updateAll()
+
+        let peak = await tracker.peak
+        let finished = await tracker.finished
+        XCTAssertEqual(peak, 2)
+        XCTAssertEqual(finished, 4)
+    }
+
+    func testConcurrencySettingDefaultsAndStaysInRange() throws {
+        let suiteName = "UpkeepTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertEqual(UpdateAllConcurrency.limit(in: defaults), 5)
+        defaults.set(0, forKey: UpdateAllConcurrency.defaultsKey)
+        XCTAssertEqual(UpdateAllConcurrency.limit(in: defaults), 1)
+        defaults.set(99, forKey: UpdateAllConcurrency.defaultsKey)
+        XCTAssertEqual(UpdateAllConcurrency.limit(in: defaults), 10)
+        defaults.set(3, forKey: UpdateAllConcurrency.defaultsKey)
+        XCTAssertEqual(UpdateAllConcurrency.limit(in: defaults), 3)
+    }
+
+    func testHomebrewUpgradesRunOneAtATime() async throws {
+        let queue = HomebrewUpgradeQueue()
+        let tracker = ConcurrencyTracker()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<4 {
+                group.addTask {
+                    try await queue.run {
+                        await tracker.enter()
+                        try await Task.sleep(for: .milliseconds(20))
+                        await tracker.leave()
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+        let peak = await tracker.peak
+        let finished = await tracker.finished
+        XCTAssertEqual(peak, 1)
+        XCTAssertEqual(finished, 4)
+    }
+
     func testDownloadProgressRecordsThePackageSize() async throws {
         let application = makeUpdateApplication(
             name: "Sized", bundleIdentifier: "com.example.sized")
@@ -490,6 +590,81 @@ private struct FailingUpdateCoordinator: UpdateCoordinating {
             // Real downloads report over time; the relay coalesces bursts.
             try await Task.sleep(for: .milliseconds(150))
         }
+        throw ProcessRunnerError.failed(status: 1, message: "模拟更新失败")
+    }
+}
+
+private actor ConcurrencyTracker {
+    private(set) var peak = 0
+    private(set) var finished = 0
+    private var current = 0
+
+    func enter() {
+        current += 1
+        peak = max(peak, current)
+    }
+
+    func leave() {
+        current -= 1
+        finished += 1
+    }
+}
+
+private struct ConcurrencyTrackingCoordinator: UpdateCoordinating {
+    let tracker: ConcurrencyTracker
+
+    func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+        applications
+    }
+
+    func check(_ application: AppRecord) async -> AppRecord {
+        application
+    }
+
+    func update(
+        _ application: AppRecord,
+        progress: @escaping @Sendable (UpdateProgress) -> Void
+    ) async throws {
+        await tracker.enter()
+        try await Task.sleep(for: .milliseconds(50))
+        await tracker.leave()
+        throw ProcessRunnerError.failed(status: 1, message: "模拟更新失败")
+    }
+}
+
+private actor UpdateGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
+}
+
+/// Holds an update in progress until the test opens the gate, then fails it.
+private struct GatedUpdateCoordinator: UpdateCoordinating {
+    let gate: UpdateGate
+
+    func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+        applications
+    }
+
+    func check(_ application: AppRecord) async -> AppRecord {
+        application
+    }
+
+    func update(
+        _ application: AppRecord,
+        progress: @escaping @Sendable (UpdateProgress) -> Void
+    ) async throws {
+        await gate.wait()
         throw ProcessRunnerError.failed(status: 1, message: "模拟更新失败")
     }
 }

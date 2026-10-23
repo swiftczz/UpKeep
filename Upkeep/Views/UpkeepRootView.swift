@@ -163,9 +163,8 @@ struct UpkeepRootView: View {
                             .frame(width: 16, height: 16)
                         }
                     }
-                    .disabled(
-                        !library.updatingApplicationIDs.isEmpty || updateAllPreparationID != nil
-                    )
+                    // Updates started one by one keep running; this queues the rest.
+                    .disabled(isUpdateAllBusy || library.remainingAutomaticUpdates.isEmpty)
                     .accessibilityLabel(updateAllAccessibilityLabel)
                     .help(updateAllHelp)
                 }
@@ -273,8 +272,7 @@ struct UpkeepRootView: View {
 
     private var updateAllHelp: String {
         if let progress = library.updateAllProgress {
-            let position = min(progress.completedCount + 1, progress.totalCount)
-            return "正在更新 \(position)/\(progress.totalCount)"
+            return "正在更新 \(progress.completedCount)/\(progress.totalCount)"
         }
         if updateAllPreparationID != nil { return "正在准备更新…" }
         return "更新 \(library.automaticUpdates.count) 个可自动更新的应用"
