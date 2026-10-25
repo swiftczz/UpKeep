@@ -54,4 +54,20 @@ final class VersionComparatorTests: XCTestCase {
             VersionComparator.isNewer("1.38.2", than: "1.38", build: "1.38.1")
         )
     }
+
+    func testComparesPrereleaseNumbersWithinTheSameLabel() {
+        // DeepSeek Harness ships nightly release candidates with build = version.
+        XCTAssertTrue(
+            VersionComparator.isNewer("0.2.1-rc.3", than: "0.2.1-rc.2", build: "0.2.1-rc.2"))
+        XCTAssertFalse(
+            VersionComparator.isNewer("0.2.1-rc.2", than: "0.2.1-rc.3", build: "0.2.1-rc.3"))
+        XCTAssertFalse(
+            VersionComparator.isNewer("0.2.1-rc.2", than: "0.2.1-rc.2", build: "0.2.1-rc.2"))
+        XCTAssertTrue(VersionComparator.isNewer("2.0-beta.10", than: "2.0-beta.9"))
+        XCTAssertTrue(VersionComparator.isNewer("2.0rc2", than: "2.0rc1"))
+        XCTAssertTrue(VersionComparator.isNewer("2.0-preview.2", than: "2.0-preview.1"))
+        XCTAssertTrue(VersionComparator.isNewer("2.0-rc.1", than: "2.0-beta.9"))
+        XCTAssertTrue(VersionComparator.isNewer("2.0", than: "2.0-rc.9"))
+        XCTAssertFalse(VersionComparator.isNewer("2.0-rc.9", than: "2.0"))
+    }
 }

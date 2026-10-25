@@ -69,6 +69,8 @@ enum VersionComparator {
 private struct ParsedVersion: Comparable {
     let components: [Int]
     let prereleaseRank: Int
+    /// The number after a pre-release label, so `rc.3` sorts after `rc.2`.
+    let prereleaseNumber: Int
 
     init?(_ rawValue: String) {
         let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -101,6 +103,12 @@ private struct ParsedVersion: Comparable {
         } else {
             prereleaseRank = 3
         }
+        prereleaseNumber =
+            prereleaseRank < 3
+            ? suffix.firstMatch(of: /(?:alpha|beta|rc|pre)[a-z]*[._ -]?(\d+)/).flatMap {
+                Int($0.1)
+            } ?? 0
+            : 0
     }
 
     static func < (lhs: ParsedVersion, rhs: ParsedVersion) -> Bool {
@@ -114,6 +122,9 @@ private struct ParsedVersion: Comparable {
             }
         }
 
-        return lhs.prereleaseRank < rhs.prereleaseRank
+        if lhs.prereleaseRank != rhs.prereleaseRank {
+            return lhs.prereleaseRank < rhs.prereleaseRank
+        }
+        return lhs.prereleaseNumber < rhs.prereleaseNumber
     }
 }
