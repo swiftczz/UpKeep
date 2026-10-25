@@ -457,10 +457,18 @@ struct AppDetailView: View {
                         }
                     }
                 } label: {
-                    Text(item.value)
+                    // Plain text keeps this row the same height as the other values.
+                    HStack(spacing: 4) {
+                        Text(item.value)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(.rect)
                 }
                 .menuStyle(.button)
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
                 .fixedSize()
                 .help(item.help ?? "")
                 .accessibilityLabel("\(item.label) \(item.value)")
