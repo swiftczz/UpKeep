@@ -5,6 +5,38 @@ import XCTest
 @testable import Upkeep
 
 final class ProtocolUpdateParserTests: XCTestCase {
+    func testParsesFoldedElectronBuilderValues() throws {
+        // DeepSeek Harness's nightly feed folds long values onto the next line.
+        let manifest = try XCTUnwrap(
+            ElectronBuilderYAML.parseManifest(
+                """
+                version: 0.2.1-rc.3
+                files:
+                  - url: >-
+                      https://download.example.com/bin/mac-arm64/app-0.2.1-rc.3-mac-arm64.zip
+                    sha512: >-
+                      0tCeP/zLGLtsH+S4BD4TIyRJ8TwRhh7xaJprTMOUoEfj7hYJFC3G5l6nl/2zCTS41MeE9k+KRN19RE9sqX6goQ==
+                    size: 347702586
+                path: >-
+                  https://download.example.com/bin/mac-arm64/app-0.2.1-rc.3-mac-arm64.zip
+                sha512: >-
+                  0tCeP/zLGLtsH+S4BD4TIyRJ8TwRhh7xaJprTMOUoEfj7hYJFC3G5l6nl/2zCTS41MeE9k+KRN19RE9sqX6goQ==
+                releaseDate: '2026-10-23T07:59:26.844Z'
+                """))
+
+        XCTAssertEqual(manifest.version, "0.2.1-rc.3")
+        XCTAssertEqual(manifest.files.count, 1)
+        XCTAssertEqual(
+            manifest.path,
+            "https://download.example.com/bin/mac-arm64/app-0.2.1-rc.3-mac-arm64.zip")
+        XCTAssertNotNil(manifest.releaseDate)
+        let feed = try XCTUnwrap(URL(string: "https://download.example.com/feeds/nightly-mac.yml"))
+        let package = try XCTUnwrap(manifest.selectedPackage(relativeTo: feed, architecture: .arm64))
+        XCTAssertEqual(package.url.lastPathComponent, "app-0.2.1-rc.3-mac-arm64.zip")
+        XCTAssertEqual(package.size, 347_702_586)
+        XCTAssertEqual(package.sha512?.hasSuffix("6goQ=="), true)
+    }
+
     func testParsesElectronBuilderLatestMacManifestAndPrefersNativeZip() throws {
         let text = """
             version: 26.8.0

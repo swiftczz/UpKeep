@@ -123,7 +123,7 @@ enum ElectronBuilderDetector {
 
 enum ElectronBuilderYAML {
     static func flatValues(in configuration: String) -> [String: String]? {
-        let values = configuration.split(whereSeparator: \.isNewline).reduce(
+        let values = joiningFoldedScalars(configuration).split(whereSeparator: \.isNewline).reduce(
             into: [String: String]()
         ) { result, line in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -144,6 +144,7 @@ enum ElectronBuilderYAML {
     }
 
     static func parseManifest(_ text: String) -> ElectronBuilderManifest? {
+        let text = joiningFoldedScalars(text)
         var version: String?
         var path: String?
         var sha512: String?
@@ -264,6 +265,45 @@ enum ElectronBuilderYAML {
             releaseDate: releaseDate.flatMap(parseManifestDate),
             releaseNotes: normalizedReleaseNotes(releaseNotes)
         )
+    }
+
+    /// electron-builder folds long values onto the next line (`url: >-`). Join each
+    /// folded value back onto its key so it parses like a plain scalar. Release notes
+    /// keep their own multi-line handling.
+    static func joiningFoldedScalars(_ text: String) -> String {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map(String.init)
+        var output: [String] = []
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard
+                trimmed.range(
+                    of: #"^(- )?[A-Za-z0-9_]+:\s*>[-+]?$"#, options: .regularExpression) != nil,
+                !trimmed.hasPrefix("releaseNotes:"),
+                let marker = line.lastIndex(of: ">")
+            else {
+                output.append(line)
+                index += 1
+                continue
+            }
+            // A list item's key starts after its "- ", where its sibling keys align.
+            let indent =
+                line.prefix(while: { $0 == " " }).count + (trimmed.hasPrefix("- ") ? 2 : 0)
+            var parts: [String] = []
+            index += 1
+            while index < lines.count {
+                let next = lines[index]
+                let nextTrimmed = next.trimmingCharacters(in: .whitespaces)
+                guard nextTrimmed.isEmpty || next.prefix(while: { $0 == " " }).count > indent
+                else { break }
+                if !nextTrimmed.isEmpty { parts.append(nextTrimmed) }
+                index += 1
+            }
+            output.append(String(line[..<marker]) + parts.joined(separator: " "))
+        }
+        return output.joined(separator: "\n")
     }
 
     private static func normalizedReleaseNotes(_ notes: String?) -> String? {
