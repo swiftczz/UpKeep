@@ -103,6 +103,38 @@ final class PrivilegedHelper: NSObject, NSXPCListenerDelegate, UpkeepPrivilegedH
         }
     }
 
+    func stopLaunchDaemons(applicationPath: String, withReply reply: @escaping (String?) -> Void) {
+        guard geteuid() == 0, let connection = NSXPCConnection.current(),
+            PrivilegedTrashPolicy.isAdministrator(connection.effectiveUserIdentifier)
+        else {
+            reply("当前账户没有停止系统后台服务所需的管理员权限。")
+            return
+        }
+        reply(Self.stopLaunchDaemons(applicationPath: applicationPath, runCommand: Self.run))
+    }
+
+    /// The jobs are found here, from the application's own path, so a caller cannot
+    /// name an unrelated daemon.
+    static func stopLaunchDaemons(
+        applicationPath: String,
+        in directory: URL = LaunchJobPolicy.systemDaemonsDirectory,
+        runCommand: (_ launchPath: String, _ arguments: [String]) -> String?
+    ) -> String? {
+        guard PrivilegedTrashPolicy.isSupportedApplicationPath(applicationPath) else {
+            return "只能停止“应用程序”文件夹中应用的后台服务。"
+        }
+        let jobs = LaunchJobPolicy.jobs(forApplicationAt: applicationPath, in: directory)
+        let remaining = jobs.filter { job in
+            // A job that is not loaded fails to boot out; only a job still loaded counts.
+            _ = runCommand("/bin/launchctl", ["bootout", "system/\(job.label)"])
+            return runCommand("/bin/launchctl", ["print", "system/\(job.label)"]) == nil
+        }
+        guard remaining.isEmpty else {
+            return "无法停止后台服务：\(remaining.map(\.label).joined(separator: "、"))"
+        }
+        return nil
+    }
+
     private static func hostApplicationURL() -> URL? {
         hostApplicationURL(from: executableURL())
     }

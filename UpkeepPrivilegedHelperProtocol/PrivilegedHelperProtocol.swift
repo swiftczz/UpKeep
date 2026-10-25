@@ -17,6 +17,13 @@ public protocol UpkeepPrivilegedHelperProtocol: NSObjectProtocol {
         withReply reply: @escaping (String?) -> Void
     )
 
+    /// Stops the system launch daemons that run programs from the application at
+    /// `/Applications/<name>.app`, so an uninstall can end them.
+    func stopLaunchDaemons(
+        applicationPath: String,
+        withReply reply: @escaping (String?) -> Void
+    )
+
     func installAppStorePackage(
         packagePath: String,
         receiptPath: String,

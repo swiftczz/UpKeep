@@ -51,7 +51,10 @@ enum ApplicationUninstaller {
         fileManager: FileManager = .default,
         process: ApplicationProcessClient = .live,
         brewExecutableURL: URL? = nil,
-        trashClient: TrashClient? = nil
+        trashClient: TrashClient? = nil,
+        stopLaunchJobs: @Sendable (AppRecord) async throws -> Void = {
+            try await ApplicationLaunchJobs.stop($0)
+        }
     ) async throws -> Result {
         guard !items.isEmpty else {
             throw ApplicationUninstallerError.nothingSelected
@@ -61,7 +64,13 @@ enum ApplicationUninstaller {
             $0.url.standardizedFileURL == application.applicationURL.standardizedFileURL
         }
 
-        if await process.hasRunningProcesses(application) {
+        let hasRunningProcesses = await process.hasRunningProcesses(application)
+        // Unload launchd jobs first: they would restart quit processes, and once the app
+        // is gone they would keep failing to launch.
+        if hasRunningProcesses || removingApplication {
+            try await stopLaunchJobs(application)
+        }
+        if hasRunningProcesses {
             do {
                 try await process.quit(application)
             } catch is ApplicationProcessError {

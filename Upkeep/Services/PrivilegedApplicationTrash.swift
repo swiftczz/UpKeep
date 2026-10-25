@@ -85,6 +85,25 @@ enum PrivilegedApplicationTrash {
         }.value
     }
 
+    /// Asks the helper to stop the system daemons of an application in /Applications.
+    /// Returns false when the helper is not available to this account.
+    static func stopLaunchDaemons(of applicationURL: URL) async throws -> Bool {
+        try await Task.detached(priority: .userInitiated) {
+            guard PrivilegedTrashPolicy.isAdministrator(geteuid()) else { return false }
+            return try PrivilegedPackageInstaller.withRegisteredHelper {
+                try request { proxy, reply in
+                    proxy.stopLaunchDaemons(applicationPath: applicationURL.path) { message in
+                        if let message {
+                            reply(.failure(failure(message)))
+                        } else {
+                            reply(.success(true))
+                        }
+                    }
+                }
+            } ?? false
+        }.value
+    }
+
     static func prepareTrashDirectory(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) throws {
