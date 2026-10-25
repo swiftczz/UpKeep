@@ -13,11 +13,11 @@ struct GitHubReleaseManifest: Equatable, Sendable {
     let releaseURL: URL?
     let assets: [Asset]
 
-    static func parse(_ data: Data) -> GitHubReleaseManifest? {
+    static func parse(_ data: Data, includesPrereleases: Bool = false) -> GitHubReleaseManifest? {
         guard
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             json["draft"] as? Bool != true,
-            json["prerelease"] as? Bool != true,
+            includesPrereleases || json["prerelease"] as? Bool != true,
             let tag = (json["tag_name"] as? String)?.nonBlankValue,
             let version = releaseVersion(from: tag, fallback: json["name"] as? String)
         else {
@@ -215,6 +215,7 @@ struct GitHubReleasesUpdateProvider: Sendable {
         do {
             let release = try await loadRelease(
                 from: apiURL, tagPrefix: application.updateConfiguration.githubReleaseTagPrefix,
+                includesPrereleases: application.acceptsPrereleases,
                 // Rule-assigned repositories are guesses; remember ones without releases.
                 cacheMissing: ruleAssignment(for: application) != nil)
             let package = selectedPackage(in: release, for: application)
@@ -259,7 +260,8 @@ struct GitHubReleasesUpdateProvider: Sendable {
 
         progress(.indeterminate("正在检查更新…"))
         let release = try await loadRelease(
-            from: apiURL, tagPrefix: application.updateConfiguration.githubReleaseTagPrefix)
+            from: apiURL, tagPrefix: application.updateConfiguration.githubReleaseTagPrefix,
+                includesPrereleases: application.acceptsPrereleases)
         guard let package = selectedPackage(in: release, for: application) else {
             throw ProcessRunnerError.failed(status: 1, message: "GitHub Release 中没有兼容此 Mac 的安装包。")
         }
@@ -307,11 +309,19 @@ struct GitHubReleasesUpdateProvider: Sendable {
         return release.selectedPackage()
     }
 
-    private func loadRelease(from url: URL, tagPrefix: String? = nil, cacheMissing: Bool = false)
-        async throws -> GitHubReleaseManifest
-    {
+    private func loadRelease(
+        from url: URL, tagPrefix: String? = nil, includesPrereleases: Bool = false,
+        cacheMissing: Bool = false
+    ) async throws -> GitHubReleaseManifest {
         if let tagPrefix {
-            return try await loadChannelRelease(from: url, tagPrefix: tagPrefix)
+            return try await loadChannelRelease(
+                from: url, tagPrefix: tagPrefix, includesPrereleases: includesPrereleases)
+        }
+        // /releases/latest never returns a pre-release, so read the list instead.
+        if includesPrereleases, url.lastPathComponent == "latest" {
+            return try await loadChannelRelease(
+                from: url.deletingLastPathComponent(), tagPrefix: "",
+                includesPrereleases: true)
         }
         try Task.checkCancellation()
         if cacheMissing, await missingReleaseCache.contains(url) {
@@ -338,10 +348,10 @@ struct GitHubReleasesUpdateProvider: Sendable {
         return release
     }
 
-    private func loadChannelRelease(from url: URL, tagPrefix: String) async throws
-        -> GitHubReleaseManifest
-    {
-        guard !tagPrefix.isEmpty, tagPrefix.count <= 80,
+    private func loadChannelRelease(
+        from url: URL, tagPrefix: String, includesPrereleases: Bool
+    ) async throws -> GitHubReleaseManifest {
+        guard tagPrefix.count <= 80,
             tagPrefix.utf8.allSatisfy({
                 (65...90).contains($0) || (97...122).contains($0)
                     || (48...57).contains($0) || $0 == 45 || $0 == 95
@@ -374,8 +384,10 @@ struct GitHubReleasesUpdateProvider: Sendable {
                 guard let tag = value["tag_name"] as? String, tag.hasPrefix(tagPrefix),
                     let data = try? JSONSerialization.data(withJSONObject: value)
                 else { return nil }
-                guard let release = GitHubReleaseManifest.parse(data),
-                    !VersionComparator.isPrerelease(release.version)
+                guard
+                    let release = GitHubReleaseManifest.parse(
+                        data, includesPrereleases: includesPrereleases),
+                    includesPrereleases || !VersionComparator.isPrerelease(release.version)
                 else { return nil }
                 return release
             }
@@ -386,7 +398,9 @@ struct GitHubReleasesUpdateProvider: Sendable {
             }
             if values.count < 100 { break }
         }
-        throw ProcessRunnerError.failed(status: 1, message: "未找到该渠道的 GitHub 正式版本。")
+        throw ProcessRunnerError.failed(
+            status: 1,
+            message: includesPrereleases ? "未找到该渠道的 GitHub 版本。" : "未找到该渠道的 GitHub 正式版本。")
     }
 
     private func installability(

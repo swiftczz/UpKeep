@@ -55,7 +55,9 @@ struct SparkleUpdateProvider: Sendable {
                 application.status = .unavailable("更新源没有提供版本。")
                 return application
             }
-            let releasedCandidates = candidates.filter { !$0.isPrerelease }
+            let releasedCandidates = candidates.filter {
+                application.acceptsPrereleases || !$0.isPrerelease
+            }
             guard !releasedCandidates.isEmpty else {
                 application.status = .upToDate
                 application.canAutomaticallyUpdate = false
@@ -65,7 +67,11 @@ struct SparkleUpdateProvider: Sendable {
                 application.clearReleaseMetadata()
                 return application
             }
-            guard let candidate = Self.bestCandidate(from: releasedCandidates) else {
+            guard
+                let candidate = Self.bestCandidate(
+                    from: releasedCandidates,
+                    includesPrereleases: application.acceptsPrereleases)
+            else {
                 application.status = .unavailable("更新源中没有兼容此 Mac 的版本。")
                 return application
             }
@@ -162,7 +168,10 @@ struct SparkleUpdateProvider: Sendable {
         }
 
         let candidates = try SparkleAppcastParser(data: data).parse()
-        guard let candidate = Self.bestCandidate(from: candidates.filter { !$0.isPrerelease }),
+        guard
+            let candidate = Self.bestCandidate(
+                from: candidates.filter { application.acceptsPrereleases || !$0.isPrerelease },
+                includesPrereleases: application.acceptsPrereleases),
             Self.isUpdateAvailable(candidate, for: application)
         else {
             throw SparkleUpdateProviderError.noAvailableUpdate
@@ -188,7 +197,9 @@ struct SparkleUpdateProvider: Sendable {
         )
     }
 
-    static func bestCandidate(from candidates: [SparkleCandidate]) -> SparkleCandidate? {
+    static func bestCandidate(
+        from candidates: [SparkleCandidate], includesPrereleases: Bool = false
+    ) -> SparkleCandidate? {
         let operatingSystem = ProcessInfo.processInfo.operatingSystemVersion
         let systemVersion =
             "\(operatingSystem.majorVersion).\(operatingSystem.minorVersion).\(operatingSystem.patchVersion)"
@@ -204,7 +215,7 @@ struct SparkleUpdateProvider: Sendable {
         return
             candidates
             .filter { candidate in
-                guard !candidate.isPrerelease else {
+                guard includesPrereleases || !candidate.isPrerelease else {
                     return false
                 }
                 let supportsOS =

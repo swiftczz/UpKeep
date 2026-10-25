@@ -18,7 +18,10 @@ struct CustomAPIUpdateProvider: Sendable {
         }
 
         do {
-            switch try await fetchManifest(from: requestURL, profile: profile) {
+            switch try await fetchManifest(
+                from: requestURL, profile: profile,
+                includesPrereleases: application.acceptsPrereleases)
+            {
             case .upToDate:
                 application.applyInstalledRelease()
             case .update(let manifest):
@@ -64,7 +67,8 @@ struct CustomAPIUpdateProvider: Sendable {
         progress(.indeterminate("正在检查更新…"))
         guard
             case .update(let manifest) = try await fetchManifest(
-                from: requestURL, profile: profile),
+                from: requestURL, profile: profile,
+                includesPrereleases: application.acceptsPrereleases),
             let package = manifest.selectedPackage()
         else {
             throw CustomAPIUpdateError.noCompatiblePackage
@@ -90,7 +94,7 @@ struct CustomAPIUpdateProvider: Sendable {
     }
 
     private func fetchManifest(
-        from url: URL, profile: CustomAPIFeedProfile
+        from url: URL, profile: CustomAPIFeedProfile, includesPrereleases: Bool
     ) async throws -> FetchResult {
         guard let response = try await fetchResponse(url) else {
             throw CustomAPIUpdateError.unreadableManifest
@@ -102,7 +106,8 @@ struct CustomAPIUpdateProvider: Sendable {
             guard response.data.count <= 5_000_000,
                 let manifest = profile.parse(response.data, sourceURL: url)
             else { throw CustomAPIUpdateError.unreadableManifest }
-            return VersionComparator.isPrerelease(manifest.version) ? .upToDate : .update(manifest)
+            return !includesPrereleases && VersionComparator.isPrerelease(manifest.version)
+                ? .upToDate : .update(manifest)
         case 404:
             // A rule names its endpoint explicitly: a 404 means the rule is wrong,
             // not that the app uses another protocol.

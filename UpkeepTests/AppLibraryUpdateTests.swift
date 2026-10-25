@@ -329,6 +329,42 @@ final class AppLibraryUpdateTests: XCTestCase {
         XCTAssertEqual(finished, 4)
     }
 
+    func testPrereleaseChoiceIsSavedAndRechecksTheApplication() async throws {
+        let application = AppRecord(
+            name: "Preview",
+            bundleIdentifier: "com.example.Preview",
+            applicationURL: URL(fileURLWithPath: "/Applications/Preview.app"),
+            currentVersion: "1.0",
+            updateConfiguration: UpdateConfiguration(
+                mechanism: .sparkle, feedURL: URL(string: "https://example.com/appcast.xml")),
+            status: .upToDate
+        )
+        let suiteName = "UpkeepTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let library = AppLibrary(
+            applications: [application],
+            scanner: UpdateSelectionScanner(applications: [application]),
+            coordinator: PrereleaseAwareCoordinator(),
+            userDefaults: defaults,
+            libraryStore: .memory()
+        )
+
+        await library.setPrereleasePolicy(.includePrereleases, for: application.id)
+        XCTAssertEqual(library.prereleasePolicy(for: application), .includePrereleases)
+        XCTAssertEqual(
+            defaults.dictionary(forKey: "prereleasePolicies") as? [String: String],
+            ["com.example.preview": "includePrereleases"])
+        XCTAssertEqual(library.applications.first?.latestVersion, "2.0-beta.1")
+        XCTAssertEqual(library.applications.first?.status, .updateAvailable)
+
+        await library.setPrereleasePolicy(.automatic, for: application.id)
+        XCTAssertEqual(library.prereleasePolicy(for: application), .automatic)
+        XCTAssertEqual(
+            defaults.dictionary(forKey: "prereleasePolicies") as? [String: String], [:])
+        XCTAssertEqual(library.applications.first?.status, .upToDate)
+    }
+
     func testDownloadProgressRecordsThePackageSize() async throws {
         let application = makeUpdateApplication(
             name: "Sized", bundleIdentifier: "com.example.sized")
@@ -589,6 +625,28 @@ private struct FailingUpdateCoordinator: UpdateCoordinating {
         }
         throw ProcessRunnerError.failed(status: 1, message: "模拟更新失败")
     }
+}
+
+/// Offers a beta only to records that accept pre-releases.
+private struct PrereleaseAwareCoordinator: UpdateCoordinating {
+    func enrich(_ applications: [AppRecord]) async -> [AppRecord] {
+        applications
+    }
+
+    func check(_ application: AppRecord) async -> AppRecord {
+        var checked = application
+        if application.acceptsPrereleases {
+            checked.applyRemoteRelease(version: "2.0-beta.1", canInstall: true)
+        } else {
+            checked.applyInstalledRelease()
+        }
+        return checked
+    }
+
+    func update(
+        _ application: AppRecord,
+        progress: @escaping @Sendable (UpdateProgress) -> Void
+    ) async throws {}
 }
 
 private actor ConcurrencyTracker {

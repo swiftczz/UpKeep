@@ -85,6 +85,12 @@ struct UpkeepRootView: View {
                         application: application,
                         updateState: library.updateStatesByID[application.id],
                         isUpdateIgnored: library.isUpdateIgnored(application),
+                        prereleasePolicy: library.prereleasePolicy(for: application),
+                        setPrereleasePolicy: { policy in
+                            Task {
+                                await library.setPrereleasePolicy(policy, for: application.id)
+                            }
+                        },
                         requiresRelaunchConfirmation: {
                             await library.requiresRelaunchConfirmation(for: application)
                         },

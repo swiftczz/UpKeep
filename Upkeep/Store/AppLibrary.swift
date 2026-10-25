@@ -26,6 +26,8 @@ final class AppLibrary {
     private(set) var updateAllProgress: UpdateAllProgress?
     private(set) var updatingApplicationIDs = Set<AppRecord.ID>()
     private(set) var updateStatesByID: [AppRecord.ID: ApplicationUpdateState] = [:]
+    /// Per-application pre-release choices, keyed like the ignore list.
+    private(set) var prereleasePolicies: [String: PrereleasePolicy]
     private(set) var ignoredBundleIdentifiers: Set<String> {
         didSet { rebuildApplicationSections() }
     }
@@ -45,6 +47,7 @@ final class AppLibrary {
     private var installedApplicationRefreshRequested = false
 
     private static let ignoredBundleIdentifiersKey = "ignoredUpdateBundleIdentifiers"
+    private static let prereleasePoliciesKey = "prereleasePolicies"
     private static let maximumConcurrentChecks = 30
     private static let checkedResultBatchSize = 10
     private static let checkedResultFlushDelay = Duration.milliseconds(250)
@@ -81,6 +84,9 @@ final class AppLibrary {
         self.libraryStore = libraryStore
         self.notifier = notifier
         self.ignoredBundleIdentifiers = ignoredBundleIdentifiers
+        self.prereleasePolicies =
+            (userDefaults.dictionary(forKey: Self.prereleasePoliciesKey) as? [String: String] ?? [:])
+            .compactMapValues(PrereleasePolicy.init(rawValue:))
         self.hasLoaded = !applications.isEmpty
         self.lastCheckedAt = loadedCheckedAt
         self.selectedApplicationID = Self.preferredSelection(
@@ -165,6 +171,39 @@ final class AppLibrary {
 
         ignoredBundleIdentifiers.remove(Self.ignoreIdentifier(for: application))
         persistIgnoredBundleIdentifiers()
+    }
+
+    func prereleasePolicy(for application: AppRecord) -> PrereleasePolicy {
+        prereleasePolicies[Self.ignoreIdentifier(for: application)] ?? .automatic
+    }
+
+    /// Saves the choice and checks the application again under it.
+    func setPrereleasePolicy(_ policy: PrereleasePolicy, for applicationID: AppRecord.ID) async {
+        guard let application = applications.first(where: { $0.id == applicationID }) else {
+            return
+        }
+        prereleasePolicies[Self.ignoreIdentifier(for: application)] =
+            policy == .automatic ? nil : policy
+        userDefaults.set(
+            prereleasePolicies.mapValues(\.rawValue), forKey: Self.prereleasePoliciesKey)
+
+        guard !updatingApplicationIDs.contains(applicationID), application.isCheckable else {
+            return
+        }
+        let checked = await coordinator.check(withPreferences(application))
+        guard !Task.isCancelled, !updatingApplicationIDs.contains(applicationID),
+            let index = applications.firstIndex(where: { $0.id == applicationID }),
+            applications[index] == application
+        else { return }
+        applications[index] = Self.coalesceCheckResult(checked, over: applications[index])
+        persistSnapshot()
+    }
+
+    /// Adds the user's per-application choices before a check or an update.
+    private func withPreferences(_ application: AppRecord) -> AppRecord {
+        var application = application
+        application.prereleasePolicy = prereleasePolicy(for: application)
+        return application
     }
 
     func forgetUninstalled(_ application: AppRecord) {
@@ -263,7 +302,7 @@ final class AppLibrary {
         }
         guard application.isCheckable else { return }
 
-        let checked = await coordinator.check(application)
+        let checked = await coordinator.check(withPreferences(application))
         // A scan or another check may have replaced the record while this request was in flight.
         guard !Task.isCancelled,
             !updatingApplicationIDs.contains(applicationID),
@@ -400,6 +439,7 @@ final class AppLibrary {
 
     private func checkApplications(_ applications: [AppRecord], generation: Int) async {
         guard !applications.isEmpty else { return }
+        let applications = applications.map(withPreferences)
 
         let coordinator = coordinator
         await withTaskGroup(of: AppRecord.self) { group in
@@ -1041,7 +1081,7 @@ final class AppLibrary {
         }
 
         do {
-            try await coordinator.update(application) { progress in
+            try await coordinator.update(withPreferences(application)) { progress in
                 relay.submit(progress)
             }
             relay.finish()

@@ -13,6 +13,8 @@ struct AppRecord: Identifiable, Hashable, Sendable {
     var alternateUpdateConfiguration: UpdateConfiguration?
     /// The full route confirmed by an installation or a matching local receipt.
     var installedUpdateConfiguration: UpdateConfiguration?
+    /// Chosen per application in the library; not stored with the record.
+    var prereleasePolicy: PrereleasePolicy = .automatic
     var appStorePlatform: AppStorePlatform?
     var appStoreCountryCode: String?
     var appStoreAccountCountryCode: String?
@@ -111,6 +113,17 @@ extension AppRecord {
             return
         }
         alternateUpdateConfiguration = application.updateConfiguration
+    }
+
+    /// Whether a check may offer alpha, beta, rc or preview releases.
+    var acceptsPrereleases: Bool {
+        switch prereleasePolicy {
+        case .stableOnly: false
+        case .includePrereleases: true
+        case .automatic:
+            VersionComparator.isPrerelease(currentVersion)
+                || updateConfiguration.followsPrereleaseChannel
+        }
     }
 
     var needsUpdate: Bool {

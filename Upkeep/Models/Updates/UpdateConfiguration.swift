@@ -46,6 +46,15 @@ struct UpdateConfiguration: Hashable, Sendable, Codable {
         UpdateSourceRule.ruleID(fromConfigurationIdentifier: identifier) != nil
     }
 
+    /// An electron-builder app that reads a channel other than `latest`, such as
+    /// `nightly-mac.yml`, has opted into its own preview releases.
+    var followsPrereleaseChannel: Bool {
+        guard mechanism == .electronBuilder,
+            let name = feedURL?.lastPathComponent.lowercased(), name.hasSuffix("-mac.yml")
+        else { return false }
+        return name != "latest-mac.yml"
+    }
+
     var isCheckable: Bool {
         switch mechanism.traits.checkability {
         case .always: true

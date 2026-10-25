@@ -142,7 +142,8 @@ struct TauriUpdateProvider: Sendable {
         }
 
         do {
-            let manifest = try await fetchManifest(from: endpoint)
+            let manifest = try await fetchManifest(
+                from: endpoint, includesPrereleases: application.acceptsPrereleases)
             let selectedPlatform = manifest.selectedPlatform()
             let releaseNotes: String?
             var notesURL = manifest.releaseNotesURL
@@ -197,7 +198,8 @@ struct TauriUpdateProvider: Sendable {
         }
 
         progress(.indeterminate("正在检查更新…"))
-        let manifest = try await fetchManifest(from: endpoint)
+        let manifest = try await fetchManifest(
+            from: endpoint, includesPrereleases: application.acceptsPrereleases)
         guard let platform = manifest.selectedPlatform() else {
             throw ProcessRunnerError.failed(status: 1, message: "更新源中没有兼容此 Mac 的安装包。")
         }
@@ -211,7 +213,9 @@ struct TauriUpdateProvider: Sendable {
         )
     }
 
-    private func fetchManifest(from url: URL) async throws -> TauriUpdateManifest {
+    private func fetchManifest(from url: URL, includesPrereleases: Bool) async throws
+        -> TauriUpdateManifest
+    {
         guard let data = try await fetchData(url) else {
             throw ProcessRunnerError.failed(status: 1, message: "无法读取 Tauri Updater 更新清单。")
         }
@@ -220,7 +224,8 @@ struct TauriUpdateProvider: Sendable {
         }
 
         guard
-            let catalogURL = TauriUpdateCatalog.parse(data)?.latestManifestURL,
+            let catalogURL = TauriUpdateCatalog.parse(data)?.latestManifestURL(
+                includesPrereleases: includesPrereleases),
             catalogURL != url,
             let catalogData = try await fetchData(catalogURL),
             let manifest = TauriUpdateManifest.parse(catalogData)
@@ -286,9 +291,9 @@ struct TauriUpdateCatalog: Equatable, Sendable {
 
     var releases: [Release]
 
-    var latestManifestURL: URL? {
+    func latestManifestURL(includesPrereleases: Bool = false) -> URL? {
         let stable = releases.filter { !VersionComparator.isPrerelease($0.version) }
-        let pool = stable.isEmpty ? releases : stable
+        let pool = includesPrereleases || stable.isEmpty ? releases : stable
         return pool.max { lhs, rhs in
             if VersionComparator.isNewer(rhs.version, than: lhs.version) {
                 return true

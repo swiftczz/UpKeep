@@ -316,7 +316,7 @@ final class ProtocolUpdateParserTests: XCTestCase {
 
         let catalog = try XCTUnwrap(TauriUpdateCatalog.parse(data))
         XCTAssertEqual(
-            catalog.latestManifestURL?.absoluteString,
+            catalog.latestManifestURL()?.absoluteString,
             "https://dl.reasonix.io/studio-v2.4.0/latest.json"
         )
     }

@@ -6,6 +6,8 @@ struct AppDetailView: View {
     let application: AppRecord
     let updateState: ApplicationUpdateState?
     let isUpdateIgnored: Bool
+    let prereleasePolicy: PrereleasePolicy
+    let setPrereleasePolicy: (PrereleasePolicy) -> Void
     let requiresRelaunchConfirmation: () async -> Bool
     let primaryAction: () -> Void
     let openApplication: () -> Void
@@ -330,6 +332,35 @@ struct AppDetailView: View {
         var help: String? = nil
         /// Paths stay on one line and are shortened in the middle.
         var truncatesMiddle = false
+        /// Choices shown in a menu on the value, with the current one checked.
+        var choices: [(title: String, isSelected: Bool, select: () -> Void)] = []
+    }
+
+    /// Store, Homebrew-only and VS Code updates have no preview releases to choose.
+    private var offersPrereleaseChoice: Bool {
+        let mechanism =
+            application.updateConfiguration.mechanism == .homebrew
+            ? application.alternateUpdateCheckRecord?.updateConfiguration.mechanism
+            : application.updateConfiguration.mechanism
+        guard let mechanism else { return false }
+        return [.sparkle, .githubReleases, .tauri, .customAPI, .electronBuilder].contains(mechanism)
+    }
+
+    /// The receive-version choice, kept in a fixed early slot of the grid.
+    private var receivedVersionsItem: InformationItem? {
+        guard offersPrereleaseChoice else { return nil }
+        var resolved = application
+        resolved.prereleasePolicy = prereleasePolicy
+        let value =
+            prereleasePolicy == .automatic
+            ? "自动（\(resolved.acceptsPrereleases ? PrereleasePolicy.includePrereleases.title : PrereleasePolicy.stableOnly.title)）"
+            : prereleasePolicy.title
+        return InformationItem(
+            label: "接收版本", value: value,
+            help: "选择是否接收 alpha、beta、rc 等预览版本",
+            choices: PrereleasePolicy.allCases.map { policy in
+                (policy.title, policy == prereleasePolicy, { setPrereleasePolicy(policy) })
+            })
     }
 
     private var informationItems: [InformationItem] {
@@ -371,6 +402,9 @@ struct AppDetailView: View {
                     action: showInFinder, help: "在 Finder 中显示 \(path)",
                     truncatesMiddle: true))
         }
+        if let receivedVersionsItem {
+            items.insert(receivedVersionsItem, at: min(5, items.count))
+        }
         return items
     }
 
@@ -411,7 +445,26 @@ struct AppDetailView: View {
             Text(item.label)
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 64, alignment: .leading)
-            if let action = item.action {
+            if !item.choices.isEmpty {
+                Menu {
+                    ForEach(item.choices, id: \.title) { choice in
+                        Button(action: choice.select) {
+                            if choice.isSelected {
+                                Label(choice.title, systemImage: "checkmark")
+                            } else {
+                                Text(choice.title)
+                            }
+                        }
+                    }
+                } label: {
+                    Text(item.value)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.link)
+                .fixedSize()
+                .help(item.help ?? "")
+                .accessibilityLabel("\(item.label) \(item.value)")
+            } else if let action = item.action {
                 Button(action: action) {
                     informationValue(item)
                         .multilineTextAlignment(.leading)
