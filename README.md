@@ -1,236 +1,158 @@
 # Upkeep
 
-**在一个窗口里，检查、更新和卸载 Mac 应用。**
+**一个窗口，管好 Mac 上所有应用的更新。**
 
-Upkeep 会扫描本机已安装的 `.app`，识别各应用的更新来源，集中展示新版本和更新说明。支持直接安装的更新可以单独执行，也可以批量安装；不再需要的应用则可以连同选中的关联文件一起移到废纸篓。
+Mac 上的应用来源五花八门：有的来自 App Store，有的用 Homebrew 安装，还有很多是从官网或 GitHub 下载的。它们各自用不同的方式提示更新，有的甚至从不提醒。
 
-> 系统要求：**macOS 26 或更高版本**，**Apple Silicon（M 系列芯片）**。目前不提供 Intel 版本。
+Upkeep 会找出每个应用"从哪里更新"，把所有新版本集中列出来，你可以一键更新单个应用，也可以一次全部更新。不再需要的应用，也可以连同它留下的文件一起干净地卸载。
 
-## 下载与安装
+> 系统要求：**macOS 26 或更高版本**，**Apple Silicon（M 系列芯片）**的 Mac。
 
-1. 前往[最新版本页面](https://github.com/swiftczz/UpKeep/releases/latest)，下载附件中的 `Upkeep-<版本号>.dmg`。
-2. 打开 DMG，将 **Upkeep** 拖入 **Applications（应用程序）** 文件夹。
-3. 启动 Upkeep，查看扫描结果；点击工具栏的“检查更新”或按 `⌘R`，重新扫描并检查版本。
+## 下载安装
 
-历史版本与各版本的更新说明可在 [Releases](https://github.com/swiftczz/UpKeep/releases) 查看。
+1. 打开[最新版本](https://github.com/swiftczz/UpKeep/releases/latest)，下载 `Upkeep-<版本号>.dmg`。
+2. 打开 DMG，把 **Upkeep** 拖进"应用程序"文件夹。
+3. 启动 Upkeep。它会先扫描本机的应用，再逐个检查有没有新版本。
 
-## 主要功能
+各版本的更新内容见 [Releases](https://github.com/swiftczz/UpKeep/releases)。
 
-- **集中检查更新**：自动识别应用使用的更新来源，查看当前版本、最新版本、发布日期和更新包大小。
-- **单独或批量更新**：安装可自动更新的应用；需要退出正在运行的应用时，会先提示确认。
-- **直接阅读更新说明**：在详情页查看 Markdown 或网页正文，也可以打开完整说明。
-- **搜索与忽略更新**：按应用名、Bundle ID、更新来源或更新机制搜索，将暂时不想更新的应用放入忽略列表。
-- **卸载与关联文件清理**：查看并选择要移除的文件，将应用和选中的关联文件移到废纸篓。
+### 自行编译打包
 
-## 更新来源与更新机制
-
-“更新来源”表示获取版本信息的渠道，统一为 **App Store、Homebrew、GitHub、Website、Unknown**；“更新机制”表示读取更新信息所用的协议或接口。详情页分别显示两项，列表图标表示来源。
-
-| 更新来源 | 更新机制 | 处理方式 |
-| --- | --- | --- |
-| App Store | App Store | 支持条件满足时下载安装；需要通过商店处理的应用会跳转到 App Store。 |
-| Homebrew | Homebrew Cask | 识别由 Homebrew Cask 管理的应用，并通过 Homebrew 更新。 |
-| Website / GitHub | Sparkle、Electron Updater、Tauri Updater | 读取应用的更新清单，获取版本、更新说明和安装包；清单托管在 GitHub 时来源显示 GitHub。 |
-| Website | VS Code Updater | 支持识别到的对应更新协议。 |
-| Website / GitHub | Custom API | 支持 JSON 文件及更新 API，匹配平台、架构和版本对应的说明。 |
-| GitHub | GitHub Releases | 读取版本、说明和兼容的安装包；区分同仓库中的桌面版、CLI 和移动版。 |
-| Unknown | Unknown | 提供打开应用的入口，使用应用自身的更新功能。 |
-
-扫描范围包括应用主程序及包内名称匹配的辅助应用。更新接口、仓库及发布渠道从应用自身配置和程序内容识别；来源未知的应用会在完整检查时重新识别。
-
-Homebrew 作为更新方式时，仍保留应用自带的更新配置，并从其他渠道补齐同一版本、构建的主页、发布日期、更新包大小和更新说明。安装完成与后续扫描会保留匹配版本的详情；其他版本的发布信息不会混用。
-
-Electron 应用除了标准更新配置，也支持从 `app.asar` 中按需读取产品配置和主程序，识别 WorkBuddy 系列的 v2 更新接口。使用各应用内置的发布端点与当前版本，不共用国内、国际渠道，也不读取登录凭据。支持单安装包 JSON 响应、秒或毫秒时间戳和 SHA-256 校验；若应用声明需要迁移应用标识，则显示“应用内更新”，保留现有安装身份校验。
-
-支持更新逻辑拆分到独立模块的新版 WorkBuddy：只跟随入口引用的相对更新模块，并限制读取数量、深度和总大小；迁移完成后重新读取新版配置，避免沿用旧域名或继续标记为应用标识迁移。
-
-对于 GigaMoney 等将常规 Electron 更新地址留空的应用，可静态读取内置的品牌与发布通道 JSON 模块。只有品牌 Bundle ID 与当前应用一致、明确使用正式版通道且地址为公开 HTTPS 时，才接入既有 Electron Updater；不执行 JavaScript，不使用其他品牌或测试通道，也不内置下载域名。
-
-对于 ZCode 等使用本地地址占位、运行时改用官网清单的 Electron 应用，可沿入口引用的模块读取正式接口与平台、渠道映射，继续复用 Electron Updater 的版本、说明、下载及校验流程。只读取公开配置，不发送设备标识或登录信息。
-
-Craft 套件通过内置的更新规则接入 GitHub Releases：完整 Bundle ID `ai.storyteller.<名称>craft` 对应 `storytold/<名称>craft` 仓库，不依赖应用显示名称。遵循此规则的新增应用会自动识别，无需逐个添加名单。该规则是兜底规则，应用已有的更新协议优先使用。
-
-AiCoin 的 `app-update.yml` 只声明 `provider: custom`，实际的 electron-builder 更新地址写在应用脚本中。内置规则将其指向官方的 `latest-mac.yml`，继续由 Electron Updater 读取版本、按架构选择安装包并校验 SHA-512。
-
-Upkeep 直接读取 GitHub 发布信息，确认版本并选择对应仓库的 Mac 桌面安装包，排除 CLI、网页及服务器附件；安装时仍校验 Bundle ID 和代码签名。检查结果沿用本地应用缓存；候选源返回 404 时缓存一小时，避免自动检查反复请求，手动刷新会重新验证。无需 ArtCraft Launcher 或其他应用清单接口。
-
-能否直接安装取决于更新源是否提供兼容的安装包。仅提供更新页面的条目会显示“查看更新”，没有可安装更新的条目可以直接打开应用。
-
-通用安装器支持 ZIP、DMG、`.tar.gz`、`.tgz` 和 `.tar.xz` 应用包。Sparkle 的 PKG 更新（包括 DMG 或归档内的 PKG）复用公共安装助手；解包前验证 Ed25519 签名，安装前验证安装包的 Developer ID、系统信任及目标应用版本，安装后再次核对应用身份和版本。PKG 不使用公钥轮换回退。App Store 同样复用该助手，并额外处理商店收据。Sparkle 公钥轮换需验证新旧应用的 Developer ID 与原应用的签名要求，再用新公钥验证更新包；应用要求解压前验证时，不走解压后的轮换流程。
-
-通过 GitHub 发布页链接读取更新说明时，统一优先读取 API 正文，必要时回退到发布网页的正文区域，过滤仓库导航、Star、标签选择和附件列表。
-
-### 自定义更新规则
-
-没有被自动识别、但更新地址可以确定的应用，可以用规则文件接入，无需修改代码，例如只提供 JSON 接口或 GitHub 仓库的应用，或在代码中设置更新器地址的应用。把 `.json` 文件放进 `~/Library/Application Support/Upkeep/UpdateSources/`（可在“设置”中打开），下次检查更新时生效。一个文件可以写一条规则，也可以写规则数组；文件按名称排序，同一 id 以靠前的文件为准，并覆盖同名的内置规则。
-
-```json
-{
-  "id": "example-editor",
-  "name": "Example Editor",
-  "kind": "jsonFeed",
-  "match": { "bundleIdentifier": "com.example.editor" },
-  "feed": "https://example.com/api/update?arch={arch}&version={version}",
-  "fields": {
-    "version": ["latest.version", "version"],
-    "notes": ["latest.notes.zh-CN", "latest.notes.en"],
-    "date": "latest.published_at",
-    "assets": "latest.downloads",
-    "assetURL": "url",
-    "assetSHA256": "sha256",
-    "assetSize": "size"
-  }
-}
-```
-
-- `kind`：
-  - `jsonFeed` 读取 JSON 接口，用 `fields` 指定字段位置。
-  - `githubReleases` 读取 GitHub 仓库的最新发布，需填写 `repository`（如 `"example/{slug}"`），可用 `assetNamePrefix` 只选择指定前缀的安装包。
-  - `updaterFeed` 把 `feed` 交给已支持的更新器处理，需填写 `format`：`electronBuilder`（`latest-mac.yml`）、`sparkle`（appcast）或 `tauri`（Tauri 更新清单）。版本解析、安装包选择和校验与自动识别到的同类更新源相同。
-
-  ```json
-  {
-    "id": "example-chat",
-    "kind": "updaterFeed",
-    "format": "electronBuilder",
-    "match": { "bundleIdentifier": "com.example.chat" },
-    "feed": "https://downloads.example.com/latest-mac.yml"
-  }
-  ```
-- `match`：`bundleIdentifier` 精确匹配；`bundleIdentifierPattern` 用正则匹配完整 Bundle ID，命名分组（如 `(?<slug>...)`）可在模板中使用。
-- 模板占位符：`{version}`、`{build}`、`{bundleIdentifier}`、`{arch}`（`arm64` 或 `x64`）及命名分组。URL 中的值会做百分号编码。
-- `fields`：用点号路径读取响应，如 `release.assets.0.url`，`$` 表示响应本身；每个字段可以列出多个候选路径，取第一个非空值。`assets` 可以指向数组、以名称为键的对象或单个安装包；省略时，响应本身就是唯一的安装包。
-- `precedence`：默认 `beforeHeuristics`，优先于从安装包推断的更新源，但不覆盖 App Store 收据和 Info.plist 中声明的 Sparkle 更新源；只内置 Sparkle 框架、未声明地址的应用可以用规则指定 appcast。`fallback` 只在其他方式都无法识别时使用。
-
-规则只决定从哪里读取、如何解析，不能放宽安装校验：下载必须使用 HTTPS，安装包的 Bundle ID 必须与已安装应用一致，代码签名必须有效；已安装应用有开发者签名时，新版本的 Team ID 也必须一致。这些要求由安装器统一执行，无论更新最终由哪种更新器安装。规则文件有误时，“设置”中会列出文件名和原因；`jsonFeed` 规则的接口无法读取时，应用会显示规则名称和原因，其他类型显示对应更新器的错误信息。
-
-## 日常使用
-
-左侧列表分为“可用更新”“已安装的应用”和“已忽略的应用”三组。搜索框支持输入 `Website`、`Homebrew`、`GitHub` 等来源名称，也支持 `Sparkle`、`Tauri Updater` 等机制名称。来源和机制关键词只匹配当前显示的渠道和机制，不匹配备用通道；`未知`、`Unknown` 均筛选当前来源为 Unknown 的应用。
-
-更新来源按当前检查渠道的更新接口判断，不受是否发现新版本影响，也不根据安装包最终下载域名或历史安装渠道改变。最近一次成功安装的渠道及本地 Homebrew 收据仍保留在安装记录中。
-
-选中应用后，右侧展示版本和更新说明。主按钮右侧的菜单提供“在 Finder 中显示”和“卸载”等操作；在侧栏右键点击应用，可以添加忽略或取消忽略。已忽略的应用会统一放入忽略列表，无论当前是否有可用更新。
-
-### GitHub 连接
-
-点击工具栏的“设置”，或使用 **Upkeep → 设置… / `⌘,`**，在“更新来源”中连接 GitHub。连接成功后会重新检查更新，后续 GitHub API 请求使用该账号的请求额度。连接凭据仅保存在此 Mac 的钥匙串中；断开连接会删除本地凭据，失效或过期的凭据会提示重新连接。
-
-启用了浏览器授权的版本会显示验证码：复制验证码并打开 GitHub，登录自己的账号后完成授权，Upkeep 自动完成连接。不提供浏览器授权的版本可使用访问令牌连接；在 GitHub 创建细粒度令牌时，保留默认的公开信息读取权限即可，无需增加仓库写入权限。断开本地连接不会撤销 GitHub 端的授权，可在 GitHub 设置中另行撤销。
-
-卸载需要管理员权限的应用时，已启用后台助手的管理员账户可以通过 Touch ID 确认；Touch ID 不可用时，系统会提供密码验证。首次使用可能需要在“系统设置 → 通用 → 登录项与扩展”中允许 Upkeep 的后台项目，这一步由 macOS 授权。该方式仅用于将 `/Applications` 下的应用本体移到当前用户的废纸篓；其他关联文件仍按原有权限处理。
-
-| 操作 | 用途 |
-| --- | --- |
-| 检查更新 / `⌘R` | 重新扫描本机应用并检查更新。 |
-| 更新 | 下载并安装当前应用可自动安装的更新。 |
-| 更新全部 | 更新所有未被忽略且可自动更新的应用。 |
-| 查看完整说明 | 在浏览器中打开更新说明来源页面。 |
-
-## 从源码运行
-
-需要 **Xcode 26 或更高版本**及 **Swift 6.2 或更高版本**。项目使用 SwiftUI 和 Swift Package Manager，没有第三方 Swift 包依赖。
+也可以从源码自己打包出 DMG。需要先安装 **Xcode 26 或更高版本**。
 
 ```sh
 git clone https://github.com/swiftczz/UpKeep.git
 cd UpKeep
-
-# 编译 Debug 版本，组装为 .app 并启动
-./scripts/build_and_run.sh
-
-# 运行测试
-swift test
-```
-
-也可以用 Xcode 打开根目录的 `Package.swift`，选择 Upkeep scheme 运行。完整应用包及安装助手由构建脚本组装；`swift run Upkeep` 只运行裸二进制。
-
-其他调试方式：
-
-```sh
-./scripts/build_and_run.sh --debug   # 使用调试器启动
-./scripts/build_and_run.sh --logs    # 启动并跟踪系统日志
-./scripts/build_and_run.sh --verify  # 启动后检查进程状态
-```
-
-## 构建发布包
-
-```sh
 ./scripts/build_and_run.sh --build-only --sign --dmg
 ```
 
-构建产物：
+完成后在 `dist` 文件夹中可以找到：
 
-- `dist/Upkeep.app`：包含主程序与安装助手的应用包。
-- `dist/Upkeep-<版本号>.dmg`：包含 Applications 快捷方式的安装镜像。
+- `Upkeep.app`：可以直接拖进"应用程序"文件夹使用。
+- `Upkeep-<版本号>.dmg`：安装镜像，打开后和下载版一样拖动安装。
 
-主程序与安装助手均构建为 arm64。版本号优先读取 `APP_VERSION`，未设置时使用最近的 Git tag；没有 tag 时为 `0.1.0-dev`。构建号优先读取 `APP_BUILD`，否则使用当前 Git 提交数。
+打包时会自动使用这台 Mac 上的开发者证书签名；没有证书时使用临时签名（Ad-hoc），这样打出来的应用只适合自己这台 Mac 使用。第一次打开如果被系统拦截，请在 **系统设置 › 隐私与安全性** 中点击"仍要打开"。
 
-`--sign` 优先使用 `SIGN_IDENTITY` 指定的证书，其次使用 `DEVELOPMENT_SIGN_IDENTITY` 或本机 Apple Development 证书；没有可用证书时使用 Ad-hoc 签名。面向外部分发的 Developer ID 签名与公证需要另行配置。
+## 它能做什么
 
-### 配置 GitHub 浏览器授权（开发者）
+- **集中查看更新**：所有有新版本的应用都放在"可用更新"里，能看到当前版本、最新版本、发布日期和更新包大小。
+- **阅读更新说明**：在详情页直接看这次更新改了什么，不用再去官网翻。
+- **一键更新**：单个更新，或者"更新全部"，多个应用同时进行。正在运行的应用会先提示你，更新完再帮你打开。
+- **按需接收预览版**：每个应用可以单独选择只要正式版，还是也接收 beta、rc 等预览版。
+- **干净卸载**：卸载时列出应用留下的缓存、设置等文件，选好后一起移到废纸篓；还会先停止应用在后台运行的服务。
+- **忽略不想更新的应用**：暂时不想升级的应用可以放进忽略列表，不再打扰你。
 
-在 GitHub 注册 Upkeep 的 OAuth App，并启用 **Device Flow**。这是应用开发者的一次性配置，普通用户无需注册 OAuth App。授权不请求额外 scope，也不在应用中嵌入 Client Secret。当前项目未预置 Client ID；未配置时提供访问令牌连接。
+## 支持哪些应用
 
-本地构建设置 `UPKEEP_GITHUB_CLIENT_ID` 环境变量，构建脚本会将这个公开标识写入应用的 `GitHubOAuthClientID` 配置。发布构建读取同名 GitHub Actions 仓库变量。若启用过期访问令牌，本版本在令牌到期后要求重新授权。
+Upkeep 会自动识别应用的更新方式，大多数应用不需要任何设置：
 
-```sh
-UPKEEP_GITHUB_CLIENT_ID="你的公开ClientID" ./scripts/build_and_run.sh
-```
+| 列表中显示的来源 | 说明 |
+| --- | --- |
+| **App Store** | 从 App Store 安装的应用 |
+| **Homebrew** | 用 Homebrew 安装的应用 |
+| **GitHub** | 在 GitHub 上发布新版本的应用 |
+| **Website** | 通过官网检查更新的应用，比如使用 Sparkle、Electron、Tauri 等常见更新方式的应用 |
+| **Unknown** | 暂时无法识别更新方式的应用，需要打开应用、用它自己的方式更新 |
 
-推送 `v*` 标签后，GitHub Actions 会构建 DMG、生成更新记录并上传到对应 Release。手动运行工作流时，DMG 作为工作流附件提供。
+一些要点：
 
-## 项目结构
+- 同一个应用如果既能通过 Homebrew 更新、也能通过官网或 GitHub 更新，Upkeep 会选择**版本更新的那一个**；两边版本相同时优先用 Homebrew。
+- 已经是最新的应用，显示的是**你上次实际用来更新它的方式**。比如在 Upkeep 里通过 GitHub 更新了它，就显示 GitHub；之后在终端用 `brew upgrade` 更新了，就显示 Homebrew。
+- 有些应用只提供下载页面，没有可以直接安装的安装包。这时按钮会显示"查看更新"，点击后打开官网。
+- 显示为 Unknown 的应用通常使用了自己私有的更新方式，Upkeep 无法可靠地知道它的最新版本，请打开应用自行更新。
 
-```text
-Package.swift                       Swift Package Manager 配置
-Resources/                          应用图标
-scripts/                            构建、打包、更新记录与图标生成脚本
-Upkeep/
-  Models/                           应用记录、显示、搜索与缓存兼容
-    Updates/                        来源、机制、更新配置、状态与进度
-  Services/                         说明解析、安装、卸载及系统服务
-    Updates/
-      Sources/                      更新源协议、内置更新源与注册表
-      Detection/                    扫描应用及各更新源的识别器
-      Providers/                    按更新机制读取清单与执行更新
-      Parsing/                      统一的发布信息与 JSON 解析
-      Rules/                        声明式更新规则、内置规则与规则文件加载
-      UpdateCoordinator.swift       按注册表调度主配置与备用配置
-  Store/                            应用列表状态与本地缓存
-  Views/                            侧栏、详情与卸载界面
-UpkeepPrivilegedHelper/             公共 PKG 安装与受保护应用卸载助手
-UpkeepPrivilegedHelperProtocol/     共用的 XPC 协议与安装包校验
-UpkeepTests/                        主程序测试
-UpkeepPrivilegedHelperTests/        后台助手测试
-```
+## 日常使用
 
-更新配置由 `UpdateConfiguration` 统一描述，包含 `mechanism`、`feedURL`、`identifier`、`homepageURL` 和 GitHub 发布标签前缀。`UpdateChannel` 表示来源，按机制和更新接口推导，避免接口变更后来源残留；`UpdateMechanism` 表示协议，其名称、搜索词、可否作为备用通道、可检查条件和来源推导集中在 `UpdateMechanism.traits` 中定义。
+### 查看和更新
 
-更新源分为两部分，都在 `UpdateSourceRegistry.standard` 中注册：
+左侧列表分为三组：**可用更新**、**已安装的应用**、**已忽略的应用**。
 
-- `UpdateSourceDetector` 从已安装的应用识别更新配置。识别器按注册顺序执行，第一个结果生效：App Store 收据、Sparkle 更新源、更新规则、Electron 与 VS Code 配置、可执行文件中的更新地址，最后是兜底规则。
-- `UpdateSourceProvider` 按机制检查和安装更新。`UpdateCoordinator` 只按机制查表，不包含具体协议的分支；Homebrew 这类一次性处理整个列表的来源实现 `UpdateLibraryEnricher`。
+选中一个应用，右侧会显示它的版本、更新来源、更新包大小和更新说明。点击右上方的 **更新** 即可安装；主按钮右侧的箭头里还有"打开"和"卸载"。
 
-接入新的更新方式时，按需求选择：
+工具栏按钮：
 
-1. 只有 JSON 接口、GitHub 仓库，或已支持更新器的清单地址：写一条 `UpdateSourceRule`。内置规则放在 `BuiltInUpdateSourceRules.swift`，格式与用户规则文件相同。
-2. 已有协议的新识别方式：新增一个 `UpdateSourceDetector`，插入注册表中合适的位置。
-3. 全新的协议：在 `UpdateMechanism` 中新增一种机制并补充 `traits`，实现 `UpdateSourceProvider`（通常还需要识别器），再注册到 `UpdateSourceRegistry.standard`。
+| 按钮 | 作用 |
+| --- | --- |
+| 检查更新（`⌘R`） | 重新扫描应用并检查新版本 |
+| 更新全部 | 更新所有可以自动更新、且没有被忽略的应用 |
+| 设置（`⌘,`） | 调整同时更新的数量、连接 GitHub、管理自定义规则 |
 
-JSON 接口的解析结果统一为 `ReleaseCandidate`。规则使用 `RuleJSONReleaseParser` 按指定字段读取；扫描发现的接口仍由 `HeuristicJSONReleaseParser` 兼容各家常见字段。WorkBuddy 版本化接口、`latest.json` 正式通道回退和 `/api/release` 更新说明补全等厂商约定集中在 `CustomAPIUpdateProvider` 的接口配置中。
+单个应用正在更新时，"更新全部"仍然可以点，只会更新剩下的应用。
 
-应用的 `updateConfiguration`、`alternateUpdateConfiguration`、`installedUpdateConfiguration` 分别保存当前、备用和已确认安装的完整配置。切换配置时整体复制，GitHub 桌面版标签前缀等信息不会串到其他通道。旧版扁平缓存仅在 `AppRecord+Codable.swift` 中迁移，新缓存使用嵌套配置结构。
+### 搜索
 
-### 修改图标
+搜索框可以按应用名称或 Bundle ID 搜索，也可以输入来源名称筛选，比如 `GitHub`、`Homebrew`、`Website`、`Unknown`。
 
-调整 `scripts/make_app_icon.py` 中的颜色和几何参数后运行：
+### 忽略更新
 
-```sh
-python3 scripts/make_app_icon.py Resources
-```
+在左侧列表里右键点击应用，选择"忽略更新"。被忽略的应用会移到"已忽略的应用"，"更新全部"也会跳过它。想恢复时，右键选择"取消忽略更新"。
 
-脚本需要 Pillow，生成的图标位于 `Resources/`。使用不透明的 1024 × 1024 方图，圆角和阴影交由系统处理。
+### 接收版本（正式版 / 预览版）
+
+在应用详情的"应用信息"里，"接收版本"决定是否提示预览版（alpha、beta、rc 等）：
+
+- **自动**（默认）：按你装的版本决定。你装的是预览版，或者应用自己设置成了预览渠道，就继续提示预览版；装的是正式版，就只提示正式版。
+- **仅正式版**：只提示正式版本。
+- **正式版和预览版**：两种都提示。
+
+修改后会立即重新检查这个应用。App Store 和只能通过 Homebrew 更新的应用没有这一项。
+
+### 同时更新的数量
+
+在"设置 › 更新"里可以设置"更新全部"时同时更新几个应用，范围 1 到 10，默认 5。Homebrew 应用和需要管理员权限安装的安装包，仍会一个接一个地安装。
+
+### 卸载应用
+
+在应用详情里点击主按钮旁的箭头，选择 **卸载**：
+
+1. Upkeep 会列出应用本身，以及它留下的缓存、应用支持文件、偏好设置等。能确定属于这个应用的文件默认勾选；只是名字相似、不能确定归属的文件默认不勾选，你可以自己决定。
+2. 点击 **移到废纸篓**（`⌘⌫`）。文件只是移到废纸篓，清空之前都可以找回。
+
+如果应用在后台注册了常驻服务（比如远程控制类应用），Upkeep 会先停止这些服务，再关闭应用。停止系统级的后台服务需要管理员权限，详见下面的"权限说明"。
+
+## 连接 GitHub（可选）
+
+很多应用在 GitHub 上发布新版本。GitHub 对匿名访问有次数限制，应用较多时可能会检查失败。连接自己的 GitHub 账号可以提高这个限制。
+
+在 **设置 › 更新来源** 中点击 **连接 GitHub**，按提示在浏览器中登录授权；也可以改用访问令牌连接，令牌只需要默认的公开信息读取权限。
+
+- Upkeep 只用它读取应用的发布信息，不会修改你的任何仓库。
+- 凭据只保存在这台 Mac 的钥匙串中。
+- 点击"断开连接"会删除本地凭据；如需撤销授权，请到 GitHub 的设置中操作。
+
+## 权限说明
+
+为了完成一部分需要系统权限的操作，Upkeep 带有一个后台助手。第一次用到时，macOS 可能会要求你在 **系统设置 › 通用 › 登录项与扩展** 中允许 Upkeep 的后台项目。它只会在以下情况被使用，并且只对管理员账户开放：
+
+- 安装需要管理员权限的安装包（`.pkg`）。
+- 卸载受保护的应用（"应用程序"文件夹中，需要管理员权限才能删除的应用）。卸载前会请你用 Touch ID 或密码确认。
+- 卸载时停止应用注册的系统级后台服务。后台助手只会停止**这个应用自己的**服务。
+
+## 安全
+
+- 下载一律使用 HTTPS。
+- 安装前会核对新版本的 Bundle ID 和代码签名，必须和你已安装的应用一致；签名不一致的安装包不会被安装。
+- 更新说明、版本信息只用于展示和判断，不会执行其中的任何内容。
+
+## 常见问题
+
+**为什么某个应用显示 Unknown？**
+它没有使用 Upkeep 能识别的公开更新方式，比如使用了需要签名的私有接口，或者官网没有公开最新版本信息。请打开应用，用它自带的更新功能。
+
+**为什么显示有更新，却只有"查看更新"或"打开"，没有"更新"按钮？**
+更新源只提供了下载页面，或者没有适合这台 Mac 的安装包，Upkeep 无法直接安装。点击按钮会打开对应的页面或应用。
+
+**为什么 Upkeep 提示的版本比官网新/旧？**
+Upkeep 读取的是应用自己的更新渠道，有时官网下载页更新得比较慢。如果你接收的是预览版，也会看到比正式版更新的版本号，可以在"接收版本"里调整。
+
+**更新失败怎么办？**
+详情页会显示失败原因，可以直接点"重试"。如果仍然失败，可以先打开应用，用它自带的更新功能。
+
+**我的应用没被识别，能手动添加吗？**
+可以。如果你知道它的更新地址，可以写一个简单的规则文件，见 [自定义更新规则](docs/UPDATE_RULES.md)。
 
 ## 反馈问题
 
-请在 [Issues](https://github.com/swiftczz/UpKeep/issues) 中反馈。更新识别或安装问题请附上 macOS 版本、应用名称、当前版本、更新来源以及错误信息，便于复现。
+请到 [Issues](https://github.com/swiftczz/UpKeep/issues) 反馈。遇到某个应用识别或更新的问题时，请附上：macOS 版本、应用名称、当前版本、Upkeep 显示的更新来源，以及错误提示的截图。
+
+想参与开发或从源码构建，请看 [开发者文档](docs/DEVELOPMENT.md)。
