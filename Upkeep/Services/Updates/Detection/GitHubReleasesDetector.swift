@@ -116,18 +116,45 @@ enum GitHubReleasesDetector {
             repositoryAliases.formUnion(
                 aliases(for: String(repository.dropLast(feedbackSuffix.count))))
         }
-        let applicationValues = [name] + bundleIdentifier.split(separator: ".").map(String.init)
-        return applicationValues.contains { value in
-            !repositoryAliases.isDisjoint(with: aliases(for: value))
+        let bundleParts = bundleIdentifier.split(separator: ".").map(String.init)
+        let applicationValues = [name] + bundleParts
+        if applicationValues.contains(where: {
+            !repositoryAliases.isDisjoint(with: aliases(for: $0))
+        }) {
+            return true
+        }
+        return ownerReleasesProduct(metadata, bundleParts: bundleParts)
+    }
+
+    /// A developer's own repository named after the product, such as
+    /// egoist/mygo-cloudmusic for dev.egoist.cloudmusic. Both the owner and a product
+    /// part must appear, so a dependency's repository is not mistaken for the app.
+    private static func ownerReleasesProduct(
+        _ metadata: GitHubReleasesMetadata, bundleParts: [String]
+    ) -> Bool {
+        let parts = metadata.identifier.split(separator: "/").map { normalized(String($0)) }
+        let bundleParts = bundleParts.map(normalized)
+        guard parts.count == 2, bundleParts.contains(parts[0]) else { return false }
+        return bundleParts.contains { part in
+            part != parts[0] && part.count >= 4 && !genericBundleParts.contains(part)
+                && parts[1].contains(part)
         }
     }
 
-    private static func aliases(for value: String) -> Set<String> {
-        let normalized = value.unicodeScalars
+    private static let genericBundleParts: Set<String> = [
+        "apple", "client", "desktop", "macos", "helper", "mobile", "release",
+    ]
+
+    private static func normalized(_ value: String) -> String {
+        value.unicodeScalars
             .filter(CharacterSet.alphanumerics.contains)
             .map(String.init)
             .joined()
             .lowercased()
+    }
+
+    private static func aliases(for value: String) -> Set<String> {
+        let normalized = normalized(value)
         guard !normalized.isEmpty else { return [] }
 
         var values: Set<String> = [normalized]

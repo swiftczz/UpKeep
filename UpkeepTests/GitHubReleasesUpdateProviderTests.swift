@@ -87,6 +87,38 @@ final class GitHubReleasesUpdateProviderTests: XCTestCase {
                 name: "Pulse", bundleIdentifier: "com.egoist.pulse"))
     }
 
+    func testOwnersProductRepositoryMatchesWithoutMatchingDependencies() throws {
+        func matches(_ url: String, name: String, bundleIdentifier: String) throws -> Bool {
+            let metadata = try XCTUnwrap(GitHubReleasesDetector.metadata(in: url))
+            return GitHubReleasesDetector.matchesApplication(
+                metadata, name: name, bundleIdentifier: bundleIdentifier)
+        }
+        // MyGo 云音乐 ships from the owner's repository named after its product.
+        let mygo =
+            "https://github.com/egoist/mygo-cloudmusic/releases/latest/download/update-darwin-arm64.json"
+        XCTAssertTrue(try matches(mygo, name: "MyGo 云音乐", bundleIdentifier: "dev.egoist.cloudmusic"))
+
+        // Another developer's repository, even with the product in its name.
+        XCTAssertFalse(
+            try matches(
+                "https://github.com/someone/cloudmusic-api/releases/latest",
+                name: "MyGo 云音乐", bundleIdentifier: "dev.egoist.cloudmusic"))
+        // The owner's unrelated repository.
+        XCTAssertFalse(
+            try matches(
+                "https://github.com/egoist/devtools/releases/latest",
+                name: "MyGo 云音乐", bundleIdentifier: "dev.egoist.cloudmusic"))
+        // Short or generic bundle parts do not count as the product.
+        XCTAssertFalse(
+            try matches(
+                "https://github.com/acme/desktop-kit/releases/latest",
+                name: "Acme", bundleIdentifier: "com.acme.desktop"))
+        XCTAssertFalse(
+            try matches(
+                "https://github.com/acme/toolapp/releases/latest",
+                name: "Acme", bundleIdentifier: "com.acme.app"))
+    }
+
     func testPulseReleaseSelectsFullMacApplicationInsteadOfManifestOrDelta() async throws {
         let dmg = "Pulse.0.1.28.arm64.dmg"
         let data = releaseData(
