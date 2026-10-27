@@ -144,13 +144,6 @@ struct UpkeepRootView: View {
         .animation(nil, value: library.selectedApplicationID)
         .searchable(text: $library.searchText, placement: .sidebar, prompt: "搜索应用、来源或机制")
         .toolbar {
-            ToolbarItem(placement: .automatic) {
-                SettingsLink {
-                    Label("设置", systemImage: "gearshape")
-                }
-                .help("设置更新来源")
-                .accessibilityIdentifier("upkeep.settings")
-            }
             ToolbarItemGroup(placement: .primaryAction) {
                 if !library.automaticUpdates.isEmpty {
                     Button(action: beginUpdateAll) {
@@ -188,6 +181,12 @@ struct UpkeepRootView: View {
                 .disabled(!library.updatingApplicationIDs.isEmpty || manualRefreshTask != nil)
                 .help(isManualRefreshInProgress ? library.phase.title ?? "正在刷新…" : "重新扫描并检查所有应用")
                 .accessibilityLabel(isManualRefreshInProgress ? "正在检查更新" : "检查更新")
+
+                SettingsLink {
+                    Label("设置", systemImage: "gearshape")
+                }
+                .help("设置更新来源")
+                .accessibilityIdentifier("upkeep.settings")
             }
         }
         .task {
