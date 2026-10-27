@@ -598,6 +598,12 @@ struct AppDetailView: View {
     }
 
     private func handlePrimaryAction() {
+        // Only an automatic update can need a relaunch confirmation. Opening the app or
+        // its update page acts at once, so the control is never disabled for a frame.
+        guard application.needsUpdate, application.canAutomaticallyUpdate else {
+            primaryAction()
+            return
+        }
         guard preparationID == nil else { return }
         let requestID = UUID()
         preparationID = requestID
