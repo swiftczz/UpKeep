@@ -133,6 +133,15 @@ final class AppLibrary {
         return await process.isRunning(application)
     }
 
+    /// Update All's overall progress, counting each running update's own progress.
+    var updateAllFraction: Double? {
+        guard let progress = updateAllProgress, progress.totalCount > 0 else { return nil }
+        let running = progress.activeApplications.reduce(0.0) {
+            $0 + (updateStatesByID[$1.id]?.progress?.overallFraction ?? 0)
+        }
+        return min((Double(progress.completedCount) + running) / Double(progress.totalCount), 1)
+    }
+
     /// Automatic updates not already running, e.g. ones the user started one by one.
     var remainingAutomaticUpdates: [AppRecord] {
         automaticUpdates.filter { !updatingApplicationIDs.contains($0.id) }
@@ -918,13 +927,14 @@ final class AppLibrary {
                 while running < limit, !Task.isCancelled,
                     let application = nextUpdateAllApplication(from: &pending)
                 {
-                    updateAllProgress?.activeApplicationNames.append(application.name)
+                    updateAllProgress?.activeApplications.append(
+                        .init(id: application.id, name: application.name))
                     running += 1
                     group.addTask { await self.updateAllResult(for: application) }
                 }
                 guard let result = await group.next() else { break }
                 running -= 1
-                updateAllProgress?.activeApplicationNames.removeAll { $0 == result.name }
+                updateAllProgress?.activeApplications.removeAll { $0.id == result.id }
                 updateAllProgress?.completedCount += 1
                 if let failure = result.failure {
                     failures.append("\(result.name)：\(failure)")
@@ -942,6 +952,7 @@ final class AppLibrary {
     }
 
     private struct UpdateAllResult: Sendable {
+        let id: AppRecord.ID
         let name: String
         var failure: String?
         var updated = false
@@ -950,9 +961,12 @@ final class AppLibrary {
     private func updateAllResult(for application: AppRecord) async -> UpdateAllResult {
         do {
             let installed = try await performVisibleUpdate(application)
-            return UpdateAllResult(name: application.name, updated: installed != nil)
+            return UpdateAllResult(
+                id: application.id, name: application.name, updated: installed != nil)
         } catch {
-            return UpdateAllResult(name: application.name, failure: error.localizedDescription)
+            return UpdateAllResult(
+                id: application.id, name: application.name,
+                failure: error.localizedDescription)
         }
     }
 

@@ -13,6 +13,8 @@ struct UpkeepRootView: View {
     @State private var pendingAppStoreUpdate: (name: String, destination: URL)?
     @State private var updateAllPreparationTask: Task<Void, Never>?
     @State private var updateAllPreparationID: UUID?
+    /// Keeps the Update All button briefly after every update finishes, for its checkmark.
+    @State private var showsUpdateAllCompletion = false
     @State private var manualRefreshTask: Task<Void, Never>?
     @State private var isManualRefreshInProgress = false
     @State private var needsGitHubConnectionRefresh = false
@@ -145,25 +147,21 @@ struct UpkeepRootView: View {
         .searchable(text: $library.searchText, placement: .sidebar, prompt: "搜索应用、来源或机制")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if !library.automaticUpdates.isEmpty {
+                if !library.automaticUpdates.isEmpty || showsUpdateAllCompletion {
                     Button(action: beginUpdateAll) {
                         // A constant label keeps the toolbar from shifting while work runs;
                         // the sidebar footer reports which application is being updated.
                         Label {
                             Text("更新全部")
                         } icon: {
-                            Group {
-                                if isUpdateAllBusy {
-                                    ProgressRing(fraction: updateAllFraction, isWorking: true)
-                                } else {
-                                    Image(systemName: "arrow.down.circle")
-                                }
-                            }
-                            .frame(width: 16, height: 16)
+                            updateAllIcon
                         }
                     }
-                    // Updates started one by one keep running; this queues the rest.
-                    .disabled(isUpdateAllBusy || library.remainingAutomaticUpdates.isEmpty)
+                    // Not disabled while running, so the progress keeps full contrast; the
+                    // action ignores clicks until the round finishes.
+                    .disabled(
+                        !isUpdateAllBusy && !showsUpdateAllCompletion
+                            && library.remainingAutomaticUpdates.isEmpty)
                     .accessibilityLabel(updateAllAccessibilityLabel)
                     .help(updateAllHelp)
                 }
@@ -191,6 +189,9 @@ struct UpkeepRootView: View {
         }
         .task {
             await library.loadIfNeeded()
+        }
+        .onChange(of: library.updateAllProgress == nil) { wasIdle, isIdle in
+            if !wasIdle, isIdle { finishUpdateAll() }
         }
         .onChange(of: library.availableUpdates.count, initial: true) { _, count in
             NSApp?.dockTile.badgeLabel = count > 0 ? String(count) : nil
@@ -262,13 +263,6 @@ struct UpkeepRootView: View {
 
     private var pageTransitionAnimation: Animation? {
         reduceMotion ? nil : .smooth(duration: 0.3)
-    }
-
-    /// Nil while preparing, so the ring shows only its comet.
-    private var updateAllFraction: Double? {
-        library.updateAllProgress.map {
-            Double($0.completedCount) / Double(max($0.totalCount, 1))
-        }
     }
 
     private var isUpdateAllBusy: Bool {
@@ -353,8 +347,41 @@ struct UpkeepRootView: View {
         return "\(names) 正在运行。更新需要退出这些应用，安装完成后会重新打开。"
     }
 
+    /// Toolbar items stay images or symbols: the toolbar gives a custom view its own
+    /// glass, which would split this button from the group beside it.
+    @ViewBuilder
+    private var updateAllIcon: some View {
+        if showsUpdateAllCompletion {
+            Image(systemName: "checkmark.circle")
+                // .foregroundStyle(.green)
+                // Symbol effects already follow the reduce-motion setting.
+                .transition(.symbolEffect(.drawOn))
+        } else if isUpdateAllBusy {
+            Image(nsImage: UpdateAllIcon.image(fraction: library.updateAllFraction ?? 0))
+        } else {
+            Image(systemName: "arrow.down.circle")
+        }
+    }
+
+    /// After a round that left nothing to update, show the checkmark, then let the
+    /// button go with the empty list.
+    private func finishUpdateAll() {
+        guard library.remainingAutomaticUpdates.isEmpty else { return }
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
+            showsUpdateAllCompletion = true
+        }
+        Task {
+            try? await Task.sleep(for: .milliseconds(1_200))
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
+                showsUpdateAllCompletion = false
+            }
+        }
+    }
+
     private func beginUpdateAll() {
-        guard updateAllPreparationID == nil else { return }
+        guard updateAllPreparationID == nil, library.updateAllProgress == nil,
+            !showsUpdateAllCompletion
+        else { return }
         let requestID = UUID()
         updateAllPreparationID = requestID
         updateAllPreparationTask = Task {

@@ -8,8 +8,15 @@ struct UpdateAllPlan: Sendable {
 struct UpdateAllProgress: Equatable, Sendable {
     var completedCount = 0
     let totalCount: Int
+    struct ActiveApplication: Equatable, Sendable {
+        let id: AppRecord.ID
+        let name: String
+    }
+
     /// Applications updating right now, in the order they started.
-    var activeApplicationNames: [String] = []
+    var activeApplications: [ActiveApplication] = []
+
+    var activeApplicationNames: [String] { activeApplications.map(\.name) }
 
     var activeSummary: String? {
         guard let first = activeApplicationNames.first else { return nil }
