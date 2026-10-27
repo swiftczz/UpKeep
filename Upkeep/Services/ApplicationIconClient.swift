@@ -51,7 +51,9 @@ private actor ApplicationIconCache {
             return await pendingIcon.value
         }
 
-        let task = Task.detached(priority: .utility) {
+        // Icons are visible content the user is waiting for; at a lower priority they
+        // wait behind the scan's disk reads and Homebrew's processes.
+        let task = Task.detached(priority: .userInitiated) {
             Self.generateIcon(for: applicationURL, displayScale: displayScale)
         }
         pendingIcons[key] = task
