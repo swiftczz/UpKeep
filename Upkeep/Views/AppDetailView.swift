@@ -19,6 +19,8 @@ struct AppDetailView: View {
     @State private var isConfirmingRelaunch = false
     @State private var preparationTask: Task<Void, Never>?
     @State private var preparationID: UUID?
+    /// Shown only when the running-app check is slow, so a quick check never flashes.
+    @State private var showsPreparation = false
     @State private var isShowingMoreActions = false
 
     var body: some View {
@@ -195,7 +197,9 @@ struct AppDetailView: View {
         .glassEffect(primaryActionGlass, in: .rect(cornerRadius: 8))
         .glassEffectID(PrimaryActionGlassID.shape, in: primaryActionNamespace)
         .anchorPreference(key: MoreActionsAnchorKey.self, value: .bounds) { $0 }
-        .disabled(preparationID != nil)
+        // Repeat clicks are ignored without restyling the control mid-check.
+        .allowsHitTesting(preparationID == nil)
+        .disabled(showsPreparation)
     }
 
     /// The panel drops down from the action control, matching its width and left edge
@@ -272,7 +276,7 @@ struct AppDetailView: View {
     private var primaryActionLabel: some View {
         // The same icon column as the drop-down rows, so their titles line up.
         HStack(spacing: ActionRowMetrics.iconSpacing) {
-            if preparationID != nil {
+            if showsPreparation {
                 ProgressView().controlSize(.small)
                     .frame(width: ActionRowMetrics.iconWidth)
                 Text("正在准备…")
@@ -284,7 +288,7 @@ struct AppDetailView: View {
         }
         .foregroundStyle(primaryActionForeground)
         .help("\(primaryActionHelp)（\(usesUpdatePrimaryAction ? "⌘U" : "⌘O")）")
-        .accessibilityLabel(preparationID == nil ? primaryActionTitle : "正在准备更新")
+        .accessibilityLabel(showsPreparation ? "正在准备更新" : primaryActionTitle)
         .accessibilityHint(primaryActionHelp)
     }
 
@@ -608,10 +612,16 @@ struct AppDetailView: View {
         let requestID = UUID()
         preparationID = requestID
         preparationTask = Task {
+            let indicator = Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                if !Task.isCancelled, preparationID == requestID { showsPreparation = true }
+            }
             let requiresConfirmation = await requiresRelaunchConfirmation()
+            indicator.cancel()
             guard !Task.isCancelled, preparationID == requestID else { return }
             preparationTask = nil
             preparationID = nil
+            showsPreparation = false
             if requiresConfirmation {
                 ApplicationProcess.activateHost()
                 isConfirmingRelaunch = true
@@ -625,6 +635,7 @@ struct AppDetailView: View {
         preparationTask?.cancel()
         preparationTask = nil
         preparationID = nil
+        showsPreparation = false
     }
 
     private var canOpenAppStore: Bool {
